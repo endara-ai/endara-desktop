@@ -30,8 +30,13 @@ fn main() {
     println!("cargo:rustc-env=DESKTOP_COMMIT={}", desktop_hash);
     println!("cargo:rustc-env=BUILD_DATE={}", date_output);
 
-    println!("cargo:rerun-if-changed=../../../.git/HEAD");
-    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    // Only emit rerun-if-changed for git paths that exist — in a standalone
+    // checkout (outside the monorepo) these paths won't be present.
+    for path in &["../../../.git/HEAD", "../../.git/HEAD"] {
+        if std::path::Path::new(path).exists() {
+            println!("cargo:rerun-if-changed={}", path);
+        }
+    }
 
     tauri_build::build()
 }
