@@ -3,7 +3,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+
+permissions:
+  pull-requests: read
 
 jobs:
   check:
