@@ -1,6 +1,12 @@
+import { invoke } from '@tauri-apps/api/core';
+import { get } from 'svelte/store';
 import type { RelayStatus, Endpoint, Tool, EndpointLogs } from './types';
+import { relayPort } from './stores';
 
-const BASE_URL = 'http://localhost:9400/api';
+function getBaseUrl() {
+  return `http://localhost:${get(relayPort)}/api`;
+}
+
 const MAX_RETRIES = 2;
 const RETRY_DELAY = 1000;
 
@@ -8,7 +14,7 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const res = await fetch(`${BASE_URL}${path}`, {
+      const res = await fetch(`${getBaseUrl()}${path}`, {
         ...options,
         headers: { 'Content-Type': 'application/json', ...options?.headers },
       });
@@ -56,5 +62,36 @@ export async function getConfig(): Promise<Record<string, unknown>> {
 
 export async function reloadConfig(): Promise<void> {
   await fetchJson('/config/reload', { method: 'POST' });
+}
+
+export interface AddEndpointParams {
+  name: string;
+  transport: 'stdio' | 'sse' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  description?: string;
+}
+
+export async function addEndpoint(params: AddEndpointParams): Promise<void> {
+  await invoke('add_endpoint', { args: params });
+  // Best-effort reload — relay may not be running yet during onboarding
+  try {
+    await new Promise((r) => setTimeout(r, 200));
+    await reloadConfig();
+  } catch {
+    // Relay not reachable; it will pick up config changes on next start
+  }
+}
+
+export async function removeEndpoint(name: string): Promise<void> {
+  await invoke('remove_endpoint', { name });
+  // Best-effort reload — relay may not be running
+  try {
+    await new Promise((r) => setTimeout(r, 200));
+    await reloadConfig();
+  } catch {
+    // Relay not reachable; it will pick up config changes on next start
+  }
 }
 

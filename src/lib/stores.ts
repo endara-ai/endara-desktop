@@ -4,11 +4,78 @@ import type { Endpoint, Theme } from './types';
 export const endpoints = writable<Endpoint[]>([]);
 export const selectedEndpoint = writable<string | null>(null);
 export const jsExecutionMode = writable<boolean>(false);
-export const theme = writable<Theme>('system');
+
+function createThemeStore() {
+  const stored = typeof window !== 'undefined' ? localStorage.getItem('endara-theme') as Theme | null : null;
+  const store = writable<Theme>(stored || 'system');
+
+  if (typeof window !== 'undefined') {
+    store.subscribe((t) => {
+      localStorage.setItem('endara-theme', t);
+      const root = document.documentElement;
+      if (t === 'dark') {
+        root.classList.add('dark');
+      } else if (t === 'light') {
+        root.classList.remove('dark');
+      } else {
+        // system — follow OS preference
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        root.classList.toggle('dark', prefersDark);
+      }
+    });
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      let currentTheme: Theme = 'system';
+      const unsub = store.subscribe((v) => { currentTheme = v; });
+      unsub();
+      if (currentTheme === 'system') {
+        document.documentElement.classList.toggle('dark', e.matches);
+      }
+    });
+  }
+
+  return store;
+}
+
+export const theme = createThemeStore();
 export const searchQuery = writable<string>('');
 export const isSettingsOpen = writable<boolean>(false);
 export const activeTab = writable<'tools' | 'logs' | 'config'>('tools');
+export const activeTopLevelTab = writable<'servers' | 'relay-logs' | 'settings'>('servers');
+
+export interface RelayLogLine {
+  timestamp: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+export const relayLogLines = writable<RelayLogLine[]>([]);
 export const miniPlayerMode = writable<boolean>(false);
+
+export const relayConnected = writable<boolean>(false);
+export const relayLastError = writable<string | null>(null);
+export const onboardingDismissed = writable<boolean>(false);
+
+export type RelaySidecarStatusType = 'unknown' | 'starting' | 'running' | 'failed' | 'stopped';
+export const relaySidecarStatus = writable<RelaySidecarStatusType>('unknown');
+export const relaySidecarError = writable<string | null>(null);
+
+function createRelayPortStore() {
+  const stored = typeof window !== 'undefined' ? localStorage.getItem('endara-relay-port') : null;
+  const store = writable<number>(stored ? parseInt(stored, 10) : 9400);
+  if (typeof window !== 'undefined') {
+    store.subscribe(v => localStorage.setItem('endara-relay-port', String(v)));
+  }
+  return store;
+}
+export const relayPort = createRelayPortStore();
+
+export const showOnboarding = derived(
+  [endpoints, onboardingDismissed],
+  ([$endpoints, $onboardingDismissed]) => {
+    return $endpoints.length === 0 && !$onboardingDismissed;
+  }
+);
 
 export const filteredEndpoints = derived(
   [endpoints, searchQuery],
