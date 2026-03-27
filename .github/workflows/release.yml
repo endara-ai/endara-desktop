@@ -1,0 +1,94 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      relay_version:
+        description: 'Relay version to bundle (e.g. v0.1.0, or "latest")'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write
+
+env:
+  RELAY_VERSION: ${{ inputs.relay_version || 'latest' }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            relay_target: x86_64-apple-darwin
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            relay_target: aarch64-apple-darwin
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            relay_target: x86_64-pc-windows-msvc
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            relay_target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Download relay binary
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          RELAY_BINARY="endara-relay-${{ matrix.relay_target }}"
+          if [[ "${{ matrix.relay_target }}" == *"windows"* ]]; then
+            RELAY_BINARY="${RELAY_BINARY}.exe"
+          fi
+          if [[ "$RELAY_VERSION" == "latest" ]]; then
+            gh release download --repo endara-ai/endara-relay --pattern "$RELAY_BINARY" --dir src-tauri/binaries
+          else
+            gh release download "$RELAY_VERSION" --repo endara-ai/endara-relay --pattern "$RELAY_BINARY" --dir src-tauri/binaries
+          fi
+          chmod +x "src-tauri/binaries/$RELAY_BINARY" 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli
+      - name: Build Tauri app
+        run: cargo tauri build --target ${{ matrix.target }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: endara-desktop-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/**/*
+
