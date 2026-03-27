@@ -164,6 +164,29 @@ packages/desktop/
 └── LICENSE                        # Apache-2.0
 ```
 
+## Releasing
+
+Releases are automated via GitHub Actions. The desktop release depends on [Endara Relay](https://github.com/endara-ai/endara-relay) — the relay must be released first so the desktop can download its binaries.
+
+### Release flow
+
+1. **Release the relay first** — tag and push in [endara-ai/endara-relay](https://github.com/endara-ai/endara-relay) (e.g. `v0.1.0`)
+2. **Tag the desktop** — `git tag v0.1.0 && git push origin v0.1.0`
+3. The [release workflow](.github/workflows/release.yml) automatically:
+   - Downloads the relay binary for each platform from the relay's GitHub Release
+   - Places it at `src-tauri/binaries/endara-relay-{target_triple}`
+   - Builds the Tauri app for macOS (x86_64 + aarch64), Windows, and Linux
+   - Creates a GitHub Release with platform installers (.dmg, .msi, .deb, .AppImage)
+
+You can pin to a specific relay version by triggering the workflow manually with the `relay_version` input (defaults to `latest`).
+
+### CI
+
+On every push and PR, the CI workflow runs:
+- Svelte check (type checking)
+- Rust check (`cargo check` on the Tauri backend)
+- PR title validation (conventional commits)
+
 ## Contributing
 
 Contributions are welcome! Here's how to get started:
