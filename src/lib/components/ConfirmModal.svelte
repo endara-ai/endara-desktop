@@ -9,10 +9,16 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onclick={oncancel}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onclick={oncancel} onkeydown={handleKeydown}>
   <div
     class="bg-(--color-surface) rounded-xl shadow-xl border border-(--color-border) p-6 w-80 max-w-[90vw]"
+    role="dialog"
+    aria-modal="true"
+    aria-label={title}
+    tabindex="-1"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
   >
     <h3 class="text-base font-semibold mb-2">{title}</h3>
     <p class="text-sm text-(--color-text-secondary) mb-5">{message}</p>

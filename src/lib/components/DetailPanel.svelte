@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { selectedEndpointData, activeTab, selectedEndpoint } from '$lib/stores';
-  import { restartEndpoint, refreshEndpoint } from '$lib/api';
+  import { selectedEndpointData, activeTab, selectedEndpoint, endpoints } from '$lib/stores';
+  import { restartEndpoint, refreshEndpoint, removeEndpoint, getEndpoints } from '$lib/api';
   import ToolsTab from './ToolsTab.svelte';
   import LogsTab from './LogsTab.svelte';
   import ConfigTab from './ConfigTab.svelte';
@@ -9,6 +9,7 @@
   import TransportBadge from './TransportBadge.svelte';
 
   let showRestartConfirm = $state(false);
+  let showDeleteConfirm = $state(false);
 
   const tabs = [
     { id: 'tools' as const, label: 'Tools' },
@@ -29,6 +30,21 @@
     if (name) {
       try { await refreshEndpoint(name); } catch { /* ignore */ }
     }
+  }
+
+  async function handleDelete() {
+    const name = $selectedEndpoint;
+    if (name) {
+      try {
+        await removeEndpoint(name);
+        selectedEndpoint.set(null);
+        try {
+          const data = await getEndpoints();
+          endpoints.set(data);
+        } catch { /* will be picked up by next poll */ }
+      } catch { /* ignore */ }
+    }
+    showDeleteConfirm = false;
   }
 </script>
 
@@ -55,6 +71,10 @@
           class="px-2.5 py-1 text-xs rounded-lg border border-(--color-offline)/30 text-(--color-offline) hover:bg-(--color-offline)/10 transition-colors"
           onclick={() => showRestartConfirm = true}
         >Restart</button>
+        <button
+          class="px-2.5 py-1 text-xs rounded-lg border border-(--color-offline)/30 text-(--color-offline) hover:bg-(--color-offline)/10 transition-colors"
+          onclick={() => showDeleteConfirm = true}
+        >Delete</button>
       </div>
     </div>
 
@@ -85,6 +105,16 @@
         confirmLabel="Restart"
         onconfirm={handleRestart}
         oncancel={() => showRestartConfirm = false}
+      />
+    {/if}
+
+    {#if showDeleteConfirm}
+      <ConfirmModal
+        title="Delete Endpoint"
+        message="Are you sure you want to delete '{ep.name}'? This will remove it from your configuration."
+        confirmLabel="Delete"
+        onconfirm={handleDelete}
+        oncancel={() => showDeleteConfirm = false}
       />
     {/if}
   {:else}
