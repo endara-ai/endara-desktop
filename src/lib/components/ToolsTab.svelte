@@ -2,7 +2,7 @@
   import type { Tool } from '$lib/types';
   import { selectedEndpoint } from '$lib/stores';
   import { getEndpointTools } from '$lib/api';
-  import { mockTools } from '$lib/mock';
+
 
   let tools: Tool[] = $state([]);
   let loading = $state(true);
@@ -17,7 +17,7 @@
     error = '';
     getEndpointTools(name)
       .then((t) => { tools = t; })
-      .catch(() => { tools = mockTools; })
+      .catch(() => { tools = []; })
       .finally(() => { loading = false; });
   });
 

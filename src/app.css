@@ -23,16 +23,7 @@
     background-color: var(--color-surface);
   }
 
-  body {
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-    height: 100vh;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  @theme {
+  html.dark {
     --color-surface: #1a1b1e;
     --color-surface-alt: #25262b;
     --color-surface-hover: #2c2e33;
@@ -44,6 +35,13 @@
     --color-healthy: #51cf66;
     --color-degraded: #fcc419;
     --color-offline: #ff6b6b;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100vh;
   }
 }
 

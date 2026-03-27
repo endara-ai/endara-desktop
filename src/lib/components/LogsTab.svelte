@@ -1,7 +1,7 @@
 <script lang="ts">
   import { selectedEndpoint } from '$lib/stores';
   import { getEndpointLogs } from '$lib/api';
-  import { mockLogs } from '$lib/mock';
+
 
   let lines: string[] = $state([]);
   let loading = $state(true);
@@ -13,7 +13,7 @@
     loading = true;
     getEndpointLogs(name)
       .then((data) => { lines = data.lines; })
-      .catch(() => { lines = mockLogs; })
+      .catch(() => { lines = []; })
       .finally(() => {
         loading = false;
         requestAnimationFrame(() => {
