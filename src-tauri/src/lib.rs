@@ -21,6 +21,26 @@ pub struct RelayStatusInfo {
     pub running: bool,
 }
 
+#[derive(Serialize, Clone)]
+pub struct BuildInfo {
+    pub version: String,
+    pub monorepo_commit: String,
+    pub relay_commit: String,
+    pub desktop_commit: String,
+    pub build_date: String,
+}
+
+#[tauri::command]
+async fn get_build_info() -> Result<BuildInfo, String> {
+    Ok(BuildInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        monorepo_commit: env!("MONOREPO_COMMIT").to_string(),
+        relay_commit: env!("RELAY_COMMIT").to_string(),
+        desktop_commit: env!("DESKTOP_COMMIT").to_string(),
+        build_date: env!("BUILD_DATE").to_string(),
+    })
+}
+
 /// Spawn the relay sidecar and monitor its output.
 /// Returns the child handle on success.
 fn spawn_relay(
@@ -180,6 +200,7 @@ pub fn run() {
             stop_relay,
             restart_relay,
             relay_status,
+            get_build_info,
         ])
         .setup(|app| {
             // Build tray menu

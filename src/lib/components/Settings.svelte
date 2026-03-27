@@ -1,6 +1,18 @@
 <script lang="ts">
   import { theme, jsExecutionMode, isSettingsOpen } from '$lib/stores';
   import type { Theme } from '$lib/types';
+  import { invoke } from '@tauri-apps/api/core';
+  import { onMount } from 'svelte';
+
+  interface BuildInfo {
+    version: string;
+    monorepo_commit: string;
+    relay_commit: string;
+    desktop_commit: string;
+    build_date: string;
+  }
+
+  let buildInfo: BuildInfo | null = $state(null);
 
   function close() {
     isSettingsOpen.set(false);
@@ -13,6 +25,14 @@
   function setTheme(t: Theme) {
     theme.set(t);
   }
+
+  onMount(async () => {
+    try {
+      buildInfo = await invoke<BuildInfo>('get_build_info');
+    } catch (e) {
+      console.error('Failed to get build info:', e);
+    }
+  });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -59,7 +79,23 @@
           <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$jsExecutionMode ? 'translate-x-5' : ''}"></span>
         </button>
       </div>
+      {#if buildInfo}
+        <div class="pt-4 mt-4 border-t border-(--color-border)">
+          <div class="text-xs font-medium text-(--color-text-secondary) uppercase tracking-wide mb-2">About</div>
+          <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            <span class="text-(--color-text-secondary)">Version</span>
+            <span>{buildInfo.version}</span>
+            <span class="text-(--color-text-secondary)">Build Date</span>
+            <span>{buildInfo.build_date}</span>
+            <span class="text-(--color-text-secondary)">Desktop</span>
+            <span class="font-mono text-[0.6875rem]">{buildInfo.desktop_commit}</span>
+            <span class="text-(--color-text-secondary)">Relay</span>
+            <span class="font-mono text-[0.6875rem]">{buildInfo.relay_commit}</span>
+            <span class="text-(--color-text-secondary)">Monorepo</span>
+            <span class="font-mono text-[0.6875rem]">{buildInfo.monorepo_commit}</span>
+          </div>
+        </div>
+      {/if}
     </div>
   </div>
 </div>
-
