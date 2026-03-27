@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f8f9fa;
+  --color-surface-hover: #f1f3f5;
+  --color-border: #e9ecef;
+  --color-text: #212529;
+  --color-text-secondary: #868e96;
+  --color-accent: #4c6ef5;
+  --color-accent-hover: #3b5bdb;
+  --color-healthy: #40c057;
+  --color-degraded: #fab005;
+  --color-offline: #fa5252;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: var(--color-text);
+    background-color: var(--color-surface);
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100vh;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-surface: #1a1b1e;
+    --color-surface-alt: #25262b;
+    --color-surface-hover: #2c2e33;
+    --color-border: #373a40;
+    --color-text: #c1c2c5;
+    --color-text-secondary: #909296;
+    --color-accent: #5c7cfa;
+    --color-accent-hover: #748ffc;
+    --color-healthy: #51cf66;
+    --color-degraded: #fcc419;
+    --color-offline: #ff6b6b;
+  }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
