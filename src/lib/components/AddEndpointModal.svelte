@@ -64,8 +64,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onclick={onclose} onkeydown={handleKeydown}>
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="presentation" onclick={onclose} onkeydown={handleKeydown}>
   <div
     class="bg-(--color-surface) rounded-xl shadow-xl border border-(--color-border) p-6 w-96 max-w-[90vw] max-h-[90vh] overflow-y-auto"
     role="dialog"
