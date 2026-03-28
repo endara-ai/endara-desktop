@@ -27,7 +27,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/endara-ai/monorepo/releases/latest/download/latest.json"
+        "https://github.com/endara-ai/endara-desktop/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg4OURGRDRCRDk2RDRGRDMKUldUVFQyM1pTLzJkaUorVndlR3dBaTltWXpjZXREYnBFRDVNK2hNS2JKYTd0Wm1kcSsySUU2L04K"
     }
