@@ -36,6 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -62,10 +64,8 @@ jobs:
           chmod +x "src-tauri/binaries/$RELAY_BINARY" 2>/dev/null || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli
       - name: Build Tauri app
-        run: cargo tauri build --target ${{ matrix.target }}
+        run: npx @tauri-apps/cli build --target ${{ matrix.target }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
