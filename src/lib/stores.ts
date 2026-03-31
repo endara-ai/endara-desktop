@@ -41,7 +41,7 @@ export const theme = createThemeStore();
 export const searchQuery = writable<string>('');
 export const isSettingsOpen = writable<boolean>(false);
 export const activeTab = writable<'tools' | 'logs' | 'config'>('tools');
-export const activeTopLevelTab = writable<'servers' | 'relay-logs' | 'settings'>('servers');
+export const activeTopLevelTab = writable<'servers' | 'unified-catalog' | 'relay-logs' | 'settings'>('servers');
 
 export interface RelayLogLine {
   timestamp: string;
@@ -55,6 +55,7 @@ export const miniPlayerMode = writable<boolean>(false);
 export const relayConnected = writable<boolean>(false);
 export const relayLastError = writable<string | null>(null);
 export const onboardingDismissed = writable<boolean>(false);
+export const initialLoadComplete = writable<boolean>(false);
 
 export type RelaySidecarStatusType = 'unknown' | 'starting' | 'running' | 'failed' | 'stopped';
 export const relaySidecarStatus = writable<RelaySidecarStatusType>('unknown');
@@ -71,9 +72,9 @@ function createRelayPortStore() {
 export const relayPort = createRelayPortStore();
 
 export const showOnboarding = derived(
-  [endpoints, onboardingDismissed],
-  ([$endpoints, $onboardingDismissed]) => {
-    return $endpoints.length === 0 && !$onboardingDismissed;
+  [endpoints, onboardingDismissed, initialLoadComplete],
+  ([$endpoints, $onboardingDismissed, $initialLoadComplete]) => {
+    return $initialLoadComplete && $endpoints.length === 0 && !$onboardingDismissed;
   }
 );
 
@@ -94,12 +95,20 @@ export const groupedEndpoints = derived(filteredEndpoints, ($filtered) => {
   const groups: Record<string, Endpoint[]> = {
     healthy: [],
     degraded: [],
+    error: [],
     offline: [],
     unknown: [],
+    disabled: [],
   };
   for (const ep of $filtered) {
-    const key = ep.health in groups ? ep.health : 'unknown';
-    groups[key].push(ep);
+    if (ep.disabled) {
+      groups.disabled.push(ep);
+    } else if (ep.error) {
+      groups.error.push(ep);
+    } else {
+      const key = ep.health in groups ? ep.health : 'unknown';
+      groups[key].push(ep);
+    }
   }
   return groups;
 });
@@ -111,4 +120,9 @@ export const selectedEndpointData = derived(
     return $endpoints.find((ep) => ep.name === $selected) ?? null;
   }
 );
+
+// Update state: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error'
+export const updateStatus = writable<string>('idle');
+export const updateVersion = writable<string | null>(null);
+export const updateError = writable<string | null>(null);
 

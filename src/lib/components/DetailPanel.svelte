@@ -1,15 +1,19 @@
 <script lang="ts">
   import { selectedEndpointData, activeTab, selectedEndpoint, endpoints } from '$lib/stores';
-  import { restartEndpoint, refreshEndpoint, removeEndpoint, getEndpoints } from '$lib/api';
+  import { restartEndpoint, refreshEndpoint, removeEndpoint, getEndpoints, disableEndpoint, enableEndpoint } from '$lib/api';
   import ToolsTab from './ToolsTab.svelte';
   import LogsTab from './LogsTab.svelte';
   import ConfigTab from './ConfigTab.svelte';
   import ConfirmModal from './ConfirmModal.svelte';
   import HealthDot from './HealthDot.svelte';
+  import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
 
   let showRestartConfirm = $state(false);
   let showDeleteConfirm = $state(false);
+  let toggling = $state(false);
+  let toggleError: string | null = $state(null);
+  let toggleErrorTimer: ReturnType<typeof setTimeout> | null = null;
 
   const tabs = [
     { id: 'tools' as const, label: 'Tools' },
@@ -30,6 +34,37 @@
     if (name) {
       try { await refreshEndpoint(name); } catch { /* ignore */ }
     }
+  }
+
+  function clearToggleError() {
+    toggleError = null;
+    if (toggleErrorTimer) {
+      clearTimeout(toggleErrorTimer);
+      toggleErrorTimer = null;
+    }
+  }
+
+  async function handleToggle() {
+    const ep = $selectedEndpointData;
+    if (!ep || toggling) return;
+    toggling = true;
+    clearToggleError();
+    const action = ep.disabled ? 'enable' : 'disable';
+    try {
+      if (ep.disabled) {
+        await enableEndpoint(ep.name);
+      } else {
+        await disableEndpoint(ep.name);
+      }
+      try {
+        const data = await getEndpoints();
+        endpoints.set(data);
+      } catch { /* will be picked up by next poll */ }
+    } catch {
+      toggleError = `Failed to ${action} server`;
+      toggleErrorTimer = setTimeout(() => { toggleError = null; }, 3000);
+    }
+    toggling = false;
   }
 
   async function handleDelete() {
@@ -53,7 +88,12 @@
     {@const ep = $selectedEndpointData}
     <div class="px-5 py-3 border-b border-(--color-border) flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <HealthDot health={ep.health} />
+        <div class="relative flex-shrink-0" style="width: 24px; height: 24px;">
+          <EndpointIcon endpoint={ep} size={24} />
+          <span class="absolute -bottom-0.5 -right-0.5">
+            <HealthDot health={ep.health} />
+          </span>
+        </div>
         <div>
           <h2 class="text-base font-semibold">{ep.name}</h2>
           <div class="flex items-center gap-2 mt-0.5">
@@ -62,7 +102,20 @@
           </div>
         </div>
       </div>
-      <div class="flex gap-2">
+      <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2">
+          {#if toggleError}
+            <span class="text-xs text-red-500">{toggleError}</span>
+          {/if}
+          <button
+            class="relative w-10 h-5 rounded-full transition-colors {ep.disabled ? 'bg-gray-300 dark:bg-gray-600' : 'bg-green-500'} {toggling ? 'opacity-50' : ''}"
+            onclick={handleToggle}
+            disabled={toggling}
+            title={ep.disabled ? 'Enable server' : 'Disable server'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {ep.disabled ? '' : 'translate-x-5'}"></span>
+          </button>
+        </div>
         <button
           class="px-2.5 py-1 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
           onclick={handleRefresh}
@@ -77,6 +130,18 @@
         >Delete</button>
       </div>
     </div>
+
+    {#if ep.error}
+      <div class="px-5 py-3 bg-red-50 dark:bg-red-950 border-b border-red-200 dark:border-red-800">
+        <div class="flex items-start gap-2">
+          <span class="text-red-500 flex-shrink-0">⚠</span>
+          <div>
+            <div class="text-sm font-medium text-red-700 dark:text-red-300">Initialization Error</div>
+            <div class="text-xs text-red-600 dark:text-red-400 mt-0.5 whitespace-pre-wrap break-all max-h-[5lh] overflow-y-auto">{ep.error}</div>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <div class="flex border-b border-(--color-border)">
       {#each tabs as tab}

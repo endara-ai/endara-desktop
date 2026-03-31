@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { theme, jsExecutionMode, relayPort, relayConnected, relayLastError, relaySidecarStatus, relaySidecarError } from '$lib/stores';
+  import { theme, jsExecutionMode, relayPort, relayConnected, relayLastError, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError } from '$lib/stores';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus, getConfig, reloadConfig } from '$lib/api';
+  import { checkForUpdate, downloadAndInstall, restartApp } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
 
   let portInput: number = $state($relayPort);
@@ -170,7 +171,7 @@
       {/if}
     </div>
 
-    <fieldset class="border-none p-0 m-0">
+    <fieldset class="border-none p-0">
       <legend class="block text-sm font-medium mb-1.5">Theme</legend>
       <div class="flex gap-2">
         {#each ['light', 'dark', 'system'] as t}
@@ -266,5 +267,73 @@
         </div>
       </div>
     {/if}
+
+    <!-- Updates -->
+    <div class="pt-4 mt-4 border-t border-(--color-border)">
+      <div class="text-xs font-medium text-(--color-text-secondary) uppercase tracking-wide mb-2">Updates</div>
+
+      {#if buildInfo}
+        <div class="text-xs text-(--color-text-secondary) mb-2">
+          Current version: <span class="font-mono">{buildInfo.version}</span>
+        </div>
+      {/if}
+
+      {#if $updateStatus === 'idle'}
+        <button
+          class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+          onclick={() => checkForUpdate()}
+        >
+          Check for Updates
+        </button>
+      {:else if $updateStatus === 'checking'}
+        <div class="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+          <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          Checking for updates...
+        </div>
+      {:else if $updateStatus === 'available'}
+        <div class="space-y-2">
+          <p class="text-xs">Version <span class="font-mono font-medium">{$updateVersion}</span> available</p>
+          <button
+            class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white hover:opacity-90 transition-opacity"
+            onclick={() => downloadAndInstall()}
+          >
+            Download &amp; Install
+          </button>
+        </div>
+      {:else if $updateStatus === 'downloading'}
+        <div class="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+          <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          Downloading update...
+        </div>
+      {:else if $updateStatus === 'ready'}
+        <div class="space-y-2">
+          <p class="text-xs">Update ready! Restart to apply.</p>
+          <button
+            class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white hover:opacity-90 transition-opacity"
+            onclick={() => restartApp()}
+          >
+            Restart Now
+          </button>
+        </div>
+      {:else if $updateStatus === 'up-to-date'}
+        <p class="text-xs text-green-600 dark:text-green-400">You're up to date ✓</p>
+      {:else if $updateStatus === 'error'}
+        <div class="space-y-2">
+          <p class="text-xs text-red-600 dark:text-red-400">Update check failed: {$updateError}</p>
+          <button
+            class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+            onclick={() => checkForUpdate()}
+          >
+            Retry
+          </button>
+        </div>
+      {/if}
+    </div>
   </div>
 </div>
