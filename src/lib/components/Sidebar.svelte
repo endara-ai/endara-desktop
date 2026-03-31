@@ -10,8 +10,10 @@
   const healthLabels: Record<string, string> = {
     healthy: '● Healthy',
     degraded: '◐ Degraded',
+    error: '⚠ Error',
     offline: '○ Offline',
     unknown: '? Unknown',
+    disabled: '⏸ Disabled',
   };
 
   export function focusSearch() {

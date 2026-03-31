@@ -1,4 +1,4 @@
-export type HealthStatus = 'healthy' | 'degraded' | 'offline' | 'unknown';
+export type HealthStatus = 'healthy' | 'degraded' | 'offline' | 'unknown' | 'error';
 
 export interface RelayStatus {
   status: string;
@@ -13,12 +13,25 @@ export interface Endpoint {
   health: HealthStatus;
   tool_count: number;
   last_activity: string | null;
+  disabled: boolean;
+  error?: string;
 }
 
 export interface Tool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  disabled?: boolean;
+  annotations?: Record<string, unknown>;
+}
+
+export interface CatalogEntry {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
+  endpoint: string;
+  available: boolean;
 }
 
 export interface EndpointLogs {

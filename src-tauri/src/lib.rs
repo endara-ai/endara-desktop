@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -403,6 +404,174 @@ struct AddEndpointArgs {
     args: Option<Vec<String>>,
     url: Option<String>,
     description: Option<String>,
+    env: Option<HashMap<String, String>>,
+    headers: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize)]
+struct EndpointConfig {
+    name: String,
+    transport: String,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    url: Option<String>,
+    description: Option<String>,
+    env: Option<HashMap<String, String>>,
+    headers: Option<HashMap<String, String>>,
+}
+
+#[tauri::command]
+async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
+    let config_path = dirs::home_dir()
+        .map(|h| h.join(".endara").join("config.toml"))
+        .ok_or_else(|| "Could not determine home directory".to_string())?;
+
+    if !config_path.exists() {
+        return Err("Config file not found".to_string());
+    }
+
+    let contents = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config: {e}"))?;
+
+    let parsed: toml::Table = contents
+        .parse()
+        .map_err(|e| format!("Failed to parse config: {e}"))?;
+
+    if let Some(toml::Value::Array(endpoints)) = parsed.get("endpoints") {
+        for ep in endpoints {
+            if ep.get("name").and_then(|v| v.as_str()) == Some(&name) {
+                let transport = ep.get("transport").and_then(|v| v.as_str()).unwrap_or("stdio").to_string();
+                let command = ep.get("command").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let args = ep.get("args").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                });
+                let url = ep.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let description = ep.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let env = ep.get("env").and_then(|v| v.as_table()).map(|t| {
+                    t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
+                });
+                let headers = ep.get("headers").and_then(|v| v.as_table()).map(|t| {
+                    t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
+                });
+
+                return Ok(EndpointConfig {
+                    name: name.clone(),
+                    transport,
+                    command,
+                    args,
+                    url,
+                    description,
+                    env,
+                    headers,
+                });
+            }
+        }
+    }
+
+    Err(format!("Endpoint '{}' not found", name))
+}
+
+#[derive(Deserialize)]
+struct UpdateEndpointArgs {
+    #[serde(rename = "originalName")]
+    original_name: String,
+    name: String,
+    transport: String,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    url: Option<String>,
+    description: Option<String>,
+    env: Option<HashMap<String, String>>,
+    headers: Option<HashMap<String, String>>,
+}
+
+#[tauri::command]
+async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
+    let config_path = dirs::home_dir()
+        .map(|h| h.join(".endara").join("config.toml"))
+        .ok_or_else(|| "Could not determine home directory".to_string())?;
+
+    if !config_path.exists() {
+        return Err("Config file not found".to_string());
+    }
+
+    let contents = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config: {e}"))?;
+
+    let mut parsed: toml::Table = contents
+        .parse()
+        .map_err(|e| format!("Failed to parse config: {e}"))?;
+
+    // If name changed, check for duplicates
+    if args.name != args.original_name {
+        if let Some(toml::Value::Array(endpoints)) = parsed.get("endpoints") {
+            for ep in endpoints {
+                if ep.get("name").and_then(|v| v.as_str()) == Some(&args.name) {
+                    return Err(format!("An endpoint named '{}' already exists", args.name));
+                }
+            }
+        }
+    }
+
+    let mut found = false;
+    if let Some(toml::Value::Array(endpoints)) = parsed.get_mut("endpoints") {
+        for ep in endpoints.iter_mut() {
+            if ep.get("name").and_then(|v| v.as_str()) == Some(&args.original_name) {
+                found = true;
+                let table = ep.as_table_mut().ok_or("Endpoint is not a table")?;
+
+                // Clear old fields and set new ones
+                table.clear();
+                table.insert("name".to_string(), toml::Value::String(args.name.clone()));
+                table.insert("transport".to_string(), toml::Value::String(args.transport.clone()));
+
+                if let Some(cmd) = &args.command {
+                    table.insert("command".to_string(), toml::Value::String(cmd.clone()));
+                }
+                if let Some(cmd_args) = &args.args {
+                    let arr: Vec<toml::Value> = cmd_args.iter().map(|a| toml::Value::String(a.clone())).collect();
+                    table.insert("args".to_string(), toml::Value::Array(arr));
+                }
+                if let Some(url) = &args.url {
+                    table.insert("url".to_string(), toml::Value::String(url.clone()));
+                }
+                if let Some(description) = &args.description {
+                    table.insert("description".to_string(), toml::Value::String(description.clone()));
+                }
+                if let Some(env) = &args.env {
+                    if !env.is_empty() {
+                        let mut env_table = toml::map::Map::new();
+                        for (k, v) in env {
+                            env_table.insert(k.clone(), toml::Value::String(v.clone()));
+                        }
+                        table.insert("env".to_string(), toml::Value::Table(env_table));
+                    }
+                }
+                if let Some(headers) = &args.headers {
+                    if !headers.is_empty() {
+                        let mut headers_table = toml::map::Map::new();
+                        for (k, v) in headers {
+                            headers_table.insert(k.clone(), toml::Value::String(v.clone()));
+                        }
+                        table.insert("headers".to_string(), toml::Value::Table(headers_table));
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    if !found {
+        return Err(format!("Endpoint '{}' not found", args.original_name));
+    }
+
+    let new_contents = toml::to_string_pretty(&parsed)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+
+    std::fs::write(&config_path, &new_contents)
+        .map_err(|e| format!("Failed to write config: {e}"))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -458,6 +627,22 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
     }
     if let Some(description) = args.description {
         contents.push_str(&format!("description = {}\n", toml::Value::String(description).to_string()));
+    }
+    if let Some(env) = args.env {
+        if !env.is_empty() {
+            let pairs: Vec<String> = env.iter().map(|(k, v)| {
+                format!("{} = {}", k, toml::Value::String(v.clone()).to_string())
+            }).collect();
+            contents.push_str(&format!("env = {{ {} }}\n", pairs.join(", ")));
+        }
+    }
+    if let Some(headers) = args.headers {
+        if !headers.is_empty() {
+            let pairs: Vec<String> = headers.iter().map(|(k, v)| {
+                format!("{} = {}", k, toml::Value::String(v.clone()).to_string())
+            }).collect();
+            contents.push_str(&format!("headers = {{ {} }}\n", pairs.join(", ")));
+        }
     }
 
     std::fs::write(&config_path, &contents)
@@ -525,6 +710,7 @@ pub fn run() {
             .build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .manage(relay_state)
         .invoke_handler(tauri::generate_handler![
@@ -535,6 +721,8 @@ pub fn run() {
             get_build_info,
             add_endpoint,
             remove_endpoint,
+            get_endpoint_config,
+            update_endpoint,
             set_relay_port,
             set_js_execution_mode,
         ])
@@ -543,9 +731,10 @@ pub fn run() {
             let status_item =
                 MenuItem::with_id(app, "status", "Endara — Running", false, None::<&str>)?;
             let open_item = MenuItem::with_id(app, "open", "Open Endara", true, None::<&str>)?;
+            let update_item = MenuItem::with_id(app, "check_update", "Check for Updates", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-            let menu = Menu::with_items(app, &[&status_item, &open_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&status_item, &open_item, &update_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -553,6 +742,14 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "check_update" => {
+                        let _ = app.emit("check-for-update", ());
+                        // Also show the window so user can see the update UI
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();

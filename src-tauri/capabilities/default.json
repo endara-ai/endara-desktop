@@ -27,6 +27,7 @@
       ]
     },
     "shell:allow-kill",
-    "updater:default"
+    "updater:default",
+    "process:default"
   ]
 }

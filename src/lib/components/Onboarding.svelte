@@ -9,6 +9,7 @@
   let command = $state('');
   let args = $state('');
   let url = $state('');
+  let envVars: { key: string; value: string }[] = $state([]);
   let submitting = $state(false);
   let error = $state('');
 
@@ -33,6 +34,11 @@
     } else {
       if (!url.trim()) { error = 'URL is required'; return; }
       params.url = url.trim();
+    }
+
+    const filteredEnv = envVars.filter((e) => e.key.trim());
+    if (filteredEnv.length > 0) {
+      params.env = Object.fromEntries(filteredEnv.map((e) => [e.key.trim(), e.value]));
     }
 
     submitting = true;
@@ -179,6 +185,32 @@
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
         </div>
       {/if}
+
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <span class="block text-xs font-medium text-(--color-text-secondary)">Environment Variables <span class="text-(--color-text-secondary)/50">(optional)</span></span>
+          <button
+            type="button"
+            class="text-xs text-(--color-accent) hover:text-(--color-accent-hover)"
+            onclick={() => envVars = [...envVars, { key: '', value: '' }]}
+          >
+            + Add
+          </button>
+        </div>
+        {#each envVars as envVar, i}
+          <div class="flex gap-1 mb-1">
+            <input type="text" bind:value={envVar.key} placeholder="KEY"
+              class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+            <input type="text" bind:value={envVar.value} placeholder="value or $ENV_VAR"
+              class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+            <button
+              type="button"
+              class="text-xs px-1.5 text-(--color-text-secondary) hover:text-(--color-offline)"
+              onclick={() => envVars = envVars.filter((_, idx) => idx !== i)}
+            >✕</button>
+          </div>
+        {/each}
+      </div>
 
       {#if error}
         <p class="text-xs text-(--color-offline)">{error}</p>

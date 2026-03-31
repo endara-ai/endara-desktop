@@ -16,38 +16,48 @@ env:
   RELAY_VERSION: ${{ inputs.relay_version || 'latest' }}
 
 jobs:
-  build:
+  publish:
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - target: x86_64-apple-darwin
-            os: macos-latest
+          - platform: macos-latest
+            target: x86_64-apple-darwin
             relay_target: x86_64-apple-darwin
-          - target: aarch64-apple-darwin
-            os: macos-latest
+          - platform: macos-latest
+            target: aarch64-apple-darwin
             relay_target: aarch64-apple-darwin
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
             relay_target: x86_64-pc-windows-msvc
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             relay_target: x86_64-unknown-linux-gnu
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
       - name: Install dependencies
         run: npm ci
+
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
       - name: Download relay binary
         shell: bash
         run: |
@@ -64,31 +74,19 @@ jobs:
           chmod +x "src-tauri/binaries/$RELAY_BINARY" 2>/dev/null || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build Tauri app
-        run: npx @tauri-apps/cli build --target ${{ matrix.target }}
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: endara-desktop-${{ matrix.target }}
-          path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Required for updater — generate with: npx @tauri-apps/cli signer generate
+          # Store the private key as a GitHub secret named TAURI_SIGNING_PRIVATE_KEY
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          path: artifacts
-          merge-multiple: true
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: artifacts/**/*
-
+          tagName: v__VERSION__
+          releaseName: 'Endara Desktop v__VERSION__'
+          releaseBody: 'See the assets to download and install.'
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
+          tauriScript: npx tauri

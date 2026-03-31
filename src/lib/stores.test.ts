@@ -22,7 +22,7 @@ describe('stores', () => {
     it('can set and read endpoints', async () => {
       const { endpoints } = await importStores();
       const mockEndpoints = [
-        { name: 'test', transport: 'stdio' as const, health: 'healthy' as const, tool_count: 3, last_activity: null },
+        { name: 'test', transport: 'stdio' as const, health: 'healthy' as const, tool_count: 3, last_activity: null, disabled: false },
       ];
       endpoints.set(mockEndpoints);
       expect(get(endpoints)).toEqual(mockEndpoints);
@@ -93,8 +93,8 @@ describe('stores', () => {
     it('returns all endpoints when no search query', async () => {
       const { endpoints, searchQuery, filteredEndpoints } = await importStores();
       const mockEps = [
-        { name: 'alpha', transport: 'stdio' as const, health: 'healthy' as const, tool_count: 1, last_activity: null },
-        { name: 'beta', transport: 'sse' as const, health: 'offline' as const, tool_count: 0, last_activity: null },
+        { name: 'alpha', transport: 'stdio' as const, health: 'healthy' as const, tool_count: 1, last_activity: null, disabled: false },
+        { name: 'beta', transport: 'sse' as const, health: 'offline' as const, tool_count: 0, last_activity: null, disabled: false },
       ];
       endpoints.set(mockEps);
       searchQuery.set('');
@@ -104,8 +104,8 @@ describe('stores', () => {
     it('filters by name', async () => {
       const { endpoints, searchQuery, filteredEndpoints } = await importStores();
       const mockEps = [
-        { name: 'alpha', transport: 'stdio' as const, health: 'healthy' as const, tool_count: 1, last_activity: null },
-        { name: 'beta', transport: 'sse' as const, health: 'offline' as const, tool_count: 0, last_activity: null },
+        { name: 'alpha', transport: 'stdio' as const, health: 'healthy' as const, tool_count: 1, last_activity: null, disabled: false },
+        { name: 'beta', transport: 'sse' as const, health: 'offline' as const, tool_count: 0, last_activity: null, disabled: false },
       ];
       endpoints.set(mockEps);
       searchQuery.set('alpha');
@@ -115,17 +115,27 @@ describe('stores', () => {
   });
 
   describe('showOnboarding derived store', () => {
-    it('shows when no endpoints and not dismissed', async () => {
-      const { endpoints, onboardingDismissed, showOnboarding } = await importStores();
+    it('shows when no endpoints, not dismissed, and initial load complete', async () => {
+      const { endpoints, onboardingDismissed, initialLoadComplete, showOnboarding } = await importStores();
       endpoints.set([]);
       onboardingDismissed.set(false);
+      initialLoadComplete.set(true);
       expect(get(showOnboarding)).toBe(true);
     });
 
     it('hides when dismissed', async () => {
-      const { endpoints, onboardingDismissed, showOnboarding } = await importStores();
+      const { endpoints, onboardingDismissed, initialLoadComplete, showOnboarding } = await importStores();
       endpoints.set([]);
       onboardingDismissed.set(true);
+      initialLoadComplete.set(true);
+      expect(get(showOnboarding)).toBe(false);
+    });
+
+    it('hides before initial load completes', async () => {
+      const { endpoints, onboardingDismissed, initialLoadComplete, showOnboarding } = await importStores();
+      endpoints.set([]);
+      onboardingDismissed.set(false);
+      initialLoadComplete.set(false);
       expect(get(showOnboarding)).toBe(false);
     });
   });
@@ -138,7 +148,7 @@ describe('stores', () => {
 
     it('returns matching endpoint data', async () => {
       const { endpoints, selectedEndpoint, selectedEndpointData } = await importStores();
-      const ep = { name: 'test-ep', transport: 'stdio' as const, health: 'healthy' as const, tool_count: 2, last_activity: null };
+      const ep = { name: 'test-ep', transport: 'stdio' as const, health: 'healthy' as const, tool_count: 2, last_activity: null, disabled: false };
       endpoints.set([ep]);
       selectedEndpoint.set('test-ep');
       expect(get(selectedEndpointData)).toEqual(ep);

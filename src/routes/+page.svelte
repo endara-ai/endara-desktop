@@ -5,8 +5,9 @@
   import MiniPlayer from '$lib/components/MiniPlayer.svelte';
   import Settings from '$lib/components/Settings.svelte';
   import RelayLogs from '$lib/components/RelayLogs.svelte';
+  import UnifiedCatalog from '$lib/components/UnifiedCatalog.svelte';
   import Onboarding from '$lib/components/Onboarding.svelte';
-  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, relayLastError, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError } from '$lib/stores';
+  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, relayLastError, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete } from '$lib/stores';
   import { getEndpoints } from '$lib/api';
   import { initRelayLogListener } from '$lib/logListener';
   import { invoke } from '@tauri-apps/api/core';
@@ -35,6 +36,7 @@
 
   const topLevelTabs = [
     { id: 'servers' as const, label: 'MCP Servers' },
+    { id: 'unified-catalog' as const, label: 'Unified Catalog' },
     { id: 'relay-logs' as const, label: 'Relay Logs' },
     { id: 'settings' as const, label: 'Settings' },
   ];
@@ -59,7 +61,7 @@
     // Sync the configured relay port to the Rust backend
     invoke('set_relay_port', { port: get(relayPort) }).catch(() => {});
     initRelayLogListener();
-    pollEndpoints();
+    pollEndpoints().then(() => initialLoadComplete.set(true));
     pollInterval = setInterval(pollEndpoints, 2000);
   });
 
@@ -127,6 +129,9 @@
           <Sidebar bind:this={sidebar} />
           <DetailPanel />
         {/if}
+      </div>
+      <div class="h-full" style:display={$activeTopLevelTab === 'unified-catalog' ? 'block' : 'none'}>
+        <UnifiedCatalog />
       </div>
       <div class="h-full" style:display={$activeTopLevelTab === 'relay-logs' ? 'block' : 'none'}>
         <RelayLogs />
