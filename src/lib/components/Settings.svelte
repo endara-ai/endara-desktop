@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { theme, jsExecutionMode, relayPort, relayConnected, relayLastError, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError } from '$lib/stores';
+  import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError } from '$lib/stores';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus, getConfig, reloadConfig } from '$lib/api';
@@ -9,12 +9,23 @@
 
   let portInput: number = $state($relayPort);
   let portSaved = $state(false);
+  let portError = $state<string | null>(null);
 
-  function savePort() {
-    relayPort.set(portInput);
-    invoke('set_relay_port', { port: portInput }).catch(() => {});
-    portSaved = true;
-    setTimeout(() => { portSaved = false; }, 2000);
+  async function savePort() {
+    const port = Math.floor(portInput);
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      portError = 'Port must be an integer between 1 and 65535';
+      return;
+    }
+    portError = null;
+    try {
+      await invoke('set_relay_port', { port });
+      relayPort.set(port);
+      portSaved = true;
+      setTimeout(() => { portSaved = false; }, 2000);
+    } catch (e) {
+      portError = e instanceof Error ? e.message : String(e);
+    }
   }
 
   const connectionItems = $derived([
@@ -42,7 +53,7 @@
   let buildInfo: BuildInfo | null = $state(null);
   let relayStatus: RelayStatus | null = $state(null);
   let statusPollInterval: ReturnType<typeof setInterval> | undefined;
-	let retryingRelay = $state(false);
+  let retryingRelay = $state(false);
 
   function setTheme(t: Theme) {
     theme.set(t);
@@ -108,7 +119,7 @@
   const isAmber = $derived($relaySidecarStatus === 'failed' && $relayConnected);
   const isRed = $derived(($relaySidecarStatus === 'failed' || $relaySidecarStatus === 'stopped') && !$relayConnected);
   const isStarting = $derived($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown');
-	const showRetryRelayButton = $derived(canRetryRelay($relaySidecarStatus));
+  const showRetryRelayButton = $derived(canRetryRelay($relaySidecarStatus));
   const statusDotColor = $derived(isGreen ? 'bg-green-500' : isAmber ? 'bg-yellow-500' : isRed ? 'bg-red-500' : 'bg-gray-400');
   const statusBadgeClass = $derived(isGreen ? 'bg-green-500/10 text-green-600 dark:text-green-400'
     : isAmber ? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
@@ -116,25 +127,25 @@
     : 'bg-gray-500/10 text-gray-600 dark:text-gray-400');
   const statusLabel = $derived(isGreen ? 'Running'
     : isAmber ? 'Port Conflict'
-	  : $relaySidecarStatus === 'stopped' ? 'Stopped'
+    : $relaySidecarStatus === 'stopped' ? 'Stopped'
     : isRed ? 'Failed'
     : isStarting ? 'Starting...'
     : 'Unknown');
 
-	async function handleRetryRelay() {
-	  if (retryingRelay) return;
+  async function handleRetryRelay() {
+    if (retryingRelay) return;
 
-	  retryingRelay = true;
+    retryingRelay = true;
 
-	  try {
-	    await restartRelay(invoke);
-	  } catch (error) {
-	    console.error('Failed to restart relay:', error);
-	    relaySidecarError.set(error instanceof Error ? error.message : String(error));
-	  } finally {
-	    retryingRelay = false;
-	  }
-	}
+    try {
+      await restartRelay(invoke);
+    } catch (error) {
+      console.error('Failed to restart relay:', error);
+      relaySidecarError.set(error instanceof Error ? error.message : String(error));
+    } finally {
+      retryingRelay = false;
+    }
+  }
 </script>
 
 <div class="h-full overflow-y-auto p-6">
@@ -174,9 +185,9 @@
 
       {#if isRed}
         <p class="text-xs text-(--color-text-secondary) mt-1">
-	          {$relaySidecarStatus === 'stopped'
-	            ? 'Relay is stopped. Click Retry to start it again.'
-	            : `Relay failed to start on port ${$relayPort}. Check Relay Logs for details.`}
+          {$relaySidecarStatus === 'stopped'
+            ? 'Relay is stopped. Click Retry to start it again.'
+            : `Relay failed to start on port ${$relayPort}. Check Relay Logs for details.`}
         </p>
         {#if $relaySidecarError}
           <div class="mt-2 p-2 rounded bg-red-500/10 border border-red-500/20">
@@ -191,17 +202,17 @@
         </p>
       {/if}
 
-		      {#if showRetryRelayButton}
-	        <div class="mt-3">
-	          <button
-	            class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-	            onclick={handleRetryRelay}
-	            disabled={retryingRelay}
-	          >
-	            {retryingRelay ? 'Retrying…' : 'Retry'}
-	          </button>
-	        </div>
-	      {/if}
+      {#if showRetryRelayButton}
+        <div class="mt-3">
+          <button
+            class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            onclick={handleRetryRelay}
+            disabled={retryingRelay}
+          >
+            {retryingRelay ? 'Retrying…' : 'Retry'}
+          </button>
+        </div>
+      {/if}
     </div>
 
     <fieldset class="border-none p-0">
@@ -257,7 +268,11 @@
               {portSaved ? '✓ Saved' : 'Save'}
             </button>
           </div>
-          <p class="text-xs text-(--color-text-secondary)/70 mt-1">Restart the app to apply port changes.</p>
+          {#if portError}
+            <p class="text-xs text-red-600 dark:text-red-400 mt-1">{portError}</p>
+          {:else}
+            <p class="text-xs text-(--color-text-secondary)/70 mt-1">Restart the app to apply port changes.</p>
+          {/if}
         </div>
       </div>
       <div class="space-y-1.5">

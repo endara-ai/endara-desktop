@@ -39,7 +39,6 @@ function createThemeStore() {
 
 export const theme = createThemeStore();
 export const searchQuery = writable<string>('');
-export const isSettingsOpen = writable<boolean>(false);
 export const activeTab = writable<'tools' | 'logs' | 'config'>('tools');
 export const activeTopLevelTab = writable<'servers' | 'unified-catalog' | 'relay-logs' | 'settings'>('servers');
 
@@ -53,7 +52,6 @@ export const relayLogLines = writable<RelayLogLine[]>([]);
 export const miniPlayerMode = writable<boolean>(false);
 
 export const relayConnected = writable<boolean>(false);
-export const relayLastError = writable<string | null>(null);
 export const onboardingDismissed = writable<boolean>(false);
 export const initialLoadComplete = writable<boolean>(false);
 

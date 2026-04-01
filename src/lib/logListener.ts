@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { relayLogLines, relayLastError, relaySidecarStatus, relaySidecarError } from './stores';
+import { relayLogLines, relaySidecarStatus, relaySidecarError } from './stores';
 import type { RelayLogLine, RelaySidecarStatusType } from './stores';
 
 let initialized = false;
@@ -38,13 +38,8 @@ export async function initRelayLogListener() {
     console.error('Failed to listen for relay-log events:', e);
   }),
 
-    listen<{ status: string; message: string | null }>('relay-health', (event) => {
-    const { status, message } = event.payload;
-    if (status === 'error' && message) {
-      relayLastError.set(message);
-    } else if (status === 'connected') {
-      relayLastError.set(null);
-    }
+    listen<{ status: string; message: string | null }>('relay-health', () => {
+    // relay-health events are handled via relay-sidecar-status
   }).catch((e) => {
     console.error('Failed to listen for relay-health events:', e);
   }),

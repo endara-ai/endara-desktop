@@ -15,6 +15,14 @@ describe('Settings relay retry behavior', () => {
     expect(canRetryRelay('running')).toBe(false);
   });
 
+  it('does not show the retry button when the sidecar is starting', () => {
+    expect(canRetryRelay('starting')).toBe(false);
+  });
+
+  it('does not show the retry button when the sidecar status is unknown', () => {
+    expect(canRetryRelay('unknown')).toBe(false);
+  });
+
   it('invokes restart_relay when retry is triggered', async () => {
     const invoke = vi.fn().mockResolvedValue(undefined);
 
