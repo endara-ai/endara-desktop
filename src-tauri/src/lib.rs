@@ -1,3 +1,7 @@
+#[cfg(target_os = "macos")]
+#[macro_use]
+extern crate objc;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -9,6 +13,45 @@ use tauri::{
 };
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use tokio::sync::Mutex;
+
+/// Workaround: In Tauri v2, `set_activation_policy` is only available on `App`,
+/// not on `AppHandle`, so it cannot be called from event handlers.
+/// See: https://github.com/tauri-apps/tauri/issues/9244
+/// This uses the cocoa crate to call NSApplication.setActivationPolicy directly.
+/// TODO: Remove this workaround once Tauri exposes set_activation_policy on AppHandle.
+#[cfg(target_os = "macos")]
+fn set_macos_activation_policy(regular: bool) {
+    use cocoa::appkit::NSApplicationActivationPolicy;
+    unsafe {
+        let app = cocoa::appkit::NSApp();
+        let policy = if regular {
+            NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular
+        } else {
+            NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory
+        };
+        let _: () = msg_send![app, setActivationPolicy: policy];
+    }
+}
+
+/// Check if a port is already in use by attempting a TCP connection.
+fn is_port_in_use(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_ok()
+}
+
+/// Read the relay port from ~/.endara/config.toml [relay] section.
+/// Returns None if the file doesn't exist, can't be parsed, or has no port setting.
+fn read_port_from_config() -> Option<u16> {
+    let config_path = dirs::home_dir()?.join(".endara").join("config.toml");
+    let contents = std::fs::read_to_string(&config_path).ok()?;
+    let parsed: toml::Table = contents.parse().ok()?;
+    parsed
+        .get("relay")?
+        .as_table()?
+        .get("port")?
+        .as_integer()
+        .and_then(|p| u16::try_from(p).ok())
+}
 
 /// Strip ANSI escape sequences from text.
 fn strip_ansi(s: &str) -> String {
@@ -33,9 +76,41 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
+/// Return the path to `~/.endara/config.toml`.
+fn config_path() -> Result<std::path::PathBuf, String> {
+    dirs::home_dir()
+        .map(|h| h.join(".endara").join("config.toml"))
+        .ok_or_else(|| "Could not determine home directory".to_string())
+}
+
+/// Read and parse `~/.endara/config.toml`, returning `Err` if the file is missing or invalid.
+fn read_config() -> Result<toml::Table, String> {
+    let path = config_path()?;
+    if !path.exists() {
+        return Err("Config file not found".to_string());
+    }
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read config: {e}"))?;
+    contents
+        .parse()
+        .map_err(|e| format!("Failed to parse config: {e}"))
+}
+
+/// Serialize and write a `toml::Table` back to `~/.endara/config.toml`.
+fn write_config(table: &toml::Table) -> Result<(), String> {
+    let path = config_path()?;
+    let new_contents = toml::to_string_pretty(table)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+    std::fs::write(&path, &new_contents)
+        .map_err(|e| format!("Failed to write config: {e}"))
+}
+
 /// Holds the relay sidecar child process handle.
 pub struct RelayState {
     child: Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>,
+    /// Raw PID stored behind a std::sync::Mutex so it can be read without an async runtime
+    /// (e.g. in the synchronous `RunEvent::Exit` callback).
+    pid: Arc<std::sync::Mutex<Option<u32>>>,
     running: Arc<Mutex<bool>>,
     port: Arc<Mutex<u16>>,
     last_sidecar_status: Arc<Mutex<String>>,
@@ -106,9 +181,7 @@ async fn spawn_relay(
     app: &AppHandle,
     port: u16,
 ) -> Result<tauri_plugin_shell::process::CommandChild, String> {
-    let config_path = dirs::home_dir()
-        .map(|h| h.join(".endara").join("config.toml"))
-        .unwrap_or_default();
+    let config_file = config_path()?;
 
     // Ensure log directory exists for relay file logging
     if let Some(home) = dirs::home_dir() {
@@ -116,7 +189,15 @@ async fn spawn_relay(
         let _ = std::fs::create_dir_all(&log_dir);
     }
 
-    eprintln!("[relay] attempting to spawn sidecar with config: {:?}, port: {}", config_path, port);
+    eprintln!("[relay] attempting to spawn sidecar with config: {:?}, port: {}", config_file, port);
+
+    // Pre-flight port conflict check
+    if is_port_in_use(port) {
+        let err_msg = format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port);
+        eprintln!("[relay] pre-flight check failed: {}", err_msg);
+        emit_sidecar_status(app, "failed", Some(err_msg.clone())).await;
+        return Err(err_msg);
+    }
 
     // Emit sidecar lifecycle: starting
     emit_sidecar_status(app, "starting", None).await;
@@ -129,7 +210,7 @@ async fn spawn_relay(
             eprintln!("[relay] FAILED to create sidecar command: {e}");
             format!("Failed to create sidecar command: {e}")
         })?
-        .args(["start", "--config", &config_path.to_string_lossy(), "--port", &port_str])
+        .args(["start", "--config", &config_file.to_string_lossy(), "--port", &port_str])
         .spawn()
         .map_err(|e| {
             eprintln!("[relay] FAILED to spawn relay sidecar: {e}");
@@ -189,6 +270,9 @@ async fn spawn_relay(
                     eprintln!("[relay] process terminated, code: {code:?}, signal: {signal:?}");
                     // Update running state
                     if let Some(state) = app_handle.try_state::<RelayState>() {
+                        if let Ok(mut pid_guard) = state.pid.lock() {
+                            pid_guard.take();
+                        }
                         *state.running.lock().await = false;
                         *state.child.lock().await = None;
                     }
@@ -233,6 +317,9 @@ async fn start_relay(
 
     let port = *state.port.lock().await;
     let child = spawn_relay(&app, port).await?;
+    if let Ok(mut pid_guard) = state.pid.lock() {
+        *pid_guard = Some(child.pid());
+    }
     *state.child.lock().await = Some(child);
     *state.running.lock().await = true;
     Ok(RelayStatusInfo { running: true })
@@ -240,6 +327,9 @@ async fn start_relay(
 
 #[tauri::command]
 async fn stop_relay(state: State<'_, RelayState>) -> Result<RelayStatusInfo, String> {
+    if let Ok(mut pid_guard) = state.pid.lock() {
+        pid_guard.take();
+    }
     let mut child_guard = state.child.lock().await;
     if let Some(child) = child_guard.take() {
         child.kill().map_err(|e| format!("Failed to kill relay: {e}"))?;
@@ -254,6 +344,9 @@ async fn restart_relay(
     state: State<'_, RelayState>,
 ) -> Result<RelayStatusInfo, String> {
     {
+        if let Ok(mut pid_guard) = state.pid.lock() {
+            pid_guard.take();
+        }
         let mut child_guard = state.child.lock().await;
         if let Some(child) = child_guard.take() {
             let _ = child.kill();
@@ -266,6 +359,9 @@ async fn restart_relay(
 
     let port = *state.port.lock().await;
     let child = spawn_relay(&app, port).await?;
+    if let Ok(mut pid_guard) = state.pid.lock() {
+        *pid_guard = Some(child.pid());
+    }
     *state.child.lock().await = Some(child);
     *state.running.lock().await = true;
     Ok(RelayStatusInfo { running: true })
@@ -288,27 +384,33 @@ async fn get_sidecar_status(
 }
 
 #[tauri::command]
+async fn get_relay_port(state: State<'_, RelayState>) -> Result<u16, String> {
+    Ok(*state.port.lock().await)
+}
+
+#[tauri::command]
 async fn set_relay_port(port: u16, state: State<'_, RelayState>) -> Result<(), String> {
     *state.port.lock().await = port;
-    Ok(())
+
+    // Persist port to ~/.endara/config.toml
+    let mut table = read_config()?;
+
+    // Set port in the [relay] section
+    if let Some(relay) = table.get_mut("relay").and_then(|v| v.as_table_mut()) {
+        relay.insert(
+            "port".to_string(),
+            toml::Value::Integer(port as i64),
+        );
+    } else {
+        return Err("Missing [relay] section in config".to_string());
+    }
+
+    write_config(&table)
 }
 
 #[tauri::command]
 async fn set_js_execution_mode(enabled: bool) -> Result<(), String> {
-    let config_path = dirs::home_dir()
-        .map(|h| h.join(".endara").join("config.toml"))
-        .ok_or_else(|| "Could not determine home directory".to_string())?;
-
-    let contents = if config_path.exists() {
-        std::fs::read_to_string(&config_path)
-            .map_err(|e| format!("Failed to read config: {e}"))?
-    } else {
-        return Err("Config file does not exist".to_string());
-    };
-
-    let mut table: toml::Table = contents
-        .parse()
-        .map_err(|e| format!("Failed to parse config: {e}"))?;
+    let mut table = read_config()?;
 
     // Set local_js_execution in the [relay] section
     if let Some(relay) = table.get_mut("relay").and_then(|v| v.as_table_mut()) {
@@ -320,13 +422,7 @@ async fn set_js_execution_mode(enabled: bool) -> Result<(), String> {
         return Err("Missing [relay] section in config".to_string());
     }
 
-    let new_contents = toml::to_string_pretty(&table)
-        .map_err(|e| format!("Failed to serialize config: {e}"))?;
-
-    std::fs::write(&config_path, &new_contents)
-        .map_err(|e| format!("Failed to write config: {e}"))?;
-
-    Ok(())
+    write_config(&table)
 }
 
 #[derive(Deserialize)]
@@ -357,20 +453,7 @@ struct EndpointConfig {
 
 #[tauri::command]
 async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
-    let config_path = dirs::home_dir()
-        .map(|h| h.join(".endara").join("config.toml"))
-        .ok_or_else(|| "Could not determine home directory".to_string())?;
-
-    if !config_path.exists() {
-        return Err("Config file not found".to_string());
-    }
-
-    let contents = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {e}"))?;
-
-    let parsed: toml::Table = contents
-        .parse()
-        .map_err(|e| format!("Failed to parse config: {e}"))?;
+    let parsed = read_config()?;
 
     if let Some(toml::Value::Array(endpoints)) = parsed.get("endpoints") {
         for ep in endpoints {
@@ -424,20 +507,7 @@ struct UpdateEndpointArgs {
 
 #[tauri::command]
 async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
-    let config_path = dirs::home_dir()
-        .map(|h| h.join(".endara").join("config.toml"))
-        .ok_or_else(|| "Could not determine home directory".to_string())?;
-
-    if !config_path.exists() {
-        return Err("Config file not found".to_string());
-    }
-
-    let contents = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {e}"))?;
-
-    let mut parsed: toml::Table = contents
-        .parse()
-        .map_err(|e| format!("Failed to parse config: {e}"))?;
+    let mut parsed = read_config()?;
 
     // If name changed, check for duplicates
     if args.name != args.original_name {
@@ -505,28 +575,20 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
         return Err(format!("Endpoint '{}' not found", args.original_name));
     }
 
-    let new_contents = toml::to_string_pretty(&parsed)
-        .map_err(|e| format!("Failed to serialize config: {e}"))?;
-
-    std::fs::write(&config_path, &new_contents)
-        .map_err(|e| format!("Failed to write config: {e}"))?;
-
-    Ok(())
+    write_config(&parsed)
 }
 
 #[tauri::command]
 async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
-    let config_path = dirs::home_dir()
-        .map(|h| h.join(".endara").join("config.toml"))
-        .ok_or_else(|| "Could not determine home directory".to_string())?;
+    let path = config_path()?;
 
     // Read existing config or create default
-    let contents = if config_path.exists() {
-        std::fs::read_to_string(&config_path)
+    let contents = if path.exists() {
+        std::fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read config: {e}"))?
     } else {
         // Create parent directory if needed
-        if let Some(parent) = config_path.parent() {
+        if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create config directory: {e}"))?;
         }
@@ -599,31 +661,12 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
         .ok_or_else(|| "Invalid endpoints section in config".to_string())?;
     endpoints.push(toml::Value::Table(endpoint));
 
-    let new_contents = toml::to_string_pretty(&parsed)
-        .map_err(|e| format!("Failed to serialize config: {e}"))?;
-
-    std::fs::write(&config_path, &new_contents)
-        .map_err(|e| format!("Failed to write config: {e}"))?;
-
-    Ok(())
+    write_config(&parsed)
 }
 
 #[tauri::command]
 async fn remove_endpoint(name: String) -> Result<(), String> {
-    let config_path = dirs::home_dir()
-        .map(|h| h.join(".endara").join("config.toml"))
-        .ok_or_else(|| "Could not determine home directory".to_string())?;
-
-    if !config_path.exists() {
-        return Err("Config file not found".to_string());
-    }
-
-    let contents = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {e}"))?;
-
-    let mut parsed: toml::Table = contents
-        .parse()
-        .map_err(|e| format!("Failed to parse config: {e}"))?;
+    let mut parsed = read_config()?;
 
     if let Some(toml::Value::Array(endpoints)) = parsed.get_mut("endpoints") {
         let original_len = endpoints.len();
@@ -640,26 +683,22 @@ async fn remove_endpoint(name: String) -> Result<(), String> {
         return Err(format!("Endpoint '{}' not found", name));
     }
 
-    let new_contents = toml::to_string_pretty(&parsed)
-        .map_err(|e| format!("Failed to serialize config: {e}"))?;
-
-    std::fs::write(&config_path, &new_contents)
-        .map_err(|e| format!("Failed to write config: {e}"))?;
-
-    Ok(())
+    write_config(&parsed)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let relay_state = RelayState {
         child: Arc::new(Mutex::new(None)),
+        pid: Arc::new(std::sync::Mutex::new(None)),
         running: Arc::new(Mutex::new(false)),
-        port: Arc::new(Mutex::new(9400)),
+        port: Arc::new(Mutex::new(read_port_from_config().unwrap_or(9400))),
         last_sidecar_status: Arc::new(Mutex::new("unknown".to_string())),
         last_sidecar_error: Arc::new(Mutex::new(None)),
     };
 
     let child_handle = relay_state.child.clone();
+    let pid_handle = relay_state.pid.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new()
@@ -681,6 +720,7 @@ pub fn run() {
             remove_endpoint,
             get_endpoint_config,
             update_endpoint,
+            get_relay_port,
             set_relay_port,
             set_js_execution_mode,
         ])
@@ -696,10 +736,14 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
+                .icon_as_template(true)
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
+                        // Show in Cmd-Tab and Dock
+                        #[cfg(target_os = "macos")]
+                        set_macos_activation_policy(true);
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -707,13 +751,33 @@ pub fn run() {
                     }
                     "check_update" => {
                         let _ = app.emit("check-for-update", ());
-                        // Also show the window so user can see the update UI
+                        // Show in Cmd-Tab and Dock
+                        #[cfg(target_os = "macos")]
+                        set_macos_activation_policy(true);
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
                         }
                     }
                     "quit" => {
+                        // Kill relay sidecar before exiting
+                        if let Some(state) = app.try_state::<RelayState>() {
+                            // Kill by PID first (synchronous, reliable)
+                            if let Ok(mut pid_guard) = state.pid.lock() {
+                                if let Some(pid) = pid_guard.take() {
+                                    eprintln!("[relay] killing sidecar pid {} on tray quit", pid);
+                                    unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+                                }
+                            }
+                            // Also kill via child handle as fallback
+                            let child_handle = state.child.clone();
+                            tauri::async_runtime::block_on(async {
+                                let mut guard = child_handle.lock().await;
+                                if let Some(child) = guard.take() {
+                                    let _ = child.kill();
+                                }
+                            });
+                        }
                         app.exit(0);
                     }
                     _ => {}
@@ -731,6 +795,9 @@ pub fn run() {
                 match spawn_relay(&app_handle, port).await {
                     Ok(child) => {
                         if let Some(state) = app_handle.try_state::<RelayState>() {
+                            if let Ok(mut pid_guard) = state.pid.lock() {
+                                *pid_guard = Some(child.pid());
+                            }
                             *state.child.lock().await = Some(child);
                             *state.running.lock().await = true;
                         }
@@ -742,21 +809,49 @@ pub fn run() {
                 }
             });
 
+            // Ensure app appears in Cmd-Tab on startup
+            #[cfg(target_os = "macos")]
+            set_macos_activation_policy(true);
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Prevent the window from being destroyed — hide it instead
+                api.prevent_close();
+                let _ = window.hide();
+                // Hide from Cmd-Tab and Dock, keep in menu bar tray
+                #[cfg(target_os = "macos")]
+                set_macos_activation_policy(false);
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |_app, event| {
-            if let RunEvent::ExitRequested { .. } = event {
-                // Kill relay sidecar on app exit
-                let child_handle = child_handle.clone();
-                tauri::async_runtime::block_on(async {
-                    let mut guard = child_handle.lock().await;
-                    if let Some(child) = guard.take() {
-                        log::info!("[relay] killing sidecar on app exit");
-                        let _ = child.kill();
+            match event {
+                RunEvent::Exit => {
+                    // Kill relay by PID — no async runtime needed, avoids block_on deadlock
+                    if let Ok(mut guard) = pid_handle.try_lock() {
+                        if let Some(pid) = guard.take() {
+                            eprintln!("[relay] killing sidecar pid {} on app exit", pid);
+                            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+                        }
                     }
-                });
+                    // Also try the async child.kill() as fallback, in a separate thread
+                    // to avoid deadlocking on the tokio runtime during shutdown.
+                    let child_handle = child_handle.clone();
+                    let _ = std::thread::spawn(move || {
+                        if let Ok(rt) = tokio::runtime::Runtime::new() {
+                            rt.block_on(async {
+                                let mut guard = child_handle.lock().await;
+                                if let Some(child) = guard.take() {
+                                    let _ = child.kill();
+                                }
+                            });
+                        }
+                    }).join();
+                }
+                _ => {}
             }
         });
 }
