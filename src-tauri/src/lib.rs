@@ -47,11 +47,19 @@ pub struct RelayState {
     auto_restart_enabled: Arc<Mutex<bool>>,
     port: Arc<Mutex<u16>>,
     restart_count: Arc<Mutex<u32>>,
+    port_conflict: Arc<Mutex<bool>>,
 }
 
 #[derive(Serialize, Clone)]
 pub struct RelayStatusInfo {
     pub running: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SidecarStatusResponse {
+    pub running: bool,
+    pub port_conflict: bool,
+    pub port: u16,
 }
 
 #[derive(Serialize, Clone)]
@@ -147,9 +155,10 @@ fn spawn_relay(
                             status: "running".to_string(),
                             error: None,
                         });
-                        // Reset restart count on successful start
+                        // Reset restart count and clear port conflict on successful start
                         if let Some(state) = app_handle.try_state::<RelayState>() {
                             *state.restart_count.lock().await = 0;
+                            *state.port_conflict.lock().await = false;
                         }
                     }
                     let _ = app_handle.emit("relay-log", RelayLogPayload {
@@ -172,9 +181,10 @@ fn spawn_relay(
                             status: "running".to_string(),
                             error: None,
                         });
-                        // Reset restart count on successful start
+                        // Reset restart count and clear port conflict on successful start
                         if let Some(state) = app_handle.try_state::<RelayState>() {
                             *state.restart_count.lock().await = 0;
+                            *state.port_conflict.lock().await = false;
                         }
                     }
                     let _ = app_handle.emit("relay-log", RelayLogPayload {
@@ -309,8 +319,10 @@ async fn start_relay(
     }
     *state.auto_restart_enabled.lock().await = true;
     *state.restart_count.lock().await = 0;
+    *state.port_conflict.lock().await = false;
     let port = *state.port.lock().await;
     if is_port_in_use(port) {
+        *state.port_conflict.lock().await = true;
         let _ = app.emit("relay-sidecar-status", RelaySidecarStatusPayload {
             status: "failed".to_string(),
             error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),
@@ -355,8 +367,10 @@ async fn restart_relay(
     // Start new — re-enable auto-restart
     *state.auto_restart_enabled.lock().await = true;
     *state.restart_count.lock().await = 0;
+    *state.port_conflict.lock().await = false;
     let port = *state.port.lock().await;
     if is_port_in_use(port) {
+        *state.port_conflict.lock().await = true;
         let _ = app.emit("relay-sidecar-status", RelaySidecarStatusPayload {
             status: "failed".to_string(),
             error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),
@@ -373,6 +387,14 @@ async fn restart_relay(
 async fn relay_status(state: State<'_, RelayState>) -> Result<RelayStatusInfo, String> {
     let running = *state.running.lock().await;
     Ok(RelayStatusInfo { running })
+}
+
+#[tauri::command]
+async fn get_sidecar_status(state: State<'_, RelayState>) -> Result<SidecarStatusResponse, String> {
+    let running = *state.running.lock().await;
+    let port_conflict = *state.port_conflict.lock().await;
+    let port = *state.port.lock().await;
+    Ok(SidecarStatusResponse { running, port_conflict, port })
 }
 
 #[tauri::command]
@@ -735,6 +757,7 @@ pub fn run() {
         auto_restart_enabled: Arc::new(Mutex::new(true)),
         port: Arc::new(Mutex::new(9400)),
         restart_count: Arc::new(Mutex::new(0)),
+        port_conflict: Arc::new(Mutex::new(false)),
     };
 
     let child_handle = relay_state.child.clone();
@@ -753,6 +776,7 @@ pub fn run() {
             stop_relay,
             restart_relay,
             relay_status,
+            get_sidecar_status,
             get_build_info,
             add_endpoint,
             remove_endpoint,
@@ -807,6 +831,9 @@ pub fn run() {
                 };
                 if is_port_in_use(port) {
                     eprintln!("[relay] port {} is already in use, not spawning relay", port);
+                    if let Some(state) = app_handle.try_state::<RelayState>() {
+                        *state.port_conflict.lock().await = true;
+                    }
                     let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
                         status: "failed".to_string(),
                         error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),

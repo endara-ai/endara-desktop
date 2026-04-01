@@ -68,10 +68,21 @@
     // Sync the configured relay port to the Rust backend
     invoke('set_relay_port', { port: get(relayPort) }).catch(() => {});
     initRelayLogListener();
-    // Small delay to let the Rust sidecar startup task complete its port check
-    // before we consider initial load complete
-    setTimeout(() => {
-      pollEndpoints().then(() => initialLoadComplete.set(true));
+    // Query Rust for initial sidecar status after a brief delay
+    // to let the Rust async setup task complete its port check
+    setTimeout(async () => {
+      try {
+        const status = await invoke<{ running: boolean; port_conflict: boolean; port: number }>('get_sidecar_status');
+        if (status.port_conflict) {
+          relaySidecarStatus.set('failed');
+          relaySidecarError.set(`Port ${status.port} is already in use by another process. Close the other process or change the relay port in Settings.`);
+        }
+      } catch (e) {
+        console.error('Failed to get sidecar status:', e);
+      }
+      // Now poll endpoints and mark initial load complete
+      await pollEndpoints();
+      initialLoadComplete.set(true);
     }, 1000);
     pollInterval = setInterval(pollEndpoints, 2000);
   });
