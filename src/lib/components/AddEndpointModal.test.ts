@@ -1,43 +1,20 @@
 import { describe, it, expect } from 'vitest';
 
-/**
- * Endpoint name validation: must match ^[a-z0-9][a-z0-9_-]*$
- * This mirrors the regex exported from AddEndpointModal.svelte.
- */
-function isValidEndpointName(value: string): boolean {
-  return /^[a-z0-9][a-z0-9_-]*$/.test(value);
-}
+import { sanitizeName } from '$lib/prefix';
 
-describe('AddEndpointModal name validation', () => {
-  describe('valid names', () => {
-    it.each([
-      'echo',
-      'my-server',
-      'test_ep',
-      'a',
-      '0day',
-      'abc-123',
-      'a-b_c',
-      '9lives',
-    ])('accepts "%s"', (name) => {
-      expect(isValidEndpointName(name)).toBe(true);
-    });
-  });
-
-  describe('invalid names', () => {
-    it.each([
-      ['', 'empty string'],
-      ['MyServer', 'uppercase letters'],
-      ['-bad', 'starts with hyphen'],
-      ['_bad', 'starts with underscore'],
-      ['my server', 'contains space'],
-      ['hello!', 'contains special character'],
-      ['café', 'contains non-ASCII'],
-      ['my.server', 'contains dot'],
-      ['MY-SERVER', 'all uppercase'],
-    ])('rejects "%s" (%s)', (name) => {
-      expect(isValidEndpointName(name)).toBe(false);
-    });
+describe('sanitizeName', () => {
+  it.each([
+    ['echo-mcp', 'echo-mcp'],
+    ['My MCP Server', 'my_mcp_server'],
+    ['server@v2.0!', 'serverv20'],
+    ['MyServer', 'myserver'],
+    ['My Server - v2.0 (beta)', 'my_server_-_v20_beta'],
+    ['café', 'caf'],
+    ['日本語', ''],
+    ['@#$%^&*', ''],
+    ['', ''],
+  ])('sanitizes "%s" to "%s"', (name, expected) => {
+    expect(sanitizeName(name)).toBe(expected);
   });
 });
 

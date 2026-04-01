@@ -37,9 +37,9 @@ fn strip_ansi(s: &str) -> String {
 pub struct RelayState {
     child: Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>,
     running: Arc<Mutex<bool>>,
-    auto_restart_enabled: Arc<Mutex<bool>>,
     port: Arc<Mutex<u16>>,
-    restart_count: Arc<Mutex<u32>>,
+    last_sidecar_status: Arc<Mutex<String>>,
+    last_sidecar_error: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -66,6 +66,20 @@ pub struct RelaySidecarStatusPayload {
     pub error: Option<String>,
 }
 
+async fn emit_sidecar_status(app: &AppHandle, status: &str, error: Option<String>) {
+    let payload = RelaySidecarStatusPayload {
+        status: status.to_string(),
+        error,
+    };
+
+    if let Some(state) = app.try_state::<RelayState>() {
+        *state.last_sidecar_status.lock().await = payload.status.clone();
+        *state.last_sidecar_error.lock().await = payload.error.clone();
+    }
+
+    let _ = app.emit("relay-sidecar-status", payload);
+}
+
 #[derive(Serialize, Clone)]
 pub struct BuildInfo {
     pub version: String,
@@ -88,7 +102,7 @@ async fn get_build_info() -> Result<BuildInfo, String> {
 
 /// Spawn the relay sidecar and monitor its output.
 /// Returns the child handle on success.
-fn spawn_relay(
+async fn spawn_relay(
     app: &AppHandle,
     port: u16,
 ) -> Result<tauri_plugin_shell::process::CommandChild, String> {
@@ -105,10 +119,7 @@ fn spawn_relay(
     eprintln!("[relay] attempting to spawn sidecar with config: {:?}, port: {}", config_path, port);
 
     // Emit sidecar lifecycle: starting
-    let _ = app.emit("relay-sidecar-status", RelaySidecarStatusPayload {
-        status: "starting".to_string(),
-        error: None,
-    });
+    emit_sidecar_status(app, "starting", None).await;
 
     let port_str = port.to_string();
     let (mut rx, child) = app
@@ -136,14 +147,7 @@ fn spawn_relay(
                     let text = strip_ansi(&String::from_utf8_lossy(&line));
                     // Detect successful startup from stdout
                     if text.contains("MCP server running") {
-                        let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
-                            status: "running".to_string(),
-                            error: None,
-                        });
-                        // Reset restart count on successful start
-                        if let Some(state) = app_handle.try_state::<RelayState>() {
-                            *state.restart_count.lock().await = 0;
-                        }
+                        emit_sidecar_status(&app_handle, "running", None).await;
                     }
                     let _ = app_handle.emit("relay-log", RelayLogPayload {
                         level: "info".to_string(),
@@ -161,14 +165,7 @@ fn spawn_relay(
                     };
                     // Detect successful startup from stderr (tracing outputs to stderr)
                     if text.contains("MCP server running") {
-                        let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
-                            status: "running".to_string(),
-                            error: None,
-                        });
-                        // Reset restart count on successful start
-                        if let Some(state) = app_handle.try_state::<RelayState>() {
-                            *state.restart_count.lock().await = 0;
-                        }
+                        emit_sidecar_status(&app_handle, "running", None).await;
                     }
                     let _ = app_handle.emit("relay-log", RelayLogPayload {
                         level: level.to_string(),
@@ -182,10 +179,7 @@ fn spawn_relay(
                         });
                         // Emit sidecar failed status for critical errors
                         if text.contains("Failed to start HTTP server") || text.contains("Address already in use") {
-                            let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
-                                status: "failed".to_string(),
-                                error: Some(text),
-                            });
+                            emit_sidecar_status(&app_handle, "failed", Some(text.clone())).await;
                         }
                     }
                 }
@@ -207,76 +201,13 @@ fn spawn_relay(
                     // Emit sidecar lifecycle status based on exit code
                     let exited_cleanly = code == Some(0) || (code.is_none() && signal.is_some());
                     if exited_cleanly {
-                        let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
-                            status: "stopped".to_string(),
-                            error: None,
-                        });
+                        emit_sidecar_status(&app_handle, "stopped", None).await;
                     } else {
-                        let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
-                            status: "failed".to_string(),
-                            error: Some(format!("Process exited with code: {:?}, signal: {:?}", code, signal)),
-                        });
-                    }
-
-                    // Check if auto-restart is enabled (disabled by intentional stop)
-                    let should_restart = if let Some(state) = app_handle.try_state::<RelayState>() {
-                        *state.auto_restart_enabled.lock().await
-                    } else {
-                        false
-                    };
-
-                    if !should_restart {
-                        eprintln!("[relay] auto-restart disabled, not restarting");
-                        break;
-                    }
-
-                    // Check restart count and apply backoff
-                    let current_restart_count = if let Some(state) = app_handle.try_state::<RelayState>() {
-                        let mut count = state.restart_count.lock().await;
-                        *count += 1;
-                        *count
-                    } else {
-                        break;
-                    };
-
-                    if current_restart_count > 5 {
-                        eprintln!("[relay] auto-restart stopped after 5 consecutive failures");
-                        let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
-                            status: "failed".to_string(),
-                            error: Some("Auto-restart stopped after 5 consecutive failures".to_string()),
-                        });
-                        let _ = app_handle.emit("relay-health", RelayHealthPayload {
-                            status: "error".to_string(),
-                            message: Some("Auto-restart stopped after 5 consecutive failures".to_string()),
-                        });
-                        break;
-                    }
-
-                    // Exponential backoff: 2s, 4s, 8s, 16s, 30s
-                    let delay_secs = std::cmp::min(2u64.pow(current_restart_count), 30);
-                    eprintln!("[relay] attempting auto-restart {current_restart_count}/5 after {delay_secs}s...");
-                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
-
-                    if let Some(state) = app_handle.try_state::<RelayState>() {
-                        let port = *state.port.lock().await;
-                        match spawn_relay(&app_handle, port) {
-                            Ok(new_child) => {
-                                *state.child.lock().await = Some(new_child);
-                                *state.running.lock().await = true;
-                                eprintln!("[relay] auto-restart successful");
-                                let _ = app_handle.emit("relay-health", RelayHealthPayload {
-                                    status: "connected".to_string(),
-                                    message: None,
-                                });
-                            }
-                            Err(e) => {
-                                eprintln!("[relay] auto-restart FAILED: {e}");
-                                let _ = app_handle.emit("relay-health", RelayHealthPayload {
-                                    status: "error".to_string(),
-                                    message: Some(format!("Auto-restart failed: {e}")),
-                                });
-                            }
-                        }
+                        emit_sidecar_status(
+                            &app_handle,
+                            "failed",
+                            Some(format!("Process exited with code: {:?}, signal: {:?}", code, signal)),
+                        ).await;
                     }
                     break;
                 }
@@ -296,22 +227,19 @@ async fn start_relay(
     app: AppHandle,
     state: State<'_, RelayState>,
 ) -> Result<RelayStatusInfo, String> {
-    let mut child_guard = state.child.lock().await;
-    if child_guard.is_some() {
+    if state.child.lock().await.is_some() {
         return Ok(RelayStatusInfo { running: true });
     }
-    *state.auto_restart_enabled.lock().await = true;
-    *state.restart_count.lock().await = 0;
+
     let port = *state.port.lock().await;
-    let child = spawn_relay(&app, port)?;
-    *child_guard = Some(child);
+    let child = spawn_relay(&app, port).await?;
+    *state.child.lock().await = Some(child);
     *state.running.lock().await = true;
     Ok(RelayStatusInfo { running: true })
 }
 
 #[tauri::command]
 async fn stop_relay(state: State<'_, RelayState>) -> Result<RelayStatusInfo, String> {
-    *state.auto_restart_enabled.lock().await = false;
     let mut child_guard = state.child.lock().await;
     if let Some(child) = child_guard.take() {
         child.kill().map_err(|e| format!("Failed to kill relay: {e}"))?;
@@ -325,8 +253,6 @@ async fn restart_relay(
     app: AppHandle,
     state: State<'_, RelayState>,
 ) -> Result<RelayStatusInfo, String> {
-    // Stop existing — disable auto-restart so the Terminated handler doesn't race
-    *state.auto_restart_enabled.lock().await = false;
     {
         let mut child_guard = state.child.lock().await;
         if let Some(child) = child_guard.take() {
@@ -338,11 +264,8 @@ async fn restart_relay(
     // Brief pause before restart
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Start new — re-enable auto-restart
-    *state.auto_restart_enabled.lock().await = true;
-    *state.restart_count.lock().await = 0;
     let port = *state.port.lock().await;
-    let child = spawn_relay(&app, port)?;
+    let child = spawn_relay(&app, port).await?;
     *state.child.lock().await = Some(child);
     *state.running.lock().await = true;
     Ok(RelayStatusInfo { running: true })
@@ -352,6 +275,16 @@ async fn restart_relay(
 async fn relay_status(state: State<'_, RelayState>) -> Result<RelayStatusInfo, String> {
     let running = *state.running.lock().await;
     Ok(RelayStatusInfo { running })
+}
+
+#[tauri::command]
+async fn get_sidecar_status(
+    state: State<'_, RelayState>,
+) -> Result<RelaySidecarStatusPayload, String> {
+    Ok(RelaySidecarStatusPayload {
+        status: state.last_sidecar_status.lock().await.clone(),
+        error: state.last_sidecar_error.lock().await.clone(),
+    })
 }
 
 #[tauri::command]
@@ -400,6 +333,7 @@ async fn set_js_execution_mode(enabled: bool) -> Result<(), String> {
 struct AddEndpointArgs {
     name: String,
     transport: String,
+    tool_prefix: Option<String>,
     command: Option<String>,
     args: Option<Vec<String>>,
     url: Option<String>,
@@ -412,6 +346,7 @@ struct AddEndpointArgs {
 struct EndpointConfig {
     name: String,
     transport: String,
+    tool_prefix: Option<String>,
     command: Option<String>,
     args: Option<Vec<String>>,
     url: Option<String>,
@@ -446,6 +381,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
                 });
                 let url = ep.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let tool_prefix = ep.get("tool_prefix").and_then(|v| v.as_str()).map(|s| s.to_string());
                 let description = ep.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
                 let env = ep.get("env").and_then(|v| v.as_table()).map(|t| {
                     t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
@@ -457,6 +393,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                 return Ok(EndpointConfig {
                     name: name.clone(),
                     transport,
+                    tool_prefix,
                     command,
                     args,
                     url,
@@ -477,6 +414,7 @@ struct UpdateEndpointArgs {
     original_name: String,
     name: String,
     transport: String,
+    tool_prefix: Option<String>,
     command: Option<String>,
     args: Option<Vec<String>>,
     url: Option<String>,
@@ -524,6 +462,9 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                 table.clear();
                 table.insert("name".to_string(), toml::Value::String(args.name.clone()));
                 table.insert("transport".to_string(), toml::Value::String(args.transport.clone()));
+                if let Some(tool_prefix) = &args.tool_prefix {
+                    table.insert("tool_prefix".to_string(), toml::Value::String(tool_prefix.clone()));
+                }
 
                 if let Some(cmd) = &args.command {
                     table.insert("command".to_string(), toml::Value::String(cmd.clone()));
@@ -581,7 +522,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
         .ok_or_else(|| "Could not determine home directory".to_string())?;
 
     // Read existing config or create default
-    let mut contents = if config_path.exists() {
+    let contents = if config_path.exists() {
         std::fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {e}"))?
     } else {
@@ -598,54 +539,71 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
         format!("[relay]\nmachine_name = \"{machine_name}\"\n")
     };
 
+    let mut parsed: toml::Table = contents
+        .parse()
+        .map_err(|e| format!("Failed to parse config: {e}"))?;
+
     // Check for duplicate endpoint name
-    if let Ok(parsed) = contents.parse::<toml::Table>() {
-        if let Some(toml::Value::Array(endpoints)) = parsed.get("endpoints") {
-            for ep in endpoints {
-                if let Some(toml::Value::String(name)) = ep.get("name") {
-                    if name == &args.name {
-                        return Err(format!("An endpoint named '{}' already exists", args.name));
-                    }
+    if let Some(toml::Value::Array(endpoints)) = parsed.get("endpoints") {
+        for ep in endpoints {
+            if let Some(toml::Value::String(name)) = ep.get("name") {
+                if name == &args.name {
+                    return Err(format!("An endpoint named '{}' already exists", args.name));
                 }
             }
         }
     }
 
-    // Build the TOML block for the new endpoint
-    contents.push_str("\n[[endpoints]]\n");
-    contents.push_str(&format!("name = {}\n", toml::Value::String(args.name).to_string()));
-    contents.push_str(&format!("transport = {}\n", toml::Value::String(args.transport).to_string()));
+    let mut endpoint = toml::map::Map::new();
+    endpoint.insert("name".to_string(), toml::Value::String(args.name));
+    endpoint.insert("transport".to_string(), toml::Value::String(args.transport));
+    if let Some(tool_prefix) = args.tool_prefix {
+        endpoint.insert("tool_prefix".to_string(), toml::Value::String(tool_prefix));
+    }
+
     if let Some(cmd) = args.command {
-        contents.push_str(&format!("command = {}\n", toml::Value::String(cmd).to_string()));
+        endpoint.insert("command".to_string(), toml::Value::String(cmd));
     }
     if let Some(cmd_args) = args.args {
-        let arr: Vec<String> = cmd_args.iter().map(|a| toml::Value::String(a.clone()).to_string()).collect();
-        contents.push_str(&format!("args = [{}]\n", arr.join(", ")));
+        let arr = cmd_args.into_iter().map(toml::Value::String).collect();
+        endpoint.insert("args".to_string(), toml::Value::Array(arr));
     }
     if let Some(url) = args.url {
-        contents.push_str(&format!("url = {}\n", toml::Value::String(url).to_string()));
+        endpoint.insert("url".to_string(), toml::Value::String(url));
     }
     if let Some(description) = args.description {
-        contents.push_str(&format!("description = {}\n", toml::Value::String(description).to_string()));
+        endpoint.insert("description".to_string(), toml::Value::String(description));
     }
     if let Some(env) = args.env {
         if !env.is_empty() {
-            let pairs: Vec<String> = env.iter().map(|(k, v)| {
-                format!("{} = {}", k, toml::Value::String(v.clone()).to_string())
-            }).collect();
-            contents.push_str(&format!("env = {{ {} }}\n", pairs.join(", ")));
+            let mut env_table = toml::map::Map::new();
+            for (k, v) in env {
+                env_table.insert(k, toml::Value::String(v));
+            }
+            endpoint.insert("env".to_string(), toml::Value::Table(env_table));
         }
     }
     if let Some(headers) = args.headers {
         if !headers.is_empty() {
-            let pairs: Vec<String> = headers.iter().map(|(k, v)| {
-                format!("{} = {}", k, toml::Value::String(v.clone()).to_string())
-            }).collect();
-            contents.push_str(&format!("headers = {{ {} }}\n", pairs.join(", ")));
+            let mut headers_table = toml::map::Map::new();
+            for (k, v) in headers {
+                headers_table.insert(k, toml::Value::String(v));
+            }
+            endpoint.insert("headers".to_string(), toml::Value::Table(headers_table));
         }
     }
 
-    std::fs::write(&config_path, &contents)
+    let endpoints = parsed
+        .entry("endpoints")
+        .or_insert_with(|| toml::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| "Invalid endpoints section in config".to_string())?;
+    endpoints.push(toml::Value::Table(endpoint));
+
+    let new_contents = toml::to_string_pretty(&parsed)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+
+    std::fs::write(&config_path, &new_contents)
         .map_err(|e| format!("Failed to write config: {e}"))?;
 
     Ok(())
@@ -697,9 +655,9 @@ pub fn run() {
     let relay_state = RelayState {
         child: Arc::new(Mutex::new(None)),
         running: Arc::new(Mutex::new(false)),
-        auto_restart_enabled: Arc::new(Mutex::new(true)),
         port: Arc::new(Mutex::new(9400)),
-        restart_count: Arc::new(Mutex::new(0)),
+        last_sidecar_status: Arc::new(Mutex::new("unknown".to_string())),
+        last_sidecar_error: Arc::new(Mutex::new(None)),
     };
 
     let child_handle = relay_state.child.clone();
@@ -718,6 +676,7 @@ pub fn run() {
             stop_relay,
             restart_relay,
             relay_status,
+            get_sidecar_status,
             get_build_info,
             add_endpoint,
             remove_endpoint,
@@ -770,7 +729,7 @@ pub fn run() {
                 } else {
                     9400
                 };
-                match spawn_relay(&app_handle, port) {
+                match spawn_relay(&app_handle, port).await {
                     Ok(child) => {
                         if let Some(state) = app_handle.try_state::<RelayState>() {
                             *state.child.lock().await = Some(child);

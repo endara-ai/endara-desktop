@@ -3,6 +3,7 @@
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus, getConfig, reloadConfig } from '$lib/api';
+  import { canRetryRelay, restartRelay } from '$lib/relaySidecarUi';
   import { checkForUpdate, downloadAndInstall, restartApp } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
 
@@ -41,6 +42,7 @@
   let buildInfo: BuildInfo | null = $state(null);
   let relayStatus: RelayStatus | null = $state(null);
   let statusPollInterval: ReturnType<typeof setInterval> | undefined;
+	let retryingRelay = $state(false);
 
   function setTheme(t: Theme) {
     theme.set(t);
@@ -106,6 +108,7 @@
   const isAmber = $derived($relaySidecarStatus === 'failed' && $relayConnected);
   const isRed = $derived(($relaySidecarStatus === 'failed' || $relaySidecarStatus === 'stopped') && !$relayConnected);
   const isStarting = $derived($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown');
+	const showRetryRelayButton = $derived(canRetryRelay($relaySidecarStatus));
   const statusDotColor = $derived(isGreen ? 'bg-green-500' : isAmber ? 'bg-yellow-500' : isRed ? 'bg-red-500' : 'bg-gray-400');
   const statusBadgeClass = $derived(isGreen ? 'bg-green-500/10 text-green-600 dark:text-green-400'
     : isAmber ? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
@@ -113,9 +116,25 @@
     : 'bg-gray-500/10 text-gray-600 dark:text-gray-400');
   const statusLabel = $derived(isGreen ? 'Running'
     : isAmber ? 'Port Conflict'
+	  : $relaySidecarStatus === 'stopped' ? 'Stopped'
     : isRed ? 'Failed'
     : isStarting ? 'Starting...'
     : 'Unknown');
+
+	async function handleRetryRelay() {
+	  if (retryingRelay) return;
+
+	  retryingRelay = true;
+
+	  try {
+	    await restartRelay(invoke);
+	  } catch (error) {
+	    console.error('Failed to restart relay:', error);
+	    relaySidecarError.set(error instanceof Error ? error.message : String(error));
+	  } finally {
+	    retryingRelay = false;
+	  }
+	}
 </script>
 
 <div class="h-full overflow-y-auto p-6">
@@ -155,7 +174,9 @@
 
       {#if isRed}
         <p class="text-xs text-(--color-text-secondary) mt-1">
-          Relay failed to start on port {$relayPort}. Check Relay Logs for details.
+	          {$relaySidecarStatus === 'stopped'
+	            ? 'Relay is stopped. Click Retry to start it again.'
+	            : `Relay failed to start on port ${$relayPort}. Check Relay Logs for details.`}
         </p>
         {#if $relaySidecarError}
           <div class="mt-2 p-2 rounded bg-red-500/10 border border-red-500/20">
@@ -169,6 +190,18 @@
           Relay starting...
         </p>
       {/if}
+
+		      {#if showRetryRelayButton}
+	        <div class="mt-3">
+	          <button
+	            class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+	            onclick={handleRetryRelay}
+	            disabled={retryingRelay}
+	          >
+	            {retryingRelay ? 'Retrying…' : 'Retry'}
+	          </button>
+	        </div>
+	      {/if}
     </div>
 
     <fieldset class="border-none p-0">

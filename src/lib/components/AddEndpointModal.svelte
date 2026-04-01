@@ -2,6 +2,7 @@
   import { addEndpoint, getEndpoints, testConnection, type AddEndpointParams, type TestConnectionParams } from '$lib/api';
   import { endpoints, selectedEndpoint } from '$lib/stores';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
+  import { sanitizeName } from '$lib/prefix';
 
   type TransportType = 'stdio' | 'sse' | 'http';
   type Step = 'browse' | 'configure';
@@ -15,6 +16,8 @@
   // Configure step fields
   let transport: TransportType = $state('stdio');
   let name = $state('');
+  let prefix = $state('');
+  let prefixCustom = $state(false);
   let description = $state('');
   let command = $state('');
   let args = $state('');
@@ -28,18 +31,12 @@
   let testing = $state(false);
   let testResult: { success: boolean; toolCount?: number; error?: string } | null = $state(null);
 
-  /** Validate an endpoint instance name: must match ^[a-z0-9][a-z0-9_-]*$ */
-  export function isValidEndpointName(value: string): boolean {
-    return /^[a-z0-9][a-z0-9_-]*$/.test(value);
-  }
+  let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
-  let nameError: string = $derived.by(() => {
-    const trimmed = name.trim();
-    if (trimmed.length === 0) return '';
-    if (!isValidEndpointName(trimmed)) {
-      return 'Name must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.';
+  $effect(() => {
+    if (!prefixCustom) {
+      prefix = sanitizeName(name);
     }
-    return '';
   });
 
   const CATEGORY_LABELS: Record<string, string> = {
@@ -61,6 +58,8 @@
   function selectCatalog(server: CatalogServer) {
     selectedCatalog = server;
     name = server.name;
+    prefixCustom = false;
+    prefix = sanitizeName(server.name);
     description = server.description;
     transport = server.transport;
     command = server.command;
@@ -76,6 +75,8 @@
   function selectCustom() {
     selectedCatalog = null;
     name = '';
+    prefixCustom = false;
+    prefix = '';
     description = '';
     transport = 'stdio';
     command = '';
@@ -93,6 +94,16 @@
     step = 'browse';
     error = '';
     testResult = null;
+  }
+
+  function handlePrefixInput(value: string) {
+    prefixCustom = true;
+    prefix = sanitizeName(value);
+  }
+
+  function resetPrefix() {
+    prefixCustom = false;
+    prefix = sanitizeName(name);
   }
 
   function buildConnectionParams(): TestConnectionParams {
@@ -168,12 +179,17 @@
   async function handleSubmit() {
     error = '';
     if (!name.trim()) { error = 'Name is required'; return; }
-    if (!isValidEndpointName(name.trim())) { error = 'Invalid name: must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.'; return; }
+    const trimmedName = name.trim();
+    const defaultPrefix = sanitizeName(trimmedName);
 
     const params: AddEndpointParams = {
-      name: name.trim(),
+      name: trimmedName,
       transport,
     };
+
+    if (prefixCustom && prefix !== defaultPrefix) {
+      params.tool_prefix = prefix;
+    }
 
     if (description.trim()) {
       params.description = description.trim();
@@ -357,10 +373,33 @@
         <div>
           <label for="modal-ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
           <input id="modal-ep-name" type="text" bind:value={name} placeholder="my-server"
-            class="w-full text-sm px-3 py-1.5 rounded-lg border {nameError ? 'border-(--color-offline)' : 'border-(--color-border)'} bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-          {#if nameError}
-            <p class="text-[11px] text-(--color-offline) mt-0.5">{nameError}</p>
-          {/if}
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1 gap-2">
+            <label for="modal-ep-prefix" class="block text-xs font-medium text-(--color-text-secondary)">Tool Prefix</label>
+            {#if prefixCustom}
+              <button
+                type="button"
+                class="text-[11px] text-(--color-accent) hover:text-(--color-accent-hover)"
+                onclick={resetPrefix}
+              >
+                Reset
+              </button>
+            {/if}
+          </div>
+          <input
+            id="modal-ep-prefix"
+            type="text"
+            value={prefix}
+            oninput={(event) => handlePrefixInput((event.currentTarget as HTMLInputElement).value)}
+            placeholder="my_server"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)"
+          />
+          <p class="text-[11px] text-(--color-text-secondary) mt-0.5">
+            Auto-generated from the name. Tools will be named like {prefixPreview}.
+          </p>
         </div>
 
         <div>

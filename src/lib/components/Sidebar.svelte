@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { groupedEndpoints, selectedEndpoint } from '$lib/stores';
+  import { groupedEndpoints, relayPort } from '$lib/stores';
   import SearchBar from './SearchBar.svelte';
   import EndpointRow from './EndpointRow.svelte';
   import AddEndpointModal from './AddEndpointModal.svelte';
 
   let searchBar: SearchBar | undefined = $state();
   let showAddModal = $state(false);
+  let copied = $state(false);
+
+  const RELAY_MCP_URL = $derived(`http://localhost:${$relayPort}/mcp`);
 
   const healthLabels: Record<string, string> = {
     healthy: '● Healthy',
@@ -25,6 +28,12 @@
       e.preventDefault();
       searchBar?.focus();
     }
+  }
+
+  function copyUrl(text: string) {
+    navigator.clipboard.writeText(text);
+    copied = true;
+    setTimeout(() => copied = false, 2000);
   }
 </script>
 
@@ -59,6 +68,24 @@
         </div>
       {/if}
     {/each}
+  </div>
+
+  <div class="border-t border-(--color-border) p-3 space-y-1.5 bg-(--color-surface-alt)">
+    <div class="text-[11px] font-semibold uppercase tracking-wider text-(--color-text-secondary)">
+      Relay MCP URL
+    </div>
+    <div class="flex items-center gap-2">
+      <code class="min-w-0 flex-1 truncate rounded border border-(--color-border) bg-(--color-surface) px-2 py-1.5 text-[11px] font-mono text-(--color-accent)">
+        {RELAY_MCP_URL}
+      </code>
+      <button
+        class="shrink-0 rounded border border-(--color-border) px-2 py-1.5 text-[11px] text-(--color-text-secondary) hover:bg-(--color-surface-hover) hover:text-(--color-text) transition-colors"
+        onclick={() => copyUrl(RELAY_MCP_URL)}
+        title="Copy relay MCP URL"
+      >
+        {copied ? '✓' : 'Copy'}
+      </button>
+    </div>
   </div>
 
   {#if showAddModal}

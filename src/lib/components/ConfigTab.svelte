@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getEndpointConfig, updateEndpoint, getEndpoints, type UpdateEndpointParams } from '$lib/api';
   import { selectedEndpoint, endpoints } from '$lib/stores';
+  import { sanitizeName } from '$lib/prefix';
 
   type TransportType = 'stdio' | 'sse' | 'http';
 
@@ -13,12 +14,22 @@
   // Form fields
   let transport: TransportType = $state('stdio');
   let name = $state('');
+  let prefix = $state('');
+  let prefixCustom = $state(false);
   let description = $state('');
   let command = $state('');
   let args = $state('');
   let url = $state('');
   let envVars: { key: string; value: string }[] = $state([]);
   let headerVars: { key: string; value: string }[] = $state([]);
+
+  let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
+
+  $effect(() => {
+    if (!prefixCustom) {
+      prefix = sanitizeName(name);
+    }
+  });
 
   $effect(() => {
     const epName = $selectedEndpoint;
@@ -30,6 +41,13 @@
       .then((config) => {
         originalName = config.name;
         name = config.name;
+        if (config.tool_prefix !== undefined) {
+          prefixCustom = true;
+          prefix = config.tool_prefix;
+        } else {
+          prefixCustom = false;
+          prefix = sanitizeName(config.name);
+        }
         transport = config.transport as TransportType;
         description = config.description ?? '';
         command = config.command ?? '';
@@ -48,16 +66,32 @@
       .finally(() => { loading = false; });
   });
 
+  function handlePrefixInput(value: string) {
+    prefixCustom = true;
+    prefix = sanitizeName(value);
+  }
+
+  function resetPrefix() {
+    prefixCustom = false;
+    prefix = sanitizeName(name);
+  }
+
   async function handleSave() {
     error = '';
     success = '';
     if (!name.trim()) { error = 'Name is required'; return; }
+    const trimmedName = name.trim();
+    const defaultPrefix = sanitizeName(trimmedName);
 
     const params: UpdateEndpointParams = {
       originalName,
-      name: name.trim(),
+      name: trimmedName,
       transport,
     };
+
+    if (prefixCustom && prefix !== defaultPrefix) {
+      params.tool_prefix = prefix;
+    }
 
     if (description.trim()) {
       params.description = description.trim();
@@ -159,6 +193,32 @@
           <label for="config-ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
           <input id="config-ep-name" type="text" bind:value={name} placeholder="my-server"
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1 gap-2">
+            <label for="config-ep-prefix" class="block text-xs font-medium text-(--color-text-secondary)">Tool Prefix</label>
+            {#if prefixCustom}
+              <button
+                type="button"
+                class="text-[11px] text-(--color-accent) hover:text-(--color-accent-hover)"
+                onclick={resetPrefix}
+              >
+                Reset
+              </button>
+            {/if}
+          </div>
+          <input
+            id="config-ep-prefix"
+            type="text"
+            value={prefix}
+            oninput={(event) => handlePrefixInput((event.currentTarget as HTMLInputElement).value)}
+            placeholder="my_server"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)"
+          />
+          <p class="text-[11px] text-(--color-text-secondary) mt-0.5">
+            Auto-generated from the name. Tools will be named like {prefixPreview}.
+          </p>
         </div>
 
         <div>
