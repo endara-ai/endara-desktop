@@ -72,16 +72,9 @@ function createRelayPortStore() {
 export const relayPort = createRelayPortStore();
 
 export const showOnboarding = derived(
-  [endpoints, onboardingDismissed, initialLoadComplete, relaySidecarStatus],
-  ([$endpoints, $onboardingDismissed, $initialLoadComplete, $relaySidecarStatus]) => {
-    return $initialLoadComplete && $endpoints.length === 0 && !$onboardingDismissed && $relaySidecarStatus !== 'failed';
-  }
-);
-
-export const showRelayError = derived(
-  [relaySidecarStatus, initialLoadComplete],
-  ([$relaySidecarStatus, $initialLoadComplete]) => {
-    return $initialLoadComplete && $relaySidecarStatus === 'failed';
+  [endpoints, onboardingDismissed, initialLoadComplete],
+  ([$endpoints, $onboardingDismissed, $initialLoadComplete]) => {
+    return $initialLoadComplete && $endpoints.length === 0 && !$onboardingDismissed;
   }
 );
 

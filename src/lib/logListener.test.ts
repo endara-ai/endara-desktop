@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { listen } from '@tauri-apps/api/event';
 import { get } from 'svelte/store';
@@ -6,6 +7,7 @@ describe('logListener', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    vi.mocked(invoke).mockResolvedValue({ status: 'unknown', error: null });
   });
 
   describe('initRelayLogListener', () => {
@@ -14,13 +16,14 @@ describe('logListener', () => {
       mockListen.mockResolvedValue(vi.fn());
 
       const { initRelayLogListener } = await import('./logListener');
-      initRelayLogListener();
+      await initRelayLogListener();
 
       // Should register listeners for relay-log, relay-health, relay-sidecar-status
       expect(mockListen).toHaveBeenCalledTimes(3);
       expect(mockListen).toHaveBeenCalledWith('relay-log', expect.any(Function));
       expect(mockListen).toHaveBeenCalledWith('relay-health', expect.any(Function));
       expect(mockListen).toHaveBeenCalledWith('relay-sidecar-status', expect.any(Function));
+      expect(invoke).toHaveBeenCalledWith('get_sidecar_status');
     });
 
     it('only initializes once', async () => {
@@ -28,10 +31,34 @@ describe('logListener', () => {
       mockListen.mockResolvedValue(vi.fn());
 
       const { initRelayLogListener } = await import('./logListener');
-      initRelayLogListener();
-      initRelayLogListener(); // second call should be no-op
+      await initRelayLogListener();
+      await initRelayLogListener(); // second call should be no-op
 
       expect(mockListen).toHaveBeenCalledTimes(3); // still 3, not 6
+      expect(invoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('syncs the current sidecar status after listeners are ready', async () => {
+      const mockListen = vi.mocked(listen);
+      const listenerResolvers: Array<(value: () => void) => void> = [];
+
+      mockListen.mockImplementation(() => new Promise((resolve) => {
+        listenerResolvers.push(resolve);
+      }));
+      vi.mocked(invoke).mockResolvedValue({ status: 'failed', error: 'startup crash' });
+
+      const { initRelayLogListener } = await import('./logListener');
+      const initPromise = initRelayLogListener();
+
+      expect(invoke).not.toHaveBeenCalled();
+
+      listenerResolvers.forEach((resolve) => resolve(() => {}));
+      await initPromise;
+
+      const { relaySidecarStatus, relaySidecarError } = await import('./stores');
+      expect(invoke).toHaveBeenCalledWith('get_sidecar_status');
+      expect(get(relaySidecarStatus)).toBe('failed');
+      expect(get(relaySidecarError)).toBe('startup crash');
     });
 
     it('adds log entries to relayLogLines store on relay-log event', async () => {
@@ -47,7 +74,7 @@ describe('logListener', () => {
 
       const { initRelayLogListener } = await import('./logListener');
       const { relayLogLines } = await import('./stores');
-      initRelayLogListener();
+      await initRelayLogListener();
 
       expect(relayLogCallback).toBeDefined();
       relayLogCallback!({ payload: { level: 'info', message: 'test message' } });
@@ -71,7 +98,7 @@ describe('logListener', () => {
 
       const { initRelayLogListener } = await import('./logListener');
       const { relayLastError } = await import('./stores');
-      initRelayLogListener();
+      await initRelayLogListener();
 
       healthCallback!({ payload: { status: 'error', message: 'connection failed' } });
       expect(get(relayLastError)).toBe('connection failed');
@@ -93,7 +120,7 @@ describe('logListener', () => {
 
       const { initRelayLogListener } = await import('./logListener');
       const { relaySidecarStatus, relaySidecarError } = await import('./stores');
-      initRelayLogListener();
+      await initRelayLogListener();
 
       sidecarCallback!({ payload: { status: 'running' } });
       expect(get(relaySidecarStatus)).toBe('running');

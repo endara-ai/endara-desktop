@@ -99,13 +99,13 @@ export async function testConnection(params: TestConnectionParams): Promise<Test
 export interface AddEndpointParams {
   name: string;
   transport: 'stdio' | 'sse' | 'http';
+  tool_prefix?: string;
   command?: string;
   args?: string[];
   url?: string;
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
-  toolPrefix?: string;
 }
 
 export async function addEndpoint(params: AddEndpointParams): Promise<void> {
@@ -149,13 +149,13 @@ export async function removeEndpoint(name: string): Promise<void> {
 export interface EndpointConfig {
   name: string;
   transport: 'stdio' | 'sse' | 'http';
+  tool_prefix?: string;
   command?: string;
   args?: string[];
   url?: string;
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
-  toolPrefix?: string;
 }
 
 export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
@@ -163,16 +163,16 @@ export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
 }
 
 export interface UpdateEndpointParams {
-  originalName: string;
+  original_name: string;
   name: string;
   transport: 'stdio' | 'sse' | 'http';
   command?: string;
+  tool_prefix?: string;
   args?: string[];
   url?: string;
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
-  toolPrefix?: string;
 }
 
 export async function updateEndpoint(params: UpdateEndpointParams): Promise<void> {
