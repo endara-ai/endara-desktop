@@ -2,6 +2,7 @@
   import { addEndpoint, getEndpoints, testConnection, type AddEndpointParams, type TestConnectionParams } from '$lib/api';
   import { endpoints, selectedEndpoint } from '$lib/stores';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
+  import { sanitizeName, isValidToolPrefix } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http';
   type Step = 'browse' | 'configure';
@@ -28,16 +29,24 @@
   let testing = $state(false);
   let testResult: { success: boolean; toolCount?: number; error?: string } | null = $state(null);
 
-  /** Validate an endpoint instance name: must match ^[a-z0-9][a-z0-9_-]*$ */
-  export function isValidEndpointName(value: string): boolean {
-    return /^[a-z0-9][a-z0-9_-]*$/.test(value);
-  }
+  // Tool prefix fields
+  let toolPrefix = $state('');
+  let toolPrefixManual = $state(false);
 
-  let nameError: string = $derived.by(() => {
-    const trimmed = name.trim();
-    if (trimmed.length === 0) return '';
-    if (!isValidEndpointName(trimmed)) {
-      return 'Name must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.';
+  let autoToolPrefix: string | null = $derived(sanitizeName(name.trim()));
+
+  /** Compute effective tool prefix: manual value if set, otherwise auto-computed */
+  let effectiveToolPrefix: string | null = $derived.by(() => {
+    if (toolPrefixManual && toolPrefix.trim()) return toolPrefix.trim();
+    return autoToolPrefix;
+  });
+
+  let toolPrefixError: string = $derived.by(() => {
+    if (toolPrefixManual && toolPrefix.trim() && !isValidToolPrefix(toolPrefix.trim())) {
+      return 'Must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.';
+    }
+    if (name.trim() && !effectiveToolPrefix) {
+      return 'Name produces an empty tool prefix. Please set a tool prefix manually.';
     }
     return '';
   });
@@ -69,6 +78,8 @@
     userArgValues = server.userArgs ? server.userArgs.map(() => '') : [];
     envVars = [];
     headerVars = [];
+    toolPrefix = '';
+    toolPrefixManual = false;
     error = '';
     step = 'configure';
   }
@@ -85,6 +96,8 @@
     headerVars = [];
     catalogEnvValues = {};
     userArgValues = [];
+    toolPrefix = '';
+    toolPrefixManual = false;
     error = '';
     step = 'configure';
   }
@@ -168,12 +181,18 @@
   async function handleSubmit() {
     error = '';
     if (!name.trim()) { error = 'Name is required'; return; }
-    if (!isValidEndpointName(name.trim())) { error = 'Invalid name: must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.'; return; }
+    if (toolPrefixError) { error = toolPrefixError; return; }
+    if (!effectiveToolPrefix) { error = 'Tool prefix cannot be empty'; return; }
 
     const params: AddEndpointParams = {
       name: name.trim(),
       transport,
     };
+
+    // Only pass tool_prefix when it differs from auto-sanitized name
+    if (toolPrefixManual && toolPrefix.trim() && toolPrefix.trim() !== autoToolPrefix) {
+      params.toolPrefix = toolPrefix.trim();
+    }
 
     if (description.trim()) {
       params.description = description.trim();
@@ -356,10 +375,19 @@
 
         <div>
           <label for="modal-ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
-          <input id="modal-ep-name" type="text" bind:value={name} placeholder="my-server"
-            class="w-full text-sm px-3 py-1.5 rounded-lg border {nameError ? 'border-(--color-offline)' : 'border-(--color-border)'} bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-          {#if nameError}
-            <p class="text-[11px] text-(--color-offline) mt-0.5">{nameError}</p>
+          <input id="modal-ep-name" type="text" bind:value={name} placeholder="My Cool Server"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+        </div>
+
+        <div>
+          <label for="modal-ep-tool-prefix" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Tool Prefix</label>
+          <input id="modal-ep-tool-prefix" type="text" bind:value={toolPrefix} placeholder={autoToolPrefix ?? ''}
+            oninput={() => { toolPrefixManual = true; }}
+            class="w-full text-sm px-3 py-1.5 rounded-lg border {toolPrefixError ? 'border-(--color-offline)' : 'border-(--color-border)'} bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+          {#if toolPrefixError}
+            <p class="text-[11px] text-(--color-offline) mt-0.5">{toolPrefixError}</p>
+          {:else}
+            <p class="text-[11px] text-(--color-text-secondary)/60 mt-0.5">Used for tool naming. Auto-generated from name.</p>
           {/if}
         </div>
 

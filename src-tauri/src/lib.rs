@@ -10,6 +10,13 @@ use tauri::{
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use tokio::sync::Mutex;
 
+/// Check if a port is already in use by attempting a TCP connection.
+/// Returns `true` if the port is occupied.
+fn is_port_in_use(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_ok()
+}
+
 /// Strip ANSI escape sequences from text.
 fn strip_ansi(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -303,6 +310,13 @@ async fn start_relay(
     *state.auto_restart_enabled.lock().await = true;
     *state.restart_count.lock().await = 0;
     let port = *state.port.lock().await;
+    if is_port_in_use(port) {
+        let _ = app.emit("relay-sidecar-status", RelaySidecarStatusPayload {
+            status: "failed".to_string(),
+            error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),
+        });
+        return Err(format!("Port {} is already in use", port));
+    }
     let child = spawn_relay(&app, port)?;
     *child_guard = Some(child);
     *state.running.lock().await = true;
@@ -342,6 +356,13 @@ async fn restart_relay(
     *state.auto_restart_enabled.lock().await = true;
     *state.restart_count.lock().await = 0;
     let port = *state.port.lock().await;
+    if is_port_in_use(port) {
+        let _ = app.emit("relay-sidecar-status", RelaySidecarStatusPayload {
+            status: "failed".to_string(),
+            error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),
+        });
+        return Err(format!("Port {} is already in use", port));
+    }
     let child = spawn_relay(&app, port)?;
     *state.child.lock().await = Some(child);
     *state.running.lock().await = true;
@@ -406,6 +427,8 @@ struct AddEndpointArgs {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    #[serde(rename = "toolPrefix")]
+    tool_prefix: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -418,6 +441,8 @@ struct EndpointConfig {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    #[serde(rename = "toolPrefix", skip_serializing_if = "Option::is_none")]
+    tool_prefix: Option<String>,
 }
 
 #[tauri::command]
@@ -453,6 +478,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                 let headers = ep.get("headers").and_then(|v| v.as_table()).map(|t| {
                     t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
                 });
+                let tool_prefix = ep.get("tool_prefix").and_then(|v| v.as_str()).map(|s| s.to_string());
 
                 return Ok(EndpointConfig {
                     name: name.clone(),
@@ -463,6 +489,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     description,
                     env,
                     headers,
+                    tool_prefix,
                 });
             }
         }
@@ -483,6 +510,8 @@ struct UpdateEndpointArgs {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    #[serde(rename = "toolPrefix")]
+    tool_prefix: Option<String>,
 }
 
 #[tauri::command]
@@ -555,6 +584,9 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                         }
                         table.insert("headers".to_string(), toml::Value::Table(headers_table));
                     }
+                }
+                if let Some(tool_prefix) = &args.tool_prefix {
+                    table.insert("tool_prefix".to_string(), toml::Value::String(tool_prefix.clone()));
                 }
                 break;
             }
@@ -643,6 +675,9 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
             }).collect();
             contents.push_str(&format!("headers = {{ {} }}\n", pairs.join(", ")));
         }
+    }
+    if let Some(tool_prefix) = args.tool_prefix {
+        contents.push_str(&format!("tool_prefix = {}\n", toml::Value::String(tool_prefix).to_string()));
     }
 
     std::fs::write(&config_path, &contents)
@@ -770,6 +805,14 @@ pub fn run() {
                 } else {
                     9400
                 };
+                if is_port_in_use(port) {
+                    eprintln!("[relay] port {} is already in use, not spawning relay", port);
+                    let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
+                        status: "failed".to_string(),
+                        error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),
+                    });
+                    return;
+                }
                 match spawn_relay(&app_handle, port) {
                     Ok(child) => {
                         if let Some(state) = app_handle.try_state::<RelayState>() {

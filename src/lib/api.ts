@@ -105,6 +105,7 @@ export interface AddEndpointParams {
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
+  toolPrefix?: string;
 }
 
 export async function addEndpoint(params: AddEndpointParams): Promise<void> {
@@ -154,6 +155,7 @@ export interface EndpointConfig {
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
+  toolPrefix?: string;
 }
 
 export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
@@ -170,6 +172,7 @@ export interface UpdateEndpointParams {
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
+  toolPrefix?: string;
 }
 
 export async function updateEndpoint(params: UpdateEndpointParams): Promise<void> {

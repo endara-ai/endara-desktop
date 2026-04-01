@@ -7,7 +7,8 @@
   import RelayLogs from '$lib/components/RelayLogs.svelte';
   import UnifiedCatalog from '$lib/components/UnifiedCatalog.svelte';
   import Onboarding from '$lib/components/Onboarding.svelte';
-  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, relayLastError, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete } from '$lib/stores';
+  import RelayError from '$lib/components/RelayError.svelte';
+  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, relayLastError, showOnboarding, showRelayError, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete } from '$lib/stores';
   import { getEndpoints } from '$lib/api';
   import { initRelayLogListener } from '$lib/logListener';
   import { invoke } from '@tauri-apps/api/core';
@@ -42,12 +43,18 @@
   ];
 
   async function pollEndpoints() {
+    const currentStatus = get(relaySidecarStatus);
+    // If sidecar failed (e.g., port conflict), don't poll — we're not managing what's on that port
+    if (currentStatus === 'failed') {
+      relayConnected.set(false);
+      endpoints.set([]);
+      return;
+    }
     try {
       const data = await getEndpoints();
       endpoints.set(data);
       relayConnected.set(true);
       // If sidecar status is still starting/unknown but API responds, infer running
-      const currentStatus = get(relaySidecarStatus);
       if (currentStatus === 'starting' || currentStatus === 'unknown') {
         relaySidecarStatus.set('running');
       }
@@ -61,7 +68,11 @@
     // Sync the configured relay port to the Rust backend
     invoke('set_relay_port', { port: get(relayPort) }).catch(() => {});
     initRelayLogListener();
-    pollEndpoints().then(() => initialLoadComplete.set(true));
+    // Small delay to let the Rust sidecar startup task complete its port check
+    // before we consider initial load complete
+    setTimeout(() => {
+      pollEndpoints().then(() => initialLoadComplete.set(true));
+    }, 1000);
     pollInterval = setInterval(pollEndpoints, 2000);
   });
 
@@ -122,8 +133,10 @@
 
     <!-- Tab content -->
     <div class="flex-1 overflow-hidden">
-      <div class="h-full" style:display={$activeTopLevelTab === 'servers' ? ($showOnboarding ? 'block' : 'flex') : 'none'}>
-        {#if $showOnboarding}
+      <div class="h-full" style:display={$activeTopLevelTab === 'servers' ? (($showOnboarding || $showRelayError) ? 'block' : 'flex') : 'none'}>
+        {#if $showRelayError}
+          <RelayError />
+        {:else if $showOnboarding}
           <Onboarding />
         {:else}
           <Sidebar bind:this={sidebar} />
