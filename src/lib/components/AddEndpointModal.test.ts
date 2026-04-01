@@ -1,15 +1,51 @@
 import { describe, it, expect } from 'vitest';
+import { sanitizeName, isValidToolPrefix } from '$lib/utils';
 
-/**
- * Endpoint name validation: must match ^[a-z0-9][a-z0-9_-]*$
- * This mirrors the regex exported from AddEndpointModal.svelte.
- */
-function isValidEndpointName(value: string): boolean {
-  return /^[a-z0-9][a-z0-9_-]*$/.test(value);
-}
+describe('sanitizeName', () => {
+  it('handles basic lowercase name', () => {
+    expect(sanitizeName('echo-mcp')).toBe('echo-mcp');
+  });
 
-describe('AddEndpointModal name validation', () => {
-  describe('valid names', () => {
+  it('converts spaces to underscores', () => {
+    expect(sanitizeName('My MCP Server')).toBe('my_mcp_server');
+  });
+
+  it('strips special characters', () => {
+    expect(sanitizeName('server@v2.0!')).toBe('serverv20');
+  });
+
+  it('converts uppercase to lowercase', () => {
+    expect(sanitizeName('MyServer')).toBe('myserver');
+  });
+
+  it('returns null for empty string', () => {
+    expect(sanitizeName('')).toBeNull();
+  });
+
+  it('returns null for only special characters', () => {
+    expect(sanitizeName('@#$%^&*')).toBeNull();
+  });
+
+  it('strips unicode characters', () => {
+    expect(sanitizeName('café')).toBe('caf');
+    expect(sanitizeName('日本語')).toBeNull();
+  });
+
+  it('handles mixed input', () => {
+    expect(sanitizeName('My Server - v2.0 (beta)')).toBe('my_server_-_v20_beta');
+  });
+
+  it('preserves hyphens and underscores', () => {
+    expect(sanitizeName('my-server_name')).toBe('my-server_name');
+  });
+
+  it('preserves digits', () => {
+    expect(sanitizeName('server123')).toBe('server123');
+  });
+});
+
+describe('isValidToolPrefix', () => {
+  describe('valid prefixes', () => {
     it.each([
       'echo',
       'my-server',
@@ -19,24 +55,21 @@ describe('AddEndpointModal name validation', () => {
       'abc-123',
       'a-b_c',
       '9lives',
-    ])('accepts "%s"', (name) => {
-      expect(isValidEndpointName(name)).toBe(true);
+    ])('accepts "%s"', (prefix) => {
+      expect(isValidToolPrefix(prefix)).toBe(true);
     });
   });
 
-  describe('invalid names', () => {
+  describe('invalid prefixes', () => {
     it.each([
       ['', 'empty string'],
-      ['MyServer', 'uppercase letters'],
       ['-bad', 'starts with hyphen'],
       ['_bad', 'starts with underscore'],
       ['my server', 'contains space'],
       ['hello!', 'contains special character'],
-      ['café', 'contains non-ASCII'],
-      ['my.server', 'contains dot'],
-      ['MY-SERVER', 'all uppercase'],
-    ])('rejects "%s" (%s)', (name) => {
-      expect(isValidEndpointName(name)).toBe(false);
+      ['MY-SERVER', 'uppercase letters'],
+    ])('rejects "%s" (%s)', (prefix) => {
+      expect(isValidToolPrefix(prefix)).toBe(false);
     });
   });
 });

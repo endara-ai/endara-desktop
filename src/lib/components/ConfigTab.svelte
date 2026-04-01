@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getEndpointConfig, updateEndpoint, getEndpoints, type UpdateEndpointParams } from '$lib/api';
   import { selectedEndpoint, endpoints } from '$lib/stores';
+  import { sanitizeName, isValidToolPrefix } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http';
 
@@ -19,6 +20,27 @@
   let url = $state('');
   let envVars: { key: string; value: string }[] = $state([]);
   let headerVars: { key: string; value: string }[] = $state([]);
+
+  // Tool prefix fields
+  let toolPrefix = $state('');
+  let toolPrefixManual = $state(false);
+
+  let autoToolPrefix: string | null = $derived(sanitizeName(name.trim()));
+
+  let effectiveToolPrefix: string | null = $derived.by(() => {
+    if (toolPrefixManual && toolPrefix.trim()) return toolPrefix.trim();
+    return autoToolPrefix;
+  });
+
+  let toolPrefixError: string = $derived.by(() => {
+    if (toolPrefixManual && toolPrefix.trim() && !isValidToolPrefix(toolPrefix.trim())) {
+      return 'Must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.';
+    }
+    if (name.trim() && !effectiveToolPrefix) {
+      return 'Name produces an empty tool prefix. Please set a tool prefix manually.';
+    }
+    return '';
+  });
 
   $effect(() => {
     const epName = $selectedEndpoint;
@@ -41,6 +63,14 @@
         headerVars = config.headers
           ? Object.entries(config.headers).map(([key, value]) => ({ key, value }))
           : [];
+        // Load tool_prefix: if config has one, set it as manual; otherwise auto-compute
+        if (config.toolPrefix) {
+          toolPrefix = config.toolPrefix;
+          toolPrefixManual = true;
+        } else {
+          toolPrefix = '';
+          toolPrefixManual = false;
+        }
       })
       .catch(() => {
         error = 'Unable to load endpoint configuration';
@@ -52,12 +82,19 @@
     error = '';
     success = '';
     if (!name.trim()) { error = 'Name is required'; return; }
+    if (toolPrefixError) { error = toolPrefixError; return; }
+    if (!effectiveToolPrefix) { error = 'Tool prefix cannot be empty'; return; }
 
     const params: UpdateEndpointParams = {
       originalName,
       name: name.trim(),
       transport,
     };
+
+    // Only pass tool_prefix when it differs from auto-sanitized name
+    if (toolPrefixManual && toolPrefix.trim() && toolPrefix.trim() !== autoToolPrefix) {
+      params.toolPrefix = toolPrefix.trim();
+    }
 
     if (description.trim()) {
       params.description = description.trim();
@@ -157,8 +194,20 @@
 
         <div>
           <label for="config-ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
-          <input id="config-ep-name" type="text" bind:value={name} placeholder="my-server"
+          <input id="config-ep-name" type="text" bind:value={name} placeholder="My Cool Server"
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+        </div>
+
+        <div>
+          <label for="config-ep-tool-prefix" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Tool Prefix</label>
+          <input id="config-ep-tool-prefix" type="text" bind:value={toolPrefix} placeholder={autoToolPrefix ?? ''}
+            oninput={() => { toolPrefixManual = true; }}
+            class="w-full text-sm px-3 py-1.5 rounded-lg border {toolPrefixError ? 'border-(--color-offline)' : 'border-(--color-border)'} bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+          {#if toolPrefixError}
+            <p class="text-[11px] text-(--color-offline) mt-0.5">{toolPrefixError}</p>
+          {:else}
+            <p class="text-[11px] text-(--color-text-secondary)/60 mt-0.5">Used for tool naming. Auto-generated from name.</p>
+          {/if}
         </div>
 
         <div>

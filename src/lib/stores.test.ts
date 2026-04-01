@@ -138,6 +138,54 @@ describe('stores', () => {
       initialLoadComplete.set(false);
       expect(get(showOnboarding)).toBe(false);
     });
+
+    it('hides when relay sidecar has failed', async () => {
+      const { endpoints, onboardingDismissed, initialLoadComplete, relaySidecarStatus, showOnboarding } = await importStores();
+      endpoints.set([]);
+      onboardingDismissed.set(false);
+      initialLoadComplete.set(true);
+      relaySidecarStatus.set('failed');
+      expect(get(showOnboarding)).toBe(false);
+    });
+  });
+
+  describe('showRelayError derived store', () => {
+    it('shows when relay failed and initial load complete', async () => {
+      const { relaySidecarStatus, initialLoadComplete, showRelayError } = await importStores();
+      relaySidecarStatus.set('failed');
+      initialLoadComplete.set(true);
+      expect(get(showRelayError)).toBe(true);
+    });
+
+    it('hides before initial load completes', async () => {
+      const { relaySidecarStatus, initialLoadComplete, showRelayError } = await importStores();
+      relaySidecarStatus.set('failed');
+      initialLoadComplete.set(false);
+      expect(get(showRelayError)).toBe(false);
+    });
+
+    it('hides when relay is running', async () => {
+      const { relaySidecarStatus, initialLoadComplete, showRelayError } = await importStores();
+      relaySidecarStatus.set('running');
+      initialLoadComplete.set(true);
+      expect(get(showRelayError)).toBe(false);
+    });
+
+    it('hides when relay status is starting', async () => {
+      const { relaySidecarStatus, initialLoadComplete, showRelayError } = await importStores();
+      relaySidecarStatus.set('starting');
+      initialLoadComplete.set(true);
+      expect(get(showRelayError)).toBe(false);
+    });
+
+    it('hides when relay recovers from failed to running', async () => {
+      const { relaySidecarStatus, initialLoadComplete, showRelayError } = await importStores();
+      initialLoadComplete.set(true);
+      relaySidecarStatus.set('failed');
+      expect(get(showRelayError)).toBe(true);
+      relaySidecarStatus.set('running');
+      expect(get(showRelayError)).toBe(false);
+    });
   });
 
   describe('selectedEndpointData derived store', () => {

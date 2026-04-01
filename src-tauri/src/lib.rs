@@ -10,6 +10,13 @@ use tauri::{
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use tokio::sync::Mutex;
 
+/// Check if a port is already in use by attempting a TCP connection.
+/// Returns `true` if the port is occupied.
+fn is_port_in_use(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_ok()
+}
+
 /// Strip ANSI escape sequences from text.
 fn strip_ansi(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -40,11 +47,19 @@ pub struct RelayState {
     auto_restart_enabled: Arc<Mutex<bool>>,
     port: Arc<Mutex<u16>>,
     restart_count: Arc<Mutex<u32>>,
+    port_conflict: Arc<Mutex<bool>>,
 }
 
 #[derive(Serialize, Clone)]
 pub struct RelayStatusInfo {
     pub running: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SidecarStatusResponse {
+    pub running: bool,
+    pub port_conflict: bool,
+    pub port: u16,
 }
 
 #[derive(Serialize, Clone)]
@@ -140,9 +155,10 @@ fn spawn_relay(
                             status: "running".to_string(),
                             error: None,
                         });
-                        // Reset restart count on successful start
+                        // Reset restart count and clear port conflict on successful start
                         if let Some(state) = app_handle.try_state::<RelayState>() {
                             *state.restart_count.lock().await = 0;
+                            *state.port_conflict.lock().await = false;
                         }
                     }
                     let _ = app_handle.emit("relay-log", RelayLogPayload {
@@ -165,9 +181,10 @@ fn spawn_relay(
                             status: "running".to_string(),
                             error: None,
                         });
-                        // Reset restart count on successful start
+                        // Reset restart count and clear port conflict on successful start
                         if let Some(state) = app_handle.try_state::<RelayState>() {
                             *state.restart_count.lock().await = 0;
+                            *state.port_conflict.lock().await = false;
                         }
                     }
                     let _ = app_handle.emit("relay-log", RelayLogPayload {
@@ -302,7 +319,16 @@ async fn start_relay(
     }
     *state.auto_restart_enabled.lock().await = true;
     *state.restart_count.lock().await = 0;
+    *state.port_conflict.lock().await = false;
     let port = *state.port.lock().await;
+    if is_port_in_use(port) {
+        *state.port_conflict.lock().await = true;
+        let _ = app.emit("relay-sidecar-status", RelaySidecarStatusPayload {
+            status: "failed".to_string(),
+            error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),
+        });
+        return Err(format!("Port {} is already in use", port));
+    }
     let child = spawn_relay(&app, port)?;
     *child_guard = Some(child);
     *state.running.lock().await = true;
@@ -341,7 +367,16 @@ async fn restart_relay(
     // Start new — re-enable auto-restart
     *state.auto_restart_enabled.lock().await = true;
     *state.restart_count.lock().await = 0;
+    *state.port_conflict.lock().await = false;
     let port = *state.port.lock().await;
+    if is_port_in_use(port) {
+        *state.port_conflict.lock().await = true;
+        let _ = app.emit("relay-sidecar-status", RelaySidecarStatusPayload {
+            status: "failed".to_string(),
+            error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),
+        });
+        return Err(format!("Port {} is already in use", port));
+    }
     let child = spawn_relay(&app, port)?;
     *state.child.lock().await = Some(child);
     *state.running.lock().await = true;
@@ -352,6 +387,14 @@ async fn restart_relay(
 async fn relay_status(state: State<'_, RelayState>) -> Result<RelayStatusInfo, String> {
     let running = *state.running.lock().await;
     Ok(RelayStatusInfo { running })
+}
+
+#[tauri::command]
+async fn get_sidecar_status(state: State<'_, RelayState>) -> Result<SidecarStatusResponse, String> {
+    let running = *state.running.lock().await;
+    let port_conflict = *state.port_conflict.lock().await;
+    let port = *state.port.lock().await;
+    Ok(SidecarStatusResponse { running, port_conflict, port })
 }
 
 #[tauri::command]
@@ -406,6 +449,8 @@ struct AddEndpointArgs {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    #[serde(rename = "toolPrefix")]
+    tool_prefix: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -418,6 +463,8 @@ struct EndpointConfig {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    #[serde(rename = "toolPrefix", skip_serializing_if = "Option::is_none")]
+    tool_prefix: Option<String>,
 }
 
 #[tauri::command]
@@ -453,6 +500,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                 let headers = ep.get("headers").and_then(|v| v.as_table()).map(|t| {
                     t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
                 });
+                let tool_prefix = ep.get("tool_prefix").and_then(|v| v.as_str()).map(|s| s.to_string());
 
                 return Ok(EndpointConfig {
                     name: name.clone(),
@@ -463,6 +511,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     description,
                     env,
                     headers,
+                    tool_prefix,
                 });
             }
         }
@@ -483,6 +532,8 @@ struct UpdateEndpointArgs {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    #[serde(rename = "toolPrefix")]
+    tool_prefix: Option<String>,
 }
 
 #[tauri::command]
@@ -555,6 +606,9 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                         }
                         table.insert("headers".to_string(), toml::Value::Table(headers_table));
                     }
+                }
+                if let Some(tool_prefix) = &args.tool_prefix {
+                    table.insert("tool_prefix".to_string(), toml::Value::String(tool_prefix.clone()));
                 }
                 break;
             }
@@ -644,6 +698,9 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
             contents.push_str(&format!("headers = {{ {} }}\n", pairs.join(", ")));
         }
     }
+    if let Some(tool_prefix) = args.tool_prefix {
+        contents.push_str(&format!("tool_prefix = {}\n", toml::Value::String(tool_prefix).to_string()));
+    }
 
     std::fs::write(&config_path, &contents)
         .map_err(|e| format!("Failed to write config: {e}"))?;
@@ -700,6 +757,7 @@ pub fn run() {
         auto_restart_enabled: Arc::new(Mutex::new(true)),
         port: Arc::new(Mutex::new(9400)),
         restart_count: Arc::new(Mutex::new(0)),
+        port_conflict: Arc::new(Mutex::new(false)),
     };
 
     let child_handle = relay_state.child.clone();
@@ -718,6 +776,7 @@ pub fn run() {
             stop_relay,
             restart_relay,
             relay_status,
+            get_sidecar_status,
             get_build_info,
             add_endpoint,
             remove_endpoint,
@@ -770,6 +829,17 @@ pub fn run() {
                 } else {
                     9400
                 };
+                if is_port_in_use(port) {
+                    eprintln!("[relay] port {} is already in use, not spawning relay", port);
+                    if let Some(state) = app_handle.try_state::<RelayState>() {
+                        *state.port_conflict.lock().await = true;
+                    }
+                    let _ = app_handle.emit("relay-sidecar-status", RelaySidecarStatusPayload {
+                        status: "failed".to_string(),
+                        error: Some(format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port)),
+                    });
+                    return;
+                }
                 match spawn_relay(&app_handle, port) {
                     Ok(child) => {
                         if let Some(state) = app_handle.try_state::<RelayState>() {

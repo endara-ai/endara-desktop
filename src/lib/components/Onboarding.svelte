@@ -1,6 +1,7 @@
 <script lang="ts">
   import { addEndpoint, getEndpoints, type AddEndpointParams } from '$lib/api';
   import { onboardingDismissed, endpoints, relayPort, selectedEndpoint } from '$lib/stores';
+  import { sanitizeName, isValidToolPrefix } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http';
 
@@ -13,17 +14,45 @@
   let submitting = $state(false);
   let error = $state('');
 
+  // Tool prefix fields
+  let toolPrefix = $state('');
+  let toolPrefixManual = $state(false);
+
+  let autoToolPrefix: string | null = $derived(sanitizeName(name.trim()));
+
+  let effectiveToolPrefix: string | null = $derived.by(() => {
+    if (toolPrefixManual && toolPrefix.trim()) return toolPrefix.trim();
+    return autoToolPrefix;
+  });
+
+  let toolPrefixError: string = $derived.by(() => {
+    if (toolPrefixManual && toolPrefix.trim() && !isValidToolPrefix(toolPrefix.trim())) {
+      return 'Must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.';
+    }
+    if (name.trim() && !effectiveToolPrefix) {
+      return 'Name produces an empty tool prefix. Please set a tool prefix manually.';
+    }
+    return '';
+  });
+
   const RELAY_MCP_URL = $derived(`http://localhost:${$relayPort}/mcp`);
   const RELAY_SSE_URL = $derived(`http://localhost:${$relayPort}/mcp/sse`);
 
   async function handleSubmit() {
     error = '';
     if (!name.trim()) { error = 'Name is required'; return; }
+    if (toolPrefixError) { error = toolPrefixError; return; }
+    if (!effectiveToolPrefix) { error = 'Tool prefix cannot be empty'; return; }
 
     const params: AddEndpointParams = {
       name: name.trim(),
       transport,
     };
+
+    // Only pass tool_prefix when it differs from auto-sanitized name
+    if (toolPrefixManual && toolPrefix.trim() && toolPrefix.trim() !== autoToolPrefix) {
+      params.toolPrefix = toolPrefix.trim();
+    }
 
     if (transport === 'stdio') {
       if (!command.trim()) { error = 'Command is required for stdio'; return; }
@@ -163,8 +192,20 @@
 
       <div>
         <label for="ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
-        <input id="ep-name" type="text" bind:value={name} placeholder="my-server"
+        <input id="ep-name" type="text" bind:value={name} placeholder="My Cool Server"
           class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+      </div>
+
+      <div>
+        <label for="ep-tool-prefix" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Tool Prefix</label>
+        <input id="ep-tool-prefix" type="text" bind:value={toolPrefix} placeholder={autoToolPrefix ?? ''}
+          oninput={() => { toolPrefixManual = true; }}
+          class="w-full text-sm px-3 py-1.5 rounded-lg border {toolPrefixError ? 'border-(--color-offline)' : 'border-(--color-border)'} bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+        {#if toolPrefixError}
+          <p class="text-[11px] text-(--color-offline) mt-0.5">{toolPrefixError}</p>
+        {:else}
+          <p class="text-[11px] text-(--color-text-secondary)/60 mt-0.5">Used for tool naming. Auto-generated from name.</p>
+        {/if}
       </div>
 
       {#if transport === 'stdio'}
