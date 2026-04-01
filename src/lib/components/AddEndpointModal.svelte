@@ -2,7 +2,7 @@
   import { addEndpoint, getEndpoints, testConnection, type AddEndpointParams, type TestConnectionParams } from '$lib/api';
   import { endpoints, selectedEndpoint } from '$lib/stores';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
-  import { sanitizeName, isValidToolPrefix } from '$lib/utils';
+  import { sanitizeName } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http';
   type Step = 'browse' | 'configure';
@@ -16,6 +16,8 @@
   // Configure step fields
   let transport: TransportType = $state('stdio');
   let name = $state('');
+  let prefix = $state('');
+  let prefixCustom = $state(false);
   let description = $state('');
   let command = $state('');
   let args = $state('');
@@ -29,26 +31,12 @@
   let testing = $state(false);
   let testResult: { success: boolean; toolCount?: number; error?: string } | null = $state(null);
 
-  // Tool prefix fields
-  let toolPrefix = $state('');
-  let toolPrefixManual = $state(false);
+  let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
-  let autoToolPrefix: string | null = $derived(sanitizeName(name.trim()));
-
-  /** Compute effective tool prefix: manual value if set, otherwise auto-computed */
-  let effectiveToolPrefix: string | null = $derived.by(() => {
-    if (toolPrefixManual && toolPrefix.trim()) return toolPrefix.trim();
-    return autoToolPrefix;
-  });
-
-  let toolPrefixError: string = $derived.by(() => {
-    if (toolPrefixManual && toolPrefix.trim() && !isValidToolPrefix(toolPrefix.trim())) {
-      return 'Must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.';
+  $effect(() => {
+    if (!prefixCustom) {
+      prefix = sanitizeName(name);
     }
-    if (name.trim() && !effectiveToolPrefix) {
-      return 'Name produces an empty tool prefix. Please set a tool prefix manually.';
-    }
-    return '';
   });
 
   const CATEGORY_LABELS: Record<string, string> = {
@@ -70,6 +58,8 @@
   function selectCatalog(server: CatalogServer) {
     selectedCatalog = server;
     name = server.name;
+    prefixCustom = false;
+    prefix = sanitizeName(server.name);
     description = server.description;
     transport = server.transport;
     command = server.command;
@@ -78,8 +68,6 @@
     userArgValues = server.userArgs ? server.userArgs.map(() => '') : [];
     envVars = [];
     headerVars = [];
-    toolPrefix = '';
-    toolPrefixManual = false;
     error = '';
     step = 'configure';
   }
@@ -87,6 +75,8 @@
   function selectCustom() {
     selectedCatalog = null;
     name = '';
+    prefixCustom = false;
+    prefix = '';
     description = '';
     transport = 'stdio';
     command = '';
@@ -96,8 +86,6 @@
     headerVars = [];
     catalogEnvValues = {};
     userArgValues = [];
-    toolPrefix = '';
-    toolPrefixManual = false;
     error = '';
     step = 'configure';
   }
@@ -106,6 +94,16 @@
     step = 'browse';
     error = '';
     testResult = null;
+  }
+
+  function handlePrefixInput(value: string) {
+    prefixCustom = true;
+    prefix = sanitizeName(value);
+  }
+
+  function resetPrefix() {
+    prefixCustom = false;
+    prefix = sanitizeName(name);
   }
 
   function buildConnectionParams(): TestConnectionParams {
@@ -181,17 +179,16 @@
   async function handleSubmit() {
     error = '';
     if (!name.trim()) { error = 'Name is required'; return; }
-    if (toolPrefixError) { error = toolPrefixError; return; }
-    if (!effectiveToolPrefix) { error = 'Tool prefix cannot be empty'; return; }
+    const trimmedName = name.trim();
+    const defaultPrefix = sanitizeName(trimmedName);
 
     const params: AddEndpointParams = {
-      name: name.trim(),
+      name: trimmedName,
       transport,
     };
 
-    // Only pass tool_prefix when it differs from auto-sanitized name
-    if (toolPrefixManual && toolPrefix.trim() && toolPrefix.trim() !== autoToolPrefix) {
-      params.toolPrefix = toolPrefix.trim();
+    if (prefixCustom && prefix !== defaultPrefix) {
+      params.tool_prefix = prefix;
     }
 
     if (description.trim()) {
@@ -375,20 +372,34 @@
 
         <div>
           <label for="modal-ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
-          <input id="modal-ep-name" type="text" bind:value={name} placeholder="My Cool Server"
+          <input id="modal-ep-name" type="text" bind:value={name} placeholder="my-server"
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
         </div>
 
         <div>
-          <label for="modal-ep-tool-prefix" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Tool Prefix</label>
-          <input id="modal-ep-tool-prefix" type="text" bind:value={toolPrefix} placeholder={autoToolPrefix ?? ''}
-            oninput={() => { toolPrefixManual = true; }}
-            class="w-full text-sm px-3 py-1.5 rounded-lg border {toolPrefixError ? 'border-(--color-offline)' : 'border-(--color-border)'} bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
-          {#if toolPrefixError}
-            <p class="text-[11px] text-(--color-offline) mt-0.5">{toolPrefixError}</p>
-          {:else}
-            <p class="text-[11px] text-(--color-text-secondary)/60 mt-0.5">Used for tool naming. Auto-generated from name.</p>
-          {/if}
+          <div class="flex items-center justify-between mb-1 gap-2">
+            <label for="modal-ep-prefix" class="block text-xs font-medium text-(--color-text-secondary)">Tool Prefix</label>
+            {#if prefixCustom}
+              <button
+                type="button"
+                class="text-[11px] text-(--color-accent) hover:text-(--color-accent-hover)"
+                onclick={resetPrefix}
+              >
+                Reset
+              </button>
+            {/if}
+          </div>
+          <input
+            id="modal-ep-prefix"
+            type="text"
+            value={prefix}
+            oninput={(event) => handlePrefixInput((event.currentTarget as HTMLInputElement).value)}
+            placeholder="my_server"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)"
+          />
+          <p class="text-[11px] text-(--color-text-secondary) mt-0.5">
+            Auto-generated from the name. Tools will be named like {prefixPreview}.
+          </p>
         </div>
 
         <div>

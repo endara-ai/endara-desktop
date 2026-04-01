@@ -7,10 +7,10 @@
   import RelayLogs from '$lib/components/RelayLogs.svelte';
   import UnifiedCatalog from '$lib/components/UnifiedCatalog.svelte';
   import Onboarding from '$lib/components/Onboarding.svelte';
-  import RelayError from '$lib/components/RelayError.svelte';
-  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, relayLastError, showOnboarding, showRelayError, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete } from '$lib/stores';
+  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, relayLastError, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete } from '$lib/stores';
   import { getEndpoints } from '$lib/api';
   import { initRelayLogListener } from '$lib/logListener';
+  import { getActiveTopLevelTab, getVisibleTopLevelTabs } from '$lib/relaySidecarUi';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
 
@@ -31,30 +31,36 @@
     : ($relaySidecarStatus === 'stopped') ? 'Relay stopped'
     : 'Relay status unknown'
   );
+  const relayStartupFailureActive = $derived($relaySidecarStatus === 'failed' && !$relayConnected);
+  const relayFailureMessage = $derived($relaySidecarError ?? 'Relay failed to start. Check Relay Logs for more details.');
 
   let pollInterval: ReturnType<typeof setInterval> | undefined;
   let sidebar: Sidebar | undefined = $state();
+  let retryingRelay = $state(false);
+  let relayStartupFailureDismissed = $state(false);
+  const showRelayStartupFailure = $derived(relayStartupFailureActive && !relayStartupFailureDismissed);
 
-  const topLevelTabs = [
-    { id: 'servers' as const, label: 'MCP Servers' },
-    { id: 'unified-catalog' as const, label: 'Unified Catalog' },
-    { id: 'relay-logs' as const, label: 'Relay Logs' },
-    { id: 'settings' as const, label: 'Settings' },
-  ];
+  const topLevelTabs = $derived(getVisibleTopLevelTabs($relaySidecarStatus));
+
+  $effect(() => {
+    if (!relayStartupFailureActive) {
+      relayStartupFailureDismissed = false;
+    }
+  });
+
+  $effect(() => {
+    if (getActiveTopLevelTab($activeTopLevelTab, $relaySidecarStatus) !== $activeTopLevelTab) {
+      activeTopLevelTab.set('settings');
+    }
+  });
 
   async function pollEndpoints() {
-    const currentStatus = get(relaySidecarStatus);
-    // If sidecar failed (e.g., port conflict), don't poll — we're not managing what's on that port
-    if (currentStatus === 'failed') {
-      relayConnected.set(false);
-      endpoints.set([]);
-      return;
-    }
     try {
       const data = await getEndpoints();
       endpoints.set(data);
       relayConnected.set(true);
       // If sidecar status is still starting/unknown but API responds, infer running
+      const currentStatus = get(relaySidecarStatus);
       if (currentStatus === 'starting' || currentStatus === 'unknown') {
         relaySidecarStatus.set('running');
       }
@@ -68,22 +74,7 @@
     // Sync the configured relay port to the Rust backend
     invoke('set_relay_port', { port: get(relayPort) }).catch(() => {});
     initRelayLogListener();
-    // Query Rust for initial sidecar status after a brief delay
-    // to let the Rust async setup task complete its port check
-    setTimeout(async () => {
-      try {
-        const status = await invoke<{ running: boolean; port_conflict: boolean; port: number }>('get_sidecar_status');
-        if (status.port_conflict) {
-          relaySidecarStatus.set('failed');
-          relaySidecarError.set(`Port ${status.port} is already in use by another process. Close the other process or change the relay port in Settings.`);
-        }
-      } catch (e) {
-        console.error('Failed to get sidecar status:', e);
-      }
-      // Now poll endpoints and mark initial load complete
-      await pollEndpoints();
-      initialLoadComplete.set(true);
-    }, 1000);
+    pollEndpoints().then(() => initialLoadComplete.set(true));
     pollInterval = setInterval(pollEndpoints, 2000);
   });
 
@@ -103,11 +94,79 @@
       }
     }
   }
+
+  function openRelayLogs() {
+    relayStartupFailureDismissed = true;
+    activeTopLevelTab.set('relay-logs');
+  }
+
+  function openSettings() {
+    relayStartupFailureDismissed = true;
+    activeTopLevelTab.set('settings');
+  }
+
+  async function handleRetryRelay() {
+    if (retryingRelay) return;
+
+    relayStartupFailureDismissed = false;
+    retryingRelay = true;
+
+    try {
+      await invoke('restart_relay');
+    } catch (error) {
+      console.error('Failed to restart relay:', error);
+      relaySidecarError.set(error instanceof Error ? error.message : String(error));
+    } finally {
+      retryingRelay = false;
+    }
+  }
 </script>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
 
-{#if $miniPlayerMode}
+{#if showRelayStartupFailure}
+  <div class="flex h-screen w-screen items-center justify-center bg-(--color-surface-alt) p-6">
+    <div class="w-full max-w-2xl rounded-2xl border border-red-500/20 bg-(--color-surface) p-8 shadow-sm">
+      <div class="mb-6 inline-flex items-center rounded-full bg-red-500/10 px-3 py-1 text-xs font-medium text-red-600 dark:text-red-400">
+        Relay startup failed
+      </div>
+
+      <div class="space-y-3">
+        <h1 class="text-2xl font-semibold text-(--color-text)">Endara Desktop couldn&apos;t start the relay</h1>
+        <p class="text-sm text-(--color-text-secondary)">
+          The app can&apos;t connect to the relay on port {$relayPort}. Review the startup error below, check the relay logs, or update your settings and try again.
+        </p>
+      </div>
+
+      <div class="mt-6 rounded-xl border border-red-500/20 bg-red-500/10 p-4">
+        <div class="text-xs font-medium uppercase tracking-wide text-red-600 dark:text-red-400">Error details</div>
+        <p class="mt-2 whitespace-pre-wrap break-words font-mono text-sm text-red-600 dark:text-red-400">{relayFailureMessage}</p>
+      </div>
+
+      <div class="mt-8 flex flex-wrap gap-3">
+        <button
+          class="rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          onclick={handleRetryRelay}
+          disabled={retryingRelay}
+        >
+          {retryingRelay ? 'Retrying…' : 'Retry'}
+        </button>
+        <button
+          class="rounded-lg border border-(--color-border) px-4 py-2 text-sm font-medium text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
+          onclick={openRelayLogs}
+        >
+          View Relay Logs
+        </button>
+        <button
+          class="rounded-lg border border-(--color-border) px-4 py-2 text-sm font-medium text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
+          onclick={openSettings}
+        >
+          Open Settings
+        </button>
+      </div>
+    </div>
+  </div>
+{:else if $miniPlayerMode}
   <MiniPlayer />
 {:else}
   <div class="flex flex-col h-screen w-screen overflow-hidden">
@@ -144,10 +203,8 @@
 
     <!-- Tab content -->
     <div class="flex-1 overflow-hidden">
-      <div class="h-full" style:display={$activeTopLevelTab === 'servers' ? (($showOnboarding || $showRelayError) ? 'block' : 'flex') : 'none'}>
-        {#if $showRelayError}
-          <RelayError />
-        {:else if $showOnboarding}
+      <div class="h-full" style:display={$activeTopLevelTab === 'servers' ? ($showOnboarding ? 'block' : 'flex') : 'none'}>
+        {#if $showOnboarding}
           <Onboarding />
         {:else}
           <Sidebar bind:this={sidebar} />

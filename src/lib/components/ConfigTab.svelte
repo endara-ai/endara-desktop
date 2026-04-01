@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getEndpointConfig, updateEndpoint, getEndpoints, type UpdateEndpointParams } from '$lib/api';
   import { selectedEndpoint, endpoints } from '$lib/stores';
-  import { sanitizeName, isValidToolPrefix } from '$lib/utils';
+  import { sanitizeName } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http';
 
@@ -14,6 +14,8 @@
   // Form fields
   let transport: TransportType = $state('stdio');
   let name = $state('');
+  let prefix = $state('');
+  let prefixCustom = $state(false);
   let description = $state('');
   let command = $state('');
   let args = $state('');
@@ -21,25 +23,12 @@
   let envVars: { key: string; value: string }[] = $state([]);
   let headerVars: { key: string; value: string }[] = $state([]);
 
-  // Tool prefix fields
-  let toolPrefix = $state('');
-  let toolPrefixManual = $state(false);
+  let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
-  let autoToolPrefix: string | null = $derived(sanitizeName(name.trim()));
-
-  let effectiveToolPrefix: string | null = $derived.by(() => {
-    if (toolPrefixManual && toolPrefix.trim()) return toolPrefix.trim();
-    return autoToolPrefix;
-  });
-
-  let toolPrefixError: string = $derived.by(() => {
-    if (toolPrefixManual && toolPrefix.trim() && !isValidToolPrefix(toolPrefix.trim())) {
-      return 'Must start with a lowercase letter or digit, and contain only lowercase letters, digits, hyphens, or underscores.';
+  $effect(() => {
+    if (!prefixCustom) {
+      prefix = sanitizeName(name);
     }
-    if (name.trim() && !effectiveToolPrefix) {
-      return 'Name produces an empty tool prefix. Please set a tool prefix manually.';
-    }
-    return '';
   });
 
   $effect(() => {
@@ -52,6 +41,13 @@
       .then((config) => {
         originalName = config.name;
         name = config.name;
+        if (config.tool_prefix !== undefined) {
+          prefixCustom = true;
+          prefix = config.tool_prefix;
+        } else {
+          prefixCustom = false;
+          prefix = sanitizeName(config.name);
+        }
         transport = config.transport as TransportType;
         description = config.description ?? '';
         command = config.command ?? '';
@@ -63,14 +59,6 @@
         headerVars = config.headers
           ? Object.entries(config.headers).map(([key, value]) => ({ key, value }))
           : [];
-        // Load tool_prefix: if config has one, set it as manual; otherwise auto-compute
-        if (config.toolPrefix) {
-          toolPrefix = config.toolPrefix;
-          toolPrefixManual = true;
-        } else {
-          toolPrefix = '';
-          toolPrefixManual = false;
-        }
       })
       .catch(() => {
         error = 'Unable to load endpoint configuration';
@@ -78,22 +66,31 @@
       .finally(() => { loading = false; });
   });
 
+  function handlePrefixInput(value: string) {
+    prefixCustom = true;
+    prefix = sanitizeName(value);
+  }
+
+  function resetPrefix() {
+    prefixCustom = false;
+    prefix = sanitizeName(name);
+  }
+
   async function handleSave() {
     error = '';
     success = '';
     if (!name.trim()) { error = 'Name is required'; return; }
-    if (toolPrefixError) { error = toolPrefixError; return; }
-    if (!effectiveToolPrefix) { error = 'Tool prefix cannot be empty'; return; }
+    const trimmedName = name.trim();
+    const defaultPrefix = sanitizeName(trimmedName);
 
     const params: UpdateEndpointParams = {
-      originalName,
-      name: name.trim(),
+      original_name: originalName,
+      name: trimmedName,
       transport,
     };
 
-    // Only pass tool_prefix when it differs from auto-sanitized name
-    if (toolPrefixManual && toolPrefix.trim() && toolPrefix.trim() !== autoToolPrefix) {
-      params.toolPrefix = toolPrefix.trim();
+    if (prefixCustom && prefix !== defaultPrefix) {
+      params.tool_prefix = prefix;
     }
 
     if (description.trim()) {
@@ -194,20 +191,34 @@
 
         <div>
           <label for="config-ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
-          <input id="config-ep-name" type="text" bind:value={name} placeholder="My Cool Server"
+          <input id="config-ep-name" type="text" bind:value={name} placeholder="my-server"
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
         </div>
 
         <div>
-          <label for="config-ep-tool-prefix" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Tool Prefix</label>
-          <input id="config-ep-tool-prefix" type="text" bind:value={toolPrefix} placeholder={autoToolPrefix ?? ''}
-            oninput={() => { toolPrefixManual = true; }}
-            class="w-full text-sm px-3 py-1.5 rounded-lg border {toolPrefixError ? 'border-(--color-offline)' : 'border-(--color-border)'} bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
-          {#if toolPrefixError}
-            <p class="text-[11px] text-(--color-offline) mt-0.5">{toolPrefixError}</p>
-          {:else}
-            <p class="text-[11px] text-(--color-text-secondary)/60 mt-0.5">Used for tool naming. Auto-generated from name.</p>
-          {/if}
+          <div class="flex items-center justify-between mb-1 gap-2">
+            <label for="config-ep-prefix" class="block text-xs font-medium text-(--color-text-secondary)">Tool Prefix</label>
+            {#if prefixCustom}
+              <button
+                type="button"
+                class="text-[11px] text-(--color-accent) hover:text-(--color-accent-hover)"
+                onclick={resetPrefix}
+              >
+                Reset
+              </button>
+            {/if}
+          </div>
+          <input
+            id="config-ep-prefix"
+            type="text"
+            value={prefix}
+            oninput={(event) => handlePrefixInput((event.currentTarget as HTMLInputElement).value)}
+            placeholder="my_server"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)"
+          />
+          <p class="text-[11px] text-(--color-text-secondary) mt-0.5">
+            Auto-generated from the name. Tools will be named like {prefixPreview}.
+          </p>
         </div>
 
         <div>

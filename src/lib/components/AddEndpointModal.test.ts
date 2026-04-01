@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeName, isValidToolPrefix } from '$lib/utils';
+import { sanitizeName } from '$lib/utils';
 
 describe('sanitizeName', () => {
   it('handles basic lowercase name', () => {
@@ -18,17 +18,17 @@ describe('sanitizeName', () => {
     expect(sanitizeName('MyServer')).toBe('myserver');
   });
 
-  it('returns null for empty string', () => {
-    expect(sanitizeName('')).toBeNull();
+  it('returns empty string for empty input', () => {
+    expect(sanitizeName('')).toBe('');
   });
 
-  it('returns null for only special characters', () => {
-    expect(sanitizeName('@#$%^&*')).toBeNull();
+  it('returns empty string for only special characters', () => {
+    expect(sanitizeName('@#$%^&*')).toBe('');
   });
 
   it('strips unicode characters', () => {
     expect(sanitizeName('café')).toBe('caf');
-    expect(sanitizeName('日本語')).toBeNull();
+    expect(sanitizeName('日本語')).toBe('');
   });
 
   it('handles mixed input', () => {
@@ -44,33 +44,5 @@ describe('sanitizeName', () => {
   });
 });
 
-describe('isValidToolPrefix', () => {
-  describe('valid prefixes', () => {
-    it.each([
-      'echo',
-      'my-server',
-      'test_ep',
-      'a',
-      '0day',
-      'abc-123',
-      'a-b_c',
-      '9lives',
-    ])('accepts "%s"', (prefix) => {
-      expect(isValidToolPrefix(prefix)).toBe(true);
-    });
-  });
 
-  describe('invalid prefixes', () => {
-    it.each([
-      ['', 'empty string'],
-      ['-bad', 'starts with hyphen'],
-      ['_bad', 'starts with underscore'],
-      ['my server', 'contains space'],
-      ['hello!', 'contains special character'],
-      ['MY-SERVER', 'uppercase letters'],
-    ])('rejects "%s" (%s)', (prefix) => {
-      expect(isValidToolPrefix(prefix)).toBe(false);
-    });
-  });
-});
 
