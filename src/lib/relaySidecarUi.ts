@@ -30,6 +30,18 @@ export function canRetryRelay(status: RelaySidecarStatusType): boolean {
   return status === 'failed' || status === 'stopped';
 }
 
+export function shouldShowRelayStartupFailure(
+  sidecarStatus: RelaySidecarStatusType,
+  relayConnected: boolean,
+  dismissed: boolean
+): boolean {
+  return sidecarStatus === 'failed' && !relayConnected && !dismissed;
+}
+
+export function shouldSkipEndpointPolling(sidecarStatus: RelaySidecarStatusType): boolean {
+  return sidecarStatus === 'failed' || sidecarStatus === 'stopped';
+}
+
 export async function restartRelay(invokeFn: (command: string) => Promise<unknown>): Promise<void> {
   await invokeFn('restart_relay');
 }

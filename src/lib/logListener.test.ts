@@ -85,7 +85,7 @@ describe('logListener', () => {
       expect(lines[0].level).toBe('info');
     });
 
-    it('updates relayLastError on relay-health error event', async () => {
+    it('registers relay-health listener without error', async () => {
       const mockListen = vi.mocked(listen);
       let healthCallback: ((event: { payload: { status: string; message: string | null } }) => void) | undefined;
 
@@ -97,14 +97,10 @@ describe('logListener', () => {
       });
 
       const { initRelayLogListener } = await import('./logListener');
-      const { relayLastError } = await import('./stores');
       await initRelayLogListener();
 
-      healthCallback!({ payload: { status: 'error', message: 'connection failed' } });
-      expect(get(relayLastError)).toBe('connection failed');
-
-      healthCallback!({ payload: { status: 'connected', message: null } });
-      expect(get(relayLastError)).toBeNull();
+      // relay-health listener is registered but no longer updates relayLastError
+      expect(healthCallback).toBeDefined();
     });
 
     it('updates sidecar status on relay-sidecar-status event', async () => {

@@ -1,8 +1,8 @@
-import { check } from '@tauri-apps/plugin-updater';
+import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { updateStatus, updateVersion, updateError } from './stores';
 
-let updateInstance: any = null;
+let updateInstance: Update | null = null;
 
 export async function checkForUpdate() {
   updateStatus.set('checking');

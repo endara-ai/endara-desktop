@@ -7,10 +7,10 @@
   import RelayLogs from '$lib/components/RelayLogs.svelte';
   import UnifiedCatalog from '$lib/components/UnifiedCatalog.svelte';
   import Onboarding from '$lib/components/Onboarding.svelte';
-  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, relayLastError, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete } from '$lib/stores';
+  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete } from '$lib/stores';
   import { getEndpoints } from '$lib/api';
   import { initRelayLogListener } from '$lib/logListener';
-  import { getActiveTopLevelTab, getVisibleTopLevelTabs } from '$lib/relaySidecarUi';
+  import { getActiveTopLevelTab, getVisibleTopLevelTabs, shouldShowRelayStartupFailure, shouldSkipEndpointPolling } from '$lib/relaySidecarUi';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
 
@@ -31,19 +31,18 @@
     : ($relaySidecarStatus === 'stopped') ? 'Relay stopped'
     : 'Relay status unknown'
   );
-  const relayStartupFailureActive = $derived($relaySidecarStatus === 'failed' && !$relayConnected);
   const relayFailureMessage = $derived($relaySidecarError ?? 'Relay failed to start. Check Relay Logs for more details.');
 
   let pollInterval: ReturnType<typeof setInterval> | undefined;
   let sidebar: Sidebar | undefined = $state();
   let retryingRelay = $state(false);
   let relayStartupFailureDismissed = $state(false);
-  const showRelayStartupFailure = $derived(relayStartupFailureActive && !relayStartupFailureDismissed);
+  const showRelayStartupFailure = $derived(shouldShowRelayStartupFailure($relaySidecarStatus, $relayConnected, relayStartupFailureDismissed));
 
   const topLevelTabs = $derived(getVisibleTopLevelTabs($relaySidecarStatus));
 
   $effect(() => {
-    if (!relayStartupFailureActive) {
+    if (!($relaySidecarStatus === 'failed' && !$relayConnected)) {
       relayStartupFailureDismissed = false;
     }
   });
@@ -55,13 +54,20 @@
   });
 
   async function pollEndpoints() {
+    const currentStatus = get(relaySidecarStatus);
+    // If sidecar failed (e.g., port conflict), don't poll — we're not managing what's on that port
+    if (shouldSkipEndpointPolling(currentStatus)) {
+      relayConnected.set(false);
+      endpoints.set([]);
+      return;
+    }
     try {
       const data = await getEndpoints();
       endpoints.set(data);
       relayConnected.set(true);
       // If sidecar status is still starting/unknown but API responds, infer running
-      const currentStatus = get(relaySidecarStatus);
-      if (currentStatus === 'starting' || currentStatus === 'unknown') {
+      const inferredStatus = get(relaySidecarStatus);
+      if (inferredStatus === 'starting' || inferredStatus === 'unknown') {
         relaySidecarStatus.set('running');
       }
     } catch {
@@ -71,8 +77,12 @@
   }
 
   onMount(() => {
-    // Sync the configured relay port to the Rust backend
-    invoke('set_relay_port', { port: get(relayPort) }).catch(() => {});
+    // Sync the relay port FROM the Rust backend (config.toml is the source of truth)
+    invoke('get_relay_port').then((port: unknown) => {
+      if (typeof port === 'number' && port > 0) {
+        relayPort.set(port as number);
+      }
+    }).catch(() => {});
     initRelayLogListener();
     pollEndpoints().then(() => initialLoadComplete.set(true));
     pollInterval = setInterval(pollEndpoints, 2000);
