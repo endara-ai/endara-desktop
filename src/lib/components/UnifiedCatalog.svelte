@@ -82,14 +82,18 @@
             <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-(--color-surface-alt) text-(--color-text-secondary)">{entry.endpoint}</span>
             {#if !entry.available}
               <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">⚠️ Unavailable</span>
-            {:else}
-              <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Available</span>
             {/if}
             {#if entry.annotations?.readOnlyHint === true}
               <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Read-only</span>
             {/if}
             {#if entry.annotations?.destructiveHint === true}
               <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">Destructive</span>
+            {/if}
+            {#if entry.annotations?.idempotentHint === true}
+              <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Idempotent</span>
+            {/if}
+            {#if entry.annotations?.openWorldHint === true}
+              <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">Open-world</span>
             {/if}
             <button
               class="p-0.5 rounded hover:bg-(--color-surface-hover)"

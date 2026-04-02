@@ -1,10 +1,13 @@
 <script lang="ts">
-  import { addEndpoint, getEndpoints, testConnection, type AddEndpointParams, type TestConnectionParams } from '$lib/api';
+  import { addEndpoint, getEndpoints, testConnection, startOAuth, getOAuthStatus, type AddEndpointParams, type TestConnectionParams } from '$lib/api';
   import { endpoints, selectedEndpoint } from '$lib/stores';
+  import { toast } from 'svelte-sonner';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
   import { sanitizeName } from '$lib/utils';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
 
-  type TransportType = 'stdio' | 'sse' | 'http';
+  type TransportType = 'stdio' | 'sse' | 'http' | 'oauth';
   type Step = 'browse' | 'configure';
 
   let { onclose }: { onclose: () => void } = $props();
@@ -30,6 +33,10 @@
   let error = $state('');
   let testing = $state(false);
   let testResult: { success: boolean; toolCount?: number; error?: string } | null = $state(null);
+  let oauthServerUrl = $state('');
+  let clientId = $state('');
+  let clientSecret = $state('');
+  let scopes = $state('');
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
@@ -68,6 +75,10 @@
     userArgValues = server.userArgs ? server.userArgs.map(() => '') : [];
     envVars = [];
     headerVars = [];
+    oauthServerUrl = '';
+    clientId = '';
+    clientSecret = '';
+    scopes = '';
     error = '';
     step = 'configure';
   }
@@ -86,6 +97,10 @@
     headerVars = [];
     catalogEnvValues = {};
     userArgValues = [];
+    oauthServerUrl = '';
+    clientId = '';
+    clientSecret = '';
+    scopes = '';
     error = '';
     step = 'configure';
   }
@@ -212,6 +227,15 @@
       if (finalArgs.length > 0) {
         params.args = finalArgs;
       }
+    } else if (transport === 'oauth') {
+      if (!url.trim()) { error = 'Server URL is required'; return; }
+      if (!oauthServerUrl.trim()) { error = 'OAuth Server URL is required'; return; }
+      if (!clientId.trim()) { error = 'Client ID is required'; return; }
+      params.url = url.trim();
+      params.oauth_server_url = oauthServerUrl.trim();
+      params.client_id = clientId.trim();
+      if (clientSecret.trim()) params.client_secret = clientSecret.trim();
+      if (scopes.trim()) params.scopes = scopes.trim();
     } else {
       if (!url.trim()) { error = 'URL is required'; return; }
       params.url = url.trim();
@@ -255,7 +279,91 @@
         // Will be picked up by the next poll cycle
       }
       selectedEndpoint.set(name.trim());
+      toast.success(`Server "${name.trim()}" added`);
       onclose();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      submitting = false;
+    }
+  }
+
+  async function handleOAuthSubmit() {
+    // First save the endpoint via normal handleSubmit logic but don't close
+    error = '';
+    if (!name.trim()) { error = 'Name is required'; return; }
+    if (!url.trim()) { error = 'Server URL is required'; return; }
+    if (!oauthServerUrl.trim()) { error = 'OAuth Server URL is required'; return; }
+    if (!clientId.trim()) { error = 'Client ID is required'; return; }
+
+    const trimmedName = name.trim();
+    const defaultPrefix = sanitizeName(trimmedName);
+
+    const params: AddEndpointParams = {
+      name: trimmedName,
+      transport,
+    };
+
+    if (prefixCustom && prefix !== defaultPrefix) {
+      params.tool_prefix = prefix;
+    }
+    if (description.trim()) {
+      params.description = description.trim();
+    }
+
+    params.url = url.trim();
+    params.oauth_server_url = oauthServerUrl.trim();
+    params.client_id = clientId.trim();
+    if (clientSecret.trim()) params.client_secret = clientSecret.trim();
+    if (scopes.trim()) params.scopes = scopes.trim();
+
+    // Build env
+    const env: Record<string, string> = {};
+    const filteredEnv = envVars.filter((e) => e.key.trim());
+    for (const e of filteredEnv) {
+      env[e.key.trim()] = e.value;
+    }
+    if (Object.keys(env).length > 0) {
+      params.env = env;
+    }
+
+    submitting = true;
+    try {
+      await addEndpoint(params);
+
+      // Start OAuth flow
+      const { authorize_url } = await startOAuth(trimmedName);
+
+      // Open browser for authorization
+      await openUrl(authorize_url);
+
+      // Poll for OAuth completion (every 1s, up to 2 minutes)
+      const maxAttempts = 120;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try {
+          const { status } = await getOAuthStatus(trimmedName);
+          if (status === 'authorized' || status === 'complete') {
+            // Success — refresh and close
+            try {
+              const data = await getEndpoints();
+              endpoints.set(data);
+            } catch {
+              // Will be picked up by the next poll cycle
+            }
+            selectedEndpoint.set(trimmedName);
+            onclose();
+            return;
+          }
+          if (status === 'error') {
+            error = 'OAuth authorization failed';
+            return;
+          }
+        } catch {
+          // Polling error, continue
+        }
+      }
+      error = 'OAuth authorization timed out. Please try again.';
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -352,10 +460,10 @@
       <div class="space-y-3">
         {#if !selectedCatalog}
           <!-- Custom: transport selector -->
-          <fieldset class="border-none p-0 m-0">
+          <fieldset class="border-none p-0 m-0 mb-1">
             <legend class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Transport</legend>
             <div class="flex gap-2">
-              {#each ['stdio', 'sse', 'http'] as t}
+              {#each ['stdio', 'sse', 'http', 'oauth'] as t}
                 <button
                   class="px-3 py-1.5 text-xs rounded-lg border transition-colors
                     {transport === t
@@ -419,6 +527,32 @@
             <input id="modal-ep-args" type="text" bind:value={args} placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
           </div>
+        {:else if transport === 'oauth'}
+          <div>
+            <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Server URL</label>
+            <input id="modal-ep-url" type="text" bind:value={url} placeholder="http://localhost:3000/mcp"
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+          </div>
+          <div>
+            <label for="modal-ep-oauth-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">OAuth Server URL</label>
+            <input id="modal-ep-oauth-url" type="text" bind:value={oauthServerUrl} placeholder="https://auth.example.com"
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+          </div>
+          <div>
+            <label for="modal-ep-client-id" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client ID</label>
+            <input id="modal-ep-client-id" type="text" bind:value={clientId} placeholder="your-client-id"
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+          </div>
+          <div>
+            <label for="modal-ep-client-secret" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client Secret <span class="text-(--color-text-secondary)/50">(optional)</span></label>
+            <input id="modal-ep-client-secret" type="password" bind:value={clientSecret} placeholder="••••••••"
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+          </div>
+          <div>
+            <label for="modal-ep-scopes" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Scopes <span class="text-(--color-text-secondary)/50">(optional, space-separated)</span></label>
+            <input id="modal-ep-scopes" type="text" bind:value={scopes} placeholder="read write"
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+          </div>
         {:else}
           <div>
             <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">URL</label>
@@ -432,8 +566,28 @@
           {#each selectedCatalog.userArgs as ua, i}
             <div>
               <label for="modal-ua-{i}" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">{ua.label}</label>
-              <input id="modal-ua-{i}" type="text" bind:value={userArgValues[i]} placeholder={ua.placeholder}
-                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              <div class="flex gap-2">
+                <input id="modal-ua-{i}" type="text" bind:value={userArgValues[i]} placeholder={ua.placeholder}
+                  class="flex-1 text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                {#if ua.type === 'directory' || ua.type === 'file'}
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) text-(--color-text-secondary) transition-colors flex-shrink-0"
+                    onclick={async () => {
+                      const selected = await dialogOpen({
+                        directory: ua.type === 'directory',
+                        multiple: false,
+                        title: ua.label,
+                      });
+                      if (selected && typeof selected === 'string') {
+                        userArgValues[i] = selected;
+                      }
+                    }}
+                  >
+                    Browse…
+                  </button>
+                {/if}
+              </div>
             </div>
           {/each}
         {/if}
@@ -448,7 +602,7 @@
                   {ev.label}
                   {#if ev.required}<span class="text-(--color-offline)">*</span>{/if}
                   {#if ev.helpUrl}
-                    <a href={ev.helpUrl} target="_blank" rel="noopener noreferrer" class="text-(--color-accent) hover:underline ml-1">↗</a>
+                    <button type="button" class="text-(--color-accent) hover:underline ml-1 inline cursor-pointer bg-transparent border-none p-0 text-[11px]" onclick={() => openUrl(ev.helpUrl!)}>↗</button>
                   {/if}
                 </label>
                 <input
@@ -525,39 +679,41 @@
           </div>
         {/if}
 
-        <!-- Test Connection -->
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors disabled:opacity-50"
-            onclick={handleTestConnection}
-            disabled={testing || submitting}
-          >
-            {#if testing}
-              <span class="inline-flex items-center gap-1.5">
-                <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25" />
-                  <path fill="currentColor" class="opacity-75" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                </svg>
-                Testing…
-              </span>
-            {:else}
-              Test Connection
+        <!-- Test Connection (not shown for OAuth) -->
+        {#if transport !== 'oauth'}
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors disabled:opacity-50"
+              onclick={handleTestConnection}
+              disabled={testing || submitting}
+            >
+              {#if testing}
+                <span class="inline-flex items-center gap-1.5">
+                  <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25" />
+                    <path fill="currentColor" class="opacity-75" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                  Testing…
+                </span>
+              {:else}
+                Test Connection
+              {/if}
+            </button>
+            {#if testResult}
+              {#if testResult.success}
+                <span class="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Connected — {testResult.toolCount} {testResult.toolCount === 1 ? 'tool' : 'tools'} found
+                </span>
+              {:else}
+                <span class="text-xs text-(--color-offline)">{testResult.error}</span>
+              {/if}
             {/if}
-          </button>
-          {#if testResult}
-            {#if testResult.success}
-              <span class="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                </svg>
-                Connected — {testResult.toolCount} {testResult.toolCount === 1 ? 'tool' : 'tools'} found
-              </span>
-            {:else}
-              <span class="text-xs text-(--color-offline)">{testResult.error}</span>
-            {/if}
-          {/if}
-        </div>
+          </div>
+        {/if}
 
         {#if error}
           <p class="text-xs text-(--color-offline)">{error}</p>
@@ -572,10 +728,14 @@
           </button>
           <button
             class="px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
-            onclick={handleSubmit}
+            onclick={transport === 'oauth' ? handleOAuthSubmit : handleSubmit}
             disabled={submitting}
           >
-            {submitting ? 'Adding…' : 'Add Server'}
+            {#if submitting}
+              {transport === 'oauth' ? 'Connecting…' : 'Adding…'}
+            {:else}
+              {transport === 'oauth' ? 'Save & Connect' : 'Add Server'}
+            {/if}
           </button>
         </div>
       </div>

@@ -16,7 +16,7 @@ export interface CatalogServer {
   command: string;
   args: string[];
   envVars: CatalogEnvVar[];
-  userArgs?: { label: string; placeholder: string }[];
+  userArgs?: { label: string; placeholder: string; type?: 'directory' | 'file' }[];
 }
 
 export const CATALOG_SERVERS: CatalogServer[] = [
@@ -30,7 +30,7 @@ export const CATALOG_SERVERS: CatalogServer[] = [
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-filesystem'],
     envVars: [],
-    userArgs: [{ label: 'Allowed directory', placeholder: '/Users/you/projects' }],
+    userArgs: [{ label: 'Allowed directory', placeholder: '/Users/you/projects', type: 'directory' }],
   },
   {
     id: 'github',
@@ -111,8 +111,8 @@ export const CATALOG_SERVERS: CatalogServer[] = [
     icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="7.5"/><ellipse cx="10" cy="10" rx="3" ry="7.5"/><path d="M3 10h14"/></svg>',
     category: 'search',
     transport: 'stdio',
-    command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-fetch'],
+    command: 'uvx',
+    args: ['mcp-server-fetch'],
     envVars: [],
   },
   {
@@ -138,7 +138,7 @@ export const CATALOG_SERVERS: CatalogServer[] = [
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-sqlite'],
     envVars: [],
-    userArgs: [{ label: 'Database path', placeholder: '/path/to/database.db' }],
+    userArgs: [{ label: 'Database path', placeholder: '/path/to/database.db', type: 'file' }],
   },
   {
     id: 'slack',
@@ -164,7 +164,7 @@ export const CATALOG_SERVERS: CatalogServer[] = [
     command: 'uvx',
     args: ['mcp-server-git'],
     envVars: [],
-    userArgs: [{ label: 'Repository path', placeholder: '/path/to/repo' }],
+    userArgs: [{ label: 'Repository path', placeholder: '/path/to/repo', type: 'directory' }],
   },
   {
     id: 'google-drive',

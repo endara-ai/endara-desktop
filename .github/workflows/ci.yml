@@ -10,7 +10,17 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,18 +29,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Svelte check
+        if: runner.os == 'Linux'
         run: npm run check
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - name: Install system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - name: Create dummy sidecar for check
+      - name: Create dummy sidecar for check (Unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p src-tauri/binaries
-          touch src-tauri/binaries/endara-relay-x86_64-unknown-linux-gnu
+          touch src-tauri/binaries/endara-relay-${{ matrix.target }}
+      - name: Create dummy sidecar for check (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries
+          New-Item -ItemType File -Force -Path src-tauri/binaries/endara-relay-${{ matrix.target }}.exe
       - name: Rust check
-        run: cd src-tauri && cargo check
+        run: cd src-tauri && cargo check --target ${{ matrix.target }}
 
   pr-title:
     runs-on: ubuntu-latest

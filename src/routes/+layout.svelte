@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { checkForUpdate } from '$lib/updater';
+  import { Toaster } from 'svelte-sonner';
 
   let { children } = $props();
 
@@ -26,5 +27,6 @@
   });
 </script>
 
+<Toaster position="bottom-right" duration={5000} richColors closeButton />
 {@render children()}
 
