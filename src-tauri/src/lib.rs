@@ -1,7 +1,3 @@
-#[cfg(target_os = "macos")]
-#[macro_use]
-extern crate objc;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,20 +13,20 @@ use tokio::sync::Mutex;
 /// Workaround: In Tauri v2, `set_activation_policy` is only available on `App`,
 /// not on `AppHandle`, so it cannot be called from event handlers.
 /// See: https://github.com/tauri-apps/tauri/issues/9244
-/// This uses the cocoa crate to call NSApplication.setActivationPolicy directly.
+/// This uses objc2-app-kit to call NSApplication.setActivationPolicy directly.
 /// TODO: Remove this workaround once Tauri exposes set_activation_policy on AppHandle.
 #[cfg(target_os = "macos")]
 fn set_macos_activation_policy(regular: bool) {
-    use cocoa::appkit::NSApplicationActivationPolicy;
-    unsafe {
-        let app = cocoa::appkit::NSApp();
-        let policy = if regular {
-            NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular
-        } else {
-            NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory
-        };
-        let _: () = msg_send![app, setActivationPolicy: policy];
-    }
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    let mtm = MainThreadMarker::new().expect("must be called on the main thread");
+    let app = NSApplication::sharedApplication(mtm);
+    let policy = if regular {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    app.setActivationPolicy(policy);
 }
 
 /// Check if a port is already in use by attempting a TCP connection.
@@ -436,6 +432,10 @@ struct AddEndpointArgs {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    oauth_server_url: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    scopes: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -653,6 +653,23 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
             endpoint.insert("headers".to_string(), toml::Value::Table(headers_table));
         }
     }
+    if let Some(oauth_server_url) = args.oauth_server_url {
+        endpoint.insert("oauth_server_url".to_string(), toml::Value::String(oauth_server_url));
+    }
+    if let Some(client_id) = args.client_id {
+        endpoint.insert("client_id".to_string(), toml::Value::String(client_id));
+    }
+    if let Some(client_secret) = args.client_secret {
+        endpoint.insert("client_secret".to_string(), toml::Value::String(client_secret));
+    }
+    if let Some(scopes) = args.scopes {
+        let arr: Vec<toml::Value> = scopes.split_whitespace()
+            .map(|s| toml::Value::String(s.to_string()))
+            .collect();
+        if !arr.is_empty() {
+            endpoint.insert("scopes".to_string(), toml::Value::Array(arr));
+        }
+    }
 
     let endpoints = parsed
         .entry("endpoints")
@@ -705,6 +722,7 @@ pub fn run() {
             .level(log::LevelFilter::Info)
             .build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
@@ -766,6 +784,7 @@ pub fn run() {
                             if let Ok(mut pid_guard) = state.pid.lock() {
                                 if let Some(pid) = pid_guard.take() {
                                     eprintln!("[relay] killing sidecar pid {} on tray quit", pid);
+                                    #[cfg(unix)]
                                     unsafe { libc::kill(pid as i32, libc::SIGTERM); }
                                 }
                             }
@@ -834,6 +853,7 @@ pub fn run() {
                     if let Ok(mut guard) = pid_handle.try_lock() {
                         if let Some(pid) = guard.take() {
                             eprintln!("[relay] killing sidecar pid {} on app exit", pid);
+                            #[cfg(unix)]
                             unsafe { libc::kill(pid as i32, libc::SIGTERM); }
                         }
                     }

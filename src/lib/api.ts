@@ -37,7 +37,14 @@ export async function getStatus(): Promise<RelayStatus> {
 }
 
 export async function getEndpoints(): Promise<Endpoint[]> {
-  return fetchJson<Endpoint[]>('/endpoints');
+  const data = await fetchJson<Endpoint[]>('/endpoints');
+  // Map relay's "starting" health to "unknown" which shows a spinner in the UI
+  for (const ep of data) {
+    if ((ep.health as string) === 'starting') {
+      ep.health = 'unknown';
+    }
+  }
+  return data;
 }
 
 export async function getCatalog(): Promise<CatalogEntry[]> {
@@ -69,7 +76,7 @@ export async function reloadConfig(): Promise<void> {
 }
 
 export interface TestConnectionParams {
-  transport: 'stdio' | 'sse' | 'http';
+  transport: 'stdio' | 'sse' | 'http' | 'oauth';
   command?: string;
   args?: string[];
   url?: string;
@@ -98,7 +105,7 @@ export async function testConnection(params: TestConnectionParams): Promise<Test
 
 export interface AddEndpointParams {
   name: string;
-  transport: 'stdio' | 'sse' | 'http';
+  transport: 'stdio' | 'sse' | 'http' | 'oauth';
   tool_prefix?: string;
   command?: string;
   args?: string[];
@@ -106,6 +113,10 @@ export interface AddEndpointParams {
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
+  oauth_server_url?: string;
+  client_id?: string;
+  client_secret?: string;
+  scopes?: string;
 }
 
 export async function addEndpoint(params: AddEndpointParams): Promise<void> {
@@ -148,7 +159,7 @@ export async function removeEndpoint(name: string): Promise<void> {
 
 export interface EndpointConfig {
   name: string;
-  transport: 'stdio' | 'sse' | 'http';
+  transport: 'stdio' | 'sse' | 'http' | 'oauth';
   tool_prefix?: string;
   command?: string;
   args?: string[];
@@ -165,7 +176,7 @@ export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
 export interface UpdateEndpointParams {
   original_name: string;
   name: string;
-  transport: 'stdio' | 'sse' | 'http';
+  transport: 'stdio' | 'sse' | 'http' | 'oauth';
   command?: string;
   tool_prefix?: string;
   args?: string[];
@@ -173,6 +184,14 @@ export interface UpdateEndpointParams {
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
+}
+
+export async function startOAuth(name: string): Promise<{ authorize_url: string }> {
+  return fetchJson<{ authorize_url: string }>(`/endpoints/${encodeURIComponent(name)}/oauth/start`, { method: 'POST' });
+}
+
+export async function getOAuthStatus(name: string): Promise<{ status: string }> {
+  return fetchJson<{ status: string }>(`/endpoints/${encodeURIComponent(name)}/oauth/status`);
 }
 
 export async function updateEndpoint(params: UpdateEndpointParams): Promise<void> {

@@ -112,8 +112,22 @@
             {/if}
           </div>
         {/if}
-        {#if expandedTool === tool.name && tool.inputSchema}
-          <pre class="mt-2 p-2 text-xs font-mono bg-(--color-surface-alt) rounded overflow-x-auto">{JSON.stringify(tool.inputSchema, null, 2)}</pre>
+        {#if expandedTool === tool.name}
+          {#if tool.inputSchema}
+            <div class="mt-2">
+              <div class="text-xs font-medium text-(--color-text-secondary) mb-1">Input Schema</div>
+              <pre class="p-2 text-xs font-mono bg-(--color-surface-alt) rounded overflow-x-auto">{JSON.stringify(tool.inputSchema, null, 2)}</pre>
+            </div>
+          {/if}
+          {#if tool.annotations}
+            <div class="mt-2">
+              <div class="text-xs font-medium text-(--color-text-secondary) mb-1">Annotations</div>
+              <pre class="p-2 text-xs font-mono bg-(--color-surface-alt) rounded overflow-x-auto">{JSON.stringify(tool.annotations, null, 2)}</pre>
+            </div>
+          {/if}
+          {#if !tool.inputSchema && !tool.annotations}
+            <div class="mt-2 text-xs text-(--color-text-secondary) italic">No schema available</div>
+          {/if}
         {/if}
       </div>
     {/each}

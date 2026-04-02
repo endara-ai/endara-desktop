@@ -1,24 +1,38 @@
 <script lang="ts">
-  import { relayLogLines } from '$lib/stores';
+  import { tick } from 'svelte';
+  import { relayLogLines, activeTopLevelTab } from '$lib/stores';
   import type { RelayLogLine } from '$lib/stores';
+  import { isAtBottom } from '$lib/scrollUtils';
 
   let scrollContainer: HTMLDivElement | undefined = $state();
   let autoScroll = $state(true);
+  let isTabSwitching = $state(false);
 
   function handleScroll() {
-    if (!scrollContainer) return;
+    if (!scrollContainer || isTabSwitching) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-    autoScroll = scrollHeight - scrollTop - clientHeight < 40;
+    autoScroll = isAtBottom(scrollTop, scrollHeight, clientHeight);
   }
 
-  function scrollToBottom() {
-    if (scrollContainer && autoScroll) {
+  async function scrollToBottom() {
+    if (!autoScroll) return;
+    await tick(); // wait for Svelte to flush DOM updates
+    requestAnimationFrame(() => {
+      if (scrollContainer && autoScroll) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    });
+  }
+
+  function goToEnd() {
+    autoScroll = true;
+    tick().then(() => {
       requestAnimationFrame(() => {
         if (scrollContainer) {
           scrollContainer.scrollTop = scrollContainer.scrollHeight;
         }
       });
-    }
+    });
   }
 
   function clearLogs() {
@@ -35,18 +49,46 @@
 
   // Auto-scroll when new lines arrive
   $effect(() => {
-    $relayLogLines;  // subscribe to changes
+    $relayLogLines;  // subscribe to log changes
     scrollToBottom();
+  });
+
+  // Force scroll when switching back to relay-logs tab
+  $effect(() => {
+    const tab = $activeTopLevelTab;
+    if (tab === 'relay-logs' && autoScroll && scrollContainer) {
+      isTabSwitching = true;
+      const timer = setTimeout(() => {
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
+        requestAnimationFrame(() => {
+          isTabSwitching = false;
+        });
+      }, 50);
+      return () => {
+        clearTimeout(timer);
+        isTabSwitching = false;
+      };
+    }
   });
 </script>
 
 <div class="h-full flex flex-col">
   <div class="px-4 py-2 border-b border-(--color-border) flex items-center justify-between">
     <span class="text-xs text-(--color-text-secondary)">{$relayLogLines.length} lines</span>
-    <button
-      class="px-2.5 py-1 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
-      onclick={clearLogs}
-    >Clear</button>
+    <div class="flex items-center gap-2">
+      {#if !autoScroll}
+        <button
+          class="px-2.5 py-1 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+          onclick={goToEnd}
+        >Go to end</button>
+      {/if}
+      <button
+        class="px-2.5 py-1 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+        onclick={clearLogs}
+      >Clear</button>
+    </div>
   </div>
   <div
     bind:this={scrollContainer}

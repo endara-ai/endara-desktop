@@ -1,6 +1,7 @@
 <script lang="ts">
   import { selectedEndpointData, activeTab, selectedEndpoint, endpoints } from '$lib/stores';
   import { restartEndpoint, refreshEndpoint, removeEndpoint, getEndpoints, disableEndpoint, enableEndpoint } from '$lib/api';
+  import { toast } from 'svelte-sonner';
   import ToolsTab from './ToolsTab.svelte';
   import LogsTab from './LogsTab.svelte';
   import ConfigTab from './ConfigTab.svelte';
@@ -12,8 +13,6 @@
   let showRestartConfirm = $state(false);
   let showDeleteConfirm = $state(false);
   let toggling = $state(false);
-  let toggleError: string | null = $state(null);
-  let toggleErrorTimer: ReturnType<typeof setTimeout> | null = null;
 
   const tabs = [
     { id: 'tools' as const, label: 'Tools' },
@@ -24,7 +23,12 @@
   async function handleRestart() {
     const name = $selectedEndpoint;
     if (name) {
-      try { await restartEndpoint(name); } catch { /* ignore */ }
+      try {
+        await restartEndpoint(name);
+        toast.success(`Server "${name}" restarted`);
+      } catch {
+        toast.error(`Failed to restart "${name}"`);
+      }
     }
     showRestartConfirm = false;
   }
@@ -32,15 +36,12 @@
   async function handleRefresh() {
     const name = $selectedEndpoint;
     if (name) {
-      try { await refreshEndpoint(name); } catch { /* ignore */ }
-    }
-  }
-
-  function clearToggleError() {
-    toggleError = null;
-    if (toggleErrorTimer) {
-      clearTimeout(toggleErrorTimer);
-      toggleErrorTimer = null;
+      try {
+        await refreshEndpoint(name);
+        toast.success(`Tools refreshed for "${name}"`);
+      } catch {
+        toast.error(`Failed to refresh "${name}"`);
+      }
     }
   }
 
@@ -48,7 +49,6 @@
     const ep = $selectedEndpointData;
     if (!ep || toggling) return;
     toggling = true;
-    clearToggleError();
     const action = ep.disabled ? 'enable' : 'disable';
     try {
       if (ep.disabled) {
@@ -60,9 +60,9 @@
         const data = await getEndpoints();
         endpoints.set(data);
       } catch { /* will be picked up by next poll */ }
+      toast.success(`Server "${ep.name}" ${ep.disabled ? 'enabled' : 'disabled'}`);
     } catch {
-      toggleError = `Failed to ${action} server`;
-      toggleErrorTimer = setTimeout(() => { toggleError = null; }, 3000);
+      toast.error(`Failed to ${action} "${ep.name}"`);
     }
     toggling = false;
   }
@@ -77,7 +77,10 @@
           const data = await getEndpoints();
           endpoints.set(data);
         } catch { /* will be picked up by next poll */ }
-      } catch { /* ignore */ }
+        toast.success(`Server "${name}" deleted`);
+      } catch {
+        toast.error(`Failed to delete "${name}"`);
+      }
     }
     showDeleteConfirm = false;
   }
@@ -104,9 +107,6 @@
       </div>
       <div class="flex items-center gap-2">
         <div class="flex items-center gap-2">
-          {#if toggleError}
-            <span class="text-xs text-red-500">{toggleError}</span>
-          {/if}
           <button
             class="relative w-10 h-5 rounded-full transition-colors {ep.disabled ? 'bg-gray-300 dark:bg-gray-600' : 'bg-green-500'} {toggling ? 'opacity-50' : ''}"
             onclick={handleToggle}

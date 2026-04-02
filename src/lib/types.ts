@@ -9,7 +9,7 @@ export interface RelayStatus {
 
 export interface Endpoint {
   name: string;
-  transport: 'stdio' | 'sse' | 'http';
+  transport: 'stdio' | 'sse' | 'http' | 'oauth';
   health: HealthStatus;
   tool_count: number;
   last_activity: string | null;
