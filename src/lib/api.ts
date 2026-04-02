@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
-import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry } from './types';
+import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus } from './types';
 import { relayPort } from './stores';
 
 function getBaseUrl() {
@@ -190,8 +190,16 @@ export async function startOAuth(name: string): Promise<{ authorize_url: string 
   return fetchJson<{ authorize_url: string }>(`/endpoints/${encodeURIComponent(name)}/oauth/start`, { method: 'POST' });
 }
 
-export async function getOAuthStatus(name: string): Promise<{ status: string }> {
-  return fetchJson<{ status: string }>(`/endpoints/${encodeURIComponent(name)}/oauth/status`);
+export async function getOAuthStatus(name: string): Promise<OAuthStatus> {
+  return fetchJson<OAuthStatus>(`/endpoints/${encodeURIComponent(name)}/oauth/status`);
+}
+
+export async function revokeOAuth(name: string): Promise<void> {
+  await fetchJson(`/endpoints/${encodeURIComponent(name)}/oauth/revoke`, { method: 'POST' });
+}
+
+export async function refreshOAuth(name: string): Promise<void> {
+  await fetchJson(`/endpoints/${encodeURIComponent(name)}/oauth/refresh`, { method: 'POST' });
 }
 
 export async function updateEndpoint(params: UpdateEndpointParams): Promise<void> {

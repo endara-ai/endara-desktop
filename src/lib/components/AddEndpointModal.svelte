@@ -342,8 +342,8 @@
       for (let i = 0; i < maxAttempts; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         try {
-          const { status } = await getOAuthStatus(trimmedName);
-          if (status === 'authorized' || status === 'complete') {
+          const oauthResult = await getOAuthStatus(trimmedName);
+          if ((oauthResult.status as string) === 'authorized' || (oauthResult.status as string) === 'complete' || oauthResult.status === 'authenticated') {
             // Success — refresh and close
             try {
               const data = await getEndpoints();
@@ -355,7 +355,7 @@
             onclose();
             return;
           }
-          if (status === 'error') {
+          if ((oauthResult.status as string) === 'error' || oauthResult.status === 'connection_failed') {
             error = 'OAuth authorization failed';
             return;
           }

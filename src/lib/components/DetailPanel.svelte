@@ -9,16 +9,23 @@
   import HealthDot from './HealthDot.svelte';
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
+  import AuthTab from './AuthTab.svelte';
 
   let showRestartConfirm = $state(false);
   let showDeleteConfirm = $state(false);
   let toggling = $state(false);
 
-  const tabs = [
+  const baseTabs = [
     { id: 'tools' as const, label: 'Tools' },
     { id: 'logs' as const, label: 'Logs' },
     { id: 'config' as const, label: 'Config' },
   ];
+
+  let tabs = $derived(
+    $selectedEndpointData?.transport === 'oauth'
+      ? [...baseTabs, { id: 'auth' as const, label: 'Auth' }]
+      : baseTabs
+  );
 
   async function handleRestart() {
     const name = $selectedEndpoint;
@@ -158,6 +165,8 @@
         <ToolsTab />
       {:else if $activeTab === 'logs'}
         <LogsTab />
+      {:else if $activeTab === 'auth' && ep.transport === 'oauth'}
+        <AuthTab />
       {:else}
         <ConfigTab />
       {/if}

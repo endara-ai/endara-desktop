@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Endpoint, Theme } from './types';
+import type { Endpoint, Theme, OAuthStatus } from './types';
 
 export const endpoints = writable<Endpoint[]>([]);
 export const selectedEndpoint = writable<string | null>(null);
@@ -39,7 +39,8 @@ function createThemeStore() {
 
 export const theme = createThemeStore();
 export const searchQuery = writable<string>('');
-export const activeTab = writable<'tools' | 'logs' | 'config'>('tools');
+export const activeTab = writable<'tools' | 'logs' | 'config' | 'auth'>('tools');
+export const oauthStatuses = writable<Map<string, OAuthStatus>>(new Map());
 export const activeTopLevelTab = writable<'servers' | 'unified-catalog' | 'relay-logs' | 'settings'>('servers');
 
 export interface RelayLogLine {
