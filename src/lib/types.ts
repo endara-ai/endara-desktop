@@ -38,5 +38,18 @@ export interface EndpointLogs {
   lines: string[];
 }
 
+export type OAuthStatusValue = 'authenticated' | 'needs_login' | 'refreshing' | 'auth_required' | 'disconnected' | 'connection_failed';
+
+export interface OAuthStatus {
+  status: OAuthStatusValue;
+  has_access_token: boolean;
+  has_refresh_token: boolean;
+  expires_at: string | null;
+  expires_in_seconds: number | null;
+  last_refreshed_at: string | null;
+  next_refresh_at: string | null;
+  state: string | null;
+}
+
 export type Theme = 'light' | 'dark' | 'system';
 

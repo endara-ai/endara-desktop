@@ -1,11 +1,24 @@
 <script lang="ts">
-  import type { Endpoint } from '$lib/types';
-  import { selectedEndpoint } from '$lib/stores';
+  import type { Endpoint, OAuthStatusValue } from '$lib/types';
+  import { selectedEndpoint, oauthStatuses } from '$lib/stores';
   import HealthDot from './HealthDot.svelte';
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
 
   let { endpoint }: { endpoint: Endpoint } = $props();
+
+  const authIcons: Record<OAuthStatusValue, string> = {
+    authenticated: '🔑',
+    refreshing: '🔄',
+    auth_required: '🔒',
+    needs_login: '🔒',
+    disconnected: '⚠️',
+    connection_failed: '⚠️',
+  };
+
+  let oauthStatus = $derived(
+    endpoint.transport === 'oauth' ? $oauthStatuses.get(endpoint.name) : undefined
+  );
 
   function select() {
     selectedEndpoint.set(endpoint.name);
@@ -35,6 +48,9 @@
         <span class="text-xs text-(--color-text-secondary)">Disabled</span>
       {:else}
         <span class="text-xs text-(--color-text-secondary)">{endpoint.tool_count} tools</span>
+      {/if}
+      {#if oauthStatus}
+        <span class="text-xs" title={oauthStatus.status}>{authIcons[oauthStatus.status]}</span>
       {/if}
     </div>
   </div>

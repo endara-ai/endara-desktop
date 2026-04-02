@@ -7,8 +7,8 @@
   import RelayLogs from '$lib/components/RelayLogs.svelte';
   import UnifiedCatalog from '$lib/components/UnifiedCatalog.svelte';
   import Onboarding from '$lib/components/Onboarding.svelte';
-  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete } from '$lib/stores';
-  import { getEndpoints } from '$lib/api';
+  import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete, oauthStatuses } from '$lib/stores';
+  import { getEndpoints, getOAuthStatus } from '$lib/api';
   import { initRelayLogListener } from '$lib/logListener';
   import { getActiveTopLevelTab, getVisibleTopLevelTabs, shouldShowRelayStartupFailure, shouldSkipEndpointPolling } from '$lib/relaySidecarUi';
   import { invoke } from '@tauri-apps/api/core';
@@ -65,6 +65,20 @@
       const data = await getEndpoints();
       endpoints.set(data);
       relayConnected.set(true);
+      // Poll OAuth statuses for OAuth endpoints
+      const oauthEndpoints = data.filter(ep => ep.transport === 'oauth');
+      if (oauthEndpoints.length > 0) {
+        const statusMap = new Map(get(oauthStatuses));
+        await Promise.allSettled(
+          oauthEndpoints.map(async (ep) => {
+            try {
+              const s = await getOAuthStatus(ep.name);
+              statusMap.set(ep.name, s);
+            } catch { /* ignore */ }
+          })
+        );
+        oauthStatuses.set(statusMap);
+      }
       // If sidecar status is still starting/unknown but API responds, infer running
       const inferredStatus = get(relaySidecarStatus);
       if (inferredStatus === 'starting' || inferredStatus === 'unknown') {
