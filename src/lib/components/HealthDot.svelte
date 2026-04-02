@@ -41,7 +41,7 @@
   </span>
 {:else}
   <span
-    class="inline-block w-2.5 h-2.5 rounded-full {colorMap[health]} {health === 'healthy' ? 'animate-pulse-dot' : ''}"
+    class="inline-block w-2.5 h-2.5 rounded-full {colorMap[health]}"
     title={titleMap[health]}
   ></span>
 {/if}
