@@ -70,14 +70,14 @@
   {:else}
     {#each filteredTools as tool (tool.name)}
       <div
-        class="w-full text-left p-3 rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors cursor-pointer {tool.disabled ? 'opacity-50' : ''}"
+        class="w-full text-left p-3 rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors cursor-pointer overflow-hidden {tool.disabled ? 'opacity-50' : ''}"
         onclick={() => toggleExpand(tool.name)}
         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(tool.name); } }}
         role="button"
         tabindex="0"
       >
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-medium font-mono">{tool.name}</span>
+        <div class="flex items-center justify-between min-w-0">
+          <span class="text-sm font-medium font-mono truncate min-w-0">{tool.name}</span>
           <div class="flex items-center gap-2">
             {#if tool.annotations?.readOnlyHint === true}
               <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Read-only</span>
