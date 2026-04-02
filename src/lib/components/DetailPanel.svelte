@@ -86,7 +86,7 @@
   }
 </script>
 
-<div class="flex-1 h-full flex flex-col bg-(--color-surface)">
+<div class="flex-1 h-full flex flex-col bg-(--color-surface) min-w-0">
   {#if $selectedEndpointData}
     {@const ep = $selectedEndpointData}
     <div class="px-5 py-3 border-b border-(--color-border) flex items-center justify-between">
