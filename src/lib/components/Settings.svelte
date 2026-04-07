@@ -237,7 +237,7 @@
         <div class="text-xs text-(--color-text-secondary)/70 mt-1">When disabled, all tools from all endpoints are listed individually in the MCP catalog.</div>
       </div>
       <button
-        class="relative w-10 h-5 rounded-full transition-colors {$jsExecutionMode ? 'bg-(--color-accent)' : 'bg-(--color-border)'}"
+        class="shrink-0 relative w-10 h-5 rounded-full transition-colors {$jsExecutionMode ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
         onclick={() => toggleJsExecutionMode()}
         role="switch"
         aria-checked={$jsExecutionMode}

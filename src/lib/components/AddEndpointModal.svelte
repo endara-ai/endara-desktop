@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { addEndpoint, getEndpoints, testConnection, startOAuth, getOAuthStatus, type AddEndpointParams, type TestConnectionParams } from '$lib/api';
+  import { addEndpoint, getEndpoints, testConnection, oauthSetup, oauthSetupStatus, oauthSetupCredentials, oauthSetupCommit, oauthSetupCancel, reloadConfig, type AddEndpointParams, type TestConnectionParams, type OAuthSetupParams } from '$lib/api';
   import { endpoints, selectedEndpoint } from '$lib/stores';
   import { toast } from 'svelte-sonner';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
+  import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
   import { sanitizeName } from '$lib/utils';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
@@ -37,6 +38,12 @@
   let clientId = $state('');
   let clientSecret = $state('');
   let scopes = $state('');
+  let selectedOAuthEntry: OAuthCatalogEntry | null = $state(null);
+  let showingDcrFallback = $state(false);
+  let dcrFallbackData: { authorization_endpoint?: string } = $state({});
+  let dcrClientId = $state('');
+  let dcrClientSecret = $state('');
+  let pendingSetupSessionId: string | null = $state(null);
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
@@ -62,8 +69,61 @@
       : CATALOG_SERVERS,
   );
 
+  let filteredOAuthServers = $derived(
+    search.trim()
+      ? oauthCatalog.filter((s) => {
+          const q = search.toLowerCase();
+          return s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
+        })
+      : oauthCatalog,
+  );
+
+  // Filter toggles for unified browse list
+  let showOAuth = $state(true);
+  let showLocal = $state(true);
+
+  type UnifiedEntry =
+    | { type: 'oauth'; entry: OAuthCatalogEntry }
+    | { type: 'local'; entry: CatalogServer };
+
+  let unifiedServers: UnifiedEntry[] = $derived.by(() => {
+    let items: UnifiedEntry[] = [];
+    if (showOAuth) {
+      items.push(...filteredOAuthServers.map((e) => ({ type: 'oauth' as const, entry: e })));
+    }
+    if (showLocal) {
+      items.push(...filteredServers.map((e) => ({ type: 'local' as const, entry: e })));
+    }
+    return items.sort((a, b) => a.entry.name.localeCompare(b.entry.name));
+  });
+
+  function selectOAuthService(service: OAuthCatalogEntry) {
+    selectedCatalog = null;
+    selectedOAuthEntry = service;
+    name = service.name;
+    prefixCustom = false;
+    prefix = sanitizeName(service.name);
+    description = service.description;
+    transport = 'oauth';
+    url = service.url;
+    oauthServerUrl = service.oauthServerUrl || '';
+    clientId = '';
+    clientSecret = '';
+    scopes = service.defaultScopes.join(' ');
+    envVars = [];
+    headerVars = [];
+    catalogEnvValues = {};
+    userArgValues = [];
+    showingDcrFallback = false;
+    dcrClientId = '';
+    dcrClientSecret = '';
+    error = '';
+    step = 'configure';
+  }
+
   function selectCatalog(server: CatalogServer) {
     selectedCatalog = server;
+    selectedOAuthEntry = null;
     name = server.name;
     prefixCustom = false;
     prefix = sanitizeName(server.name);
@@ -79,12 +139,14 @@
     clientId = '';
     clientSecret = '';
     scopes = '';
+    showingDcrFallback = false;
     error = '';
     step = 'configure';
   }
 
   function selectCustom() {
     selectedCatalog = null;
+    selectedOAuthEntry = null;
     name = '';
     prefixCustom = false;
     prefix = '';
@@ -101,6 +163,7 @@
     clientId = '';
     clientSecret = '';
     scopes = '';
+    showingDcrFallback = false;
     error = '';
     step = 'configure';
   }
@@ -109,6 +172,7 @@
     step = 'browse';
     error = '';
     testResult = null;
+    showingDcrFallback = false;
   }
 
   function handlePrefixInput(value: string) {
@@ -229,11 +293,9 @@
       }
     } else if (transport === 'oauth') {
       if (!url.trim()) { error = 'Server URL is required'; return; }
-      if (!oauthServerUrl.trim()) { error = 'OAuth Server URL is required'; return; }
-      if (!clientId.trim()) { error = 'Client ID is required'; return; }
       params.url = url.trim();
-      params.oauth_server_url = oauthServerUrl.trim();
-      params.client_id = clientId.trim();
+      if (oauthServerUrl.trim()) params.oauth_server_url = oauthServerUrl.trim();
+      if (clientId.trim()) params.client_id = clientId.trim();
       if (clientSecret.trim()) params.client_secret = clientSecret.trim();
       if (scopes.trim()) params.scopes = scopes.trim();
     } else {
@@ -289,96 +351,155 @@
   }
 
   async function handleOAuthSubmit() {
-    // First save the endpoint via normal handleSubmit logic but don't close
     error = '';
     if (!name.trim()) { error = 'Name is required'; return; }
     if (!url.trim()) { error = 'Server URL is required'; return; }
-    if (!oauthServerUrl.trim()) { error = 'OAuth Server URL is required'; return; }
-    if (!clientId.trim()) { error = 'Client ID is required'; return; }
 
     const trimmedName = name.trim();
     const defaultPrefix = sanitizeName(trimmedName);
 
-    const params: AddEndpointParams = {
+    const setupParams: OAuthSetupParams = {
       name: trimmedName,
-      transport,
+      url: url.trim(),
     };
-
     if (prefixCustom && prefix !== defaultPrefix) {
-      params.tool_prefix = prefix;
+      setupParams.tool_prefix = prefix;
     }
-    if (description.trim()) {
-      params.description = description.trim();
-    }
-
-    params.url = url.trim();
-    params.oauth_server_url = oauthServerUrl.trim();
-    params.client_id = clientId.trim();
-    if (clientSecret.trim()) params.client_secret = clientSecret.trim();
-    if (scopes.trim()) params.scopes = scopes.trim();
-
-    // Build env
-    const env: Record<string, string> = {};
-    const filteredEnv = envVars.filter((e) => e.key.trim());
-    for (const e of filteredEnv) {
-      env[e.key.trim()] = e.value;
-    }
-    if (Object.keys(env).length > 0) {
-      params.env = env;
+    if (scopes.trim()) {
+      setupParams.scopes = scopes.trim().split(/\s+/);
     }
 
     submitting = true;
     try {
-      await addEndpoint(params);
+      const result = await oauthSetup(setupParams);
+      pendingSetupSessionId = result.session_id;
 
-      // Start OAuth flow
-      const { authorize_url } = await startOAuth(trimmedName);
-
-      // Open browser for authorization
-      await openUrl(authorize_url);
-
-      // Poll for OAuth completion (every 1s, up to 2 minutes)
-      const maxAttempts = 120;
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        try {
-          const oauthResult = await getOAuthStatus(trimmedName);
-          if ((oauthResult.status as string) === 'authorized' || (oauthResult.status as string) === 'complete' || oauthResult.status === 'authenticated') {
-            // Success — refresh and close
-            try {
-              const data = await getEndpoints();
-              endpoints.set(data);
-            } catch {
-              // Will be picked up by the next poll cycle
-            }
-            selectedEndpoint.set(trimmedName);
-            onclose();
-            return;
-          }
-          if ((oauthResult.status as string) === 'error' || oauthResult.status === 'connection_failed') {
-            error = 'OAuth authorization failed';
-            return;
-          }
-        } catch {
-          // Polling error, continue
-        }
+      if (result.status === 'awaiting_credentials' && result.dcr_error) {
+        // DCR failed — show manual credentials form
+        showingDcrFallback = true;
+        dcrFallbackData = {
+          authorization_endpoint: result.discovery?.auth_server,
+        };
+        dcrClientId = '';
+        dcrClientSecret = '';
+        submitting = false;
+        return;
       }
-      error = 'OAuth authorization timed out. Please try again.';
+
+      if (result.authorize_url) {
+        // Open browser for authorization
+        await openUrl(result.authorize_url);
+
+        // Poll for setup session completion (every 1s, up to 2 minutes)
+        await pollForSetupAuth(result.session_id, trimmedName);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+      // Clean up the setup session on failure
+      if (pendingSetupSessionId) {
+        try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
+        pendingSetupSessionId = null;
+      }
     } finally {
       submitting = false;
     }
   }
 
+  async function pollForSetupAuth(sessionId: string, endpointName: string) {
+    const maxAttempts = 120;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        const statusResult = await oauthSetupStatus(sessionId);
+        if (statusResult.status === 'authorized') {
+          // Authorization complete — commit the endpoint to config.toml
+          try {
+            await oauthSetupCommit(sessionId);
+          } catch (e) {
+            error = `Failed to save endpoint: ${e instanceof Error ? e.message : String(e)}`;
+            pendingSetupSessionId = null;
+            return;
+          }
+          pendingSetupSessionId = null;
+
+          // Wait for config watcher to pick up the new endpoint
+          await new Promise((r) => setTimeout(r, 500));
+          try {
+            const data = await getEndpoints();
+            endpoints.set(data);
+          } catch {
+            // Will be picked up by the next poll cycle
+          }
+          selectedEndpoint.set(endpointName);
+          toast.success(`Connected to "${endpointName}"`);
+          onclose();
+          return;
+        }
+      } catch {
+        // Polling error, continue
+      }
+    }
+    error = 'OAuth authorization timed out. Please try again.';
+    // Clean up on timeout — no config was ever written
+    if (pendingSetupSessionId) {
+      try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
+      pendingSetupSessionId = null;
+    }
+  }
+
+  async function handleDcrFallbackSubmit() {
+    error = '';
+    if (!dcrClientId.trim()) { error = 'Client ID is required'; return; }
+    if (!pendingSetupSessionId) { error = 'No active setup session'; return; }
+
+    const trimmedName = name.trim();
+    submitting = true;
+    try {
+      const result = await oauthSetupCredentials(
+        pendingSetupSessionId,
+        dcrClientId.trim(),
+        dcrClientSecret.trim() || undefined,
+      );
+
+      if (result.authorize_url) {
+        showingDcrFallback = false;
+        await openUrl(result.authorize_url);
+        await pollForSetupAuth(pendingSetupSessionId, trimmedName);
+      } else {
+        error = 'OAuth flow failed after credential submission. Please try again.';
+        if (pendingSetupSessionId) {
+          try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
+          pendingSetupSessionId = null;
+        }
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      if (pendingSetupSessionId) {
+        try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
+        pendingSetupSessionId = null;
+      }
+    } finally {
+      submitting = false;
+    }
+  }
+
+  async function handleCancel() {
+    // Cancel pending setup session if user cancels — no config cleanup needed
+    if (pendingSetupSessionId) {
+      try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
+      pendingSetupSessionId = null;
+    }
+    onclose();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') onclose();
+    if (e.key === 'Escape') handleCancel();
   }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="presentation" onclick={onclose} onkeydown={handleKeydown}>
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="presentation" onclick={handleCancel} onkeydown={handleKeydown}>
   <div
     class="bg-(--color-surface) rounded-xl shadow-xl border border-(--color-border) p-6 w-[36rem] max-w-[90vw] max-h-[90vh] overflow-y-auto"
     role="dialog"
@@ -399,28 +520,68 @@
         class="w-full text-sm px-3 py-2 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) mb-4"
       />
 
-      <div class="grid grid-cols-2 gap-2 mb-3">
-        {#each filteredServers as server (server.id)}
-          <button
-            class="text-left p-3 rounded-lg border border-(--color-border) hover:border-(--color-accent) hover:bg-(--color-surface-hover) transition-colors"
-            onclick={() => selectCatalog(server)}
-          >
-            <div class="flex items-center gap-2 mb-1">
-              <span class="w-5 h-5 flex-shrink-0 text-(--color-text-secondary)">{@html server.icon}</span>
-              <span class="text-sm font-medium text-(--color-text)">{server.name}</span>
-            </div>
-            <p class="text-xs text-(--color-text-secondary) line-clamp-2 mb-1.5">{server.description}</p>
-            <div class="flex items-center gap-1.5">
-              <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--color-accent)/10 text-(--color-accent) font-medium">
-                {CATEGORY_LABELS[server.category] ?? server.category}
-              </span>
-              {#if server.envVars.some(e => e.required)}
-                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium">
-                  API Key Required
+      <!-- Filter toggles -->
+      <div class="flex gap-2 mb-4">
+        <button
+          class="px-3 py-1 text-xs rounded-full border transition-colors {showOAuth
+            ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)'
+            : 'border-(--color-border) text-(--color-text-secondary) hover:bg-(--color-surface-hover)'}"
+          onclick={() => showOAuth = !showOAuth}
+        >
+          OAuth
+        </button>
+        <button
+          class="px-3 py-1 text-xs rounded-full border transition-colors {showLocal
+            ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)'
+            : 'border-(--color-border) text-(--color-text-secondary) hover:bg-(--color-surface-hover)'}"
+          onclick={() => showLocal = !showLocal}
+        >
+          Local
+        </button>
+      </div>
+
+      <!-- Unified server list -->
+      <div class="flex flex-col gap-2 mb-3">
+        {#each unifiedServers as item (item.type + '-' + item.entry.id)}
+          {#if item.type === 'oauth'}
+            {@const service = item.entry as OAuthCatalogEntry}
+            <button
+              class="w-full text-left p-3 rounded-lg border border-(--color-border) hover:border-(--color-accent) hover:bg-(--color-surface-hover) transition-colors flex items-center gap-3"
+              onclick={() => selectOAuthService(service)}
+            >
+              <span class="w-5 h-5 flex-shrink-0 text-(--color-text-secondary)">{@html service.icon}</span>
+              <span class="text-sm font-medium text-(--color-text) flex-shrink-0">{service.name}</span>
+              <p class="text-xs text-(--color-text-secondary) line-clamp-1 flex-1 min-w-0">{service.description}</p>
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--color-accent)/10 text-(--color-accent) font-medium">
+                  {CATEGORY_LABELS[service.category] ?? service.category}
                 </span>
-              {/if}
-            </div>
-          </button>
+                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium">
+                  OAuth
+                </span>
+              </div>
+            </button>
+          {:else}
+            {@const server = item.entry as CatalogServer}
+            <button
+              class="w-full text-left p-3 rounded-lg border border-(--color-border) hover:border-(--color-accent) hover:bg-(--color-surface-hover) transition-colors flex items-center gap-3"
+              onclick={() => selectCatalog(server)}
+            >
+              <span class="w-5 h-5 flex-shrink-0 text-(--color-text-secondary)">{@html server.icon}</span>
+              <span class="text-sm font-medium text-(--color-text) flex-shrink-0">{server.name}</span>
+              <p class="text-xs text-(--color-text-secondary) line-clamp-1 flex-1 min-w-0">{server.description}</p>
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--color-accent)/10 text-(--color-accent) font-medium">
+                  {CATEGORY_LABELS[server.category] ?? server.category}
+                </span>
+                {#if server.envVars.some(e => e.required)}
+                  <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium">
+                    API Key
+                  </span>
+                {/if}
+              </div>
+            </button>
+          {/if}
         {/each}
       </div>
 
@@ -435,7 +596,7 @@
       <div class="flex justify-end pt-4">
         <button
           class="px-3 py-1.5 text-sm rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
-          onclick={onclose}
+          onclick={handleCancel}
         >
           Cancel
         </button>
@@ -453,12 +614,12 @@
           </svg>
         </button>
         <h3 class="text-base font-semibold text-(--color-text)">
-          {selectedCatalog ? `Configure ${selectedCatalog.name}` : 'Custom Server'}
+          {selectedCatalog ? `Configure ${selectedCatalog.name}` : selectedOAuthEntry ? `Connect ${selectedOAuthEntry.name}` : 'Custom Server'}
         </h3>
       </div>
 
       <div class="space-y-3">
-        {#if !selectedCatalog}
+        {#if !selectedCatalog && !selectedOAuthEntry}
           <!-- Custom: transport selector -->
           <fieldset class="border-none p-0 m-0 mb-1">
             <legend class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Transport</legend>
@@ -530,29 +691,41 @@
         {:else if transport === 'oauth'}
           <div>
             <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Server URL</label>
-            <input id="modal-ep-url" type="text" bind:value={url} placeholder="http://localhost:3000/mcp"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-          </div>
-          <div>
-            <label for="modal-ep-oauth-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">OAuth Server URL</label>
-            <input id="modal-ep-oauth-url" type="text" bind:value={oauthServerUrl} placeholder="https://auth.example.com"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-          </div>
-          <div>
-            <label for="modal-ep-client-id" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client ID</label>
-            <input id="modal-ep-client-id" type="text" bind:value={clientId} placeholder="your-client-id"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-          </div>
-          <div>
-            <label for="modal-ep-client-secret" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client Secret <span class="text-(--color-text-secondary)/50">(optional)</span></label>
-            <input id="modal-ep-client-secret" type="password" bind:value={clientSecret} placeholder="••••••••"
+            <input id="modal-ep-url" type="text" bind:value={url} placeholder="https://mcp.linear.app/sse"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
           </div>
           <div>
             <label for="modal-ep-scopes" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Scopes <span class="text-(--color-text-secondary)/50">(optional, space-separated)</span></label>
             <input id="modal-ep-scopes" type="text" bind:value={scopes} placeholder="read write"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+            <p class="text-[11px] text-(--color-text-secondary) mt-0.5">Space-separated. Leave blank for server defaults.</p>
           </div>
+
+          <!-- Collapsible Advanced section — collapsed by default when from catalog -->
+          <details class="border border-(--color-border) rounded-lg" open={!selectedOAuthEntry}>
+            <summary class="px-3 py-2 text-xs font-medium text-(--color-text-secondary) cursor-pointer hover:bg-(--color-surface-hover) rounded-lg select-none">
+              Advanced
+            </summary>
+            <div class="px-3 pb-3 space-y-3">
+              <div>
+                <label for="modal-ep-oauth-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">OAuth Server URL</label>
+                <input id="modal-ep-oauth-url" type="text" bind:value={oauthServerUrl} placeholder="Auto-discovered"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                <p class="text-[11px] text-(--color-text-secondary) mt-0.5">Leave blank to auto-discover via RFC 9728</p>
+              </div>
+              <div>
+                <label for="modal-ep-client-id" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client ID</label>
+                <input id="modal-ep-client-id" type="text" bind:value={clientId} placeholder="Auto-registered"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                <p class="text-[11px] text-(--color-text-secondary) mt-0.5">Leave blank to use Dynamic Client Registration</p>
+              </div>
+              <div>
+                <label for="modal-ep-client-secret" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client Secret <span class="text-(--color-text-secondary)/50">(optional)</span></label>
+                <input id="modal-ep-client-secret" type="password" bind:value={clientSecret} placeholder="Optional"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              </div>
+            </div>
+          </details>
         {:else}
           <div>
             <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">URL</label>
@@ -715,29 +888,80 @@
           </div>
         {/if}
 
+        <!-- DCR Fallback Form -->
+        {#if showingDcrFallback}
+          <div class="border border-amber-500/30 rounded-lg p-4 bg-amber-500/5 space-y-3">
+            <div>
+              <p class="text-sm text-(--color-text)">
+                <strong>{name}</strong> requires manual client registration.
+                Register an OAuth app with the service, then enter your credentials below.
+              </p>
+              {#if dcrFallbackData.authorization_endpoint}
+                <p class="text-[11px] text-(--color-text-secondary) mt-1">
+                  Auth server: <code class="bg-(--color-surface-hover) px-1 py-0.5 rounded text-[11px]">{dcrFallbackData.authorization_endpoint}</code>
+                </p>
+              {/if}
+            </div>
+
+            <div>
+              <label for="modal-dcr-client-id" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">
+                Client ID <span class="text-(--color-offline)">*</span>
+              </label>
+              <input id="modal-dcr-client-id" type="text" bind:value={dcrClientId} placeholder="Your registered client ID"
+                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+            </div>
+
+            <div>
+              <label for="modal-dcr-client-secret" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">
+                Client Secret <span class="text-(--color-text-secondary)/50">(optional for public clients)</span>
+              </label>
+              <input id="modal-dcr-client-secret" type="password" bind:value={dcrClientSecret} placeholder="Optional"
+                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+            </div>
+
+            <button
+              class="w-full px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
+              onclick={handleDcrFallbackSubmit}
+              disabled={submitting}
+            >
+              {#if submitting}
+                Connecting…
+              {:else}
+                Save Credentials & Connect
+              {/if}
+            </button>
+          </div>
+        {/if}
+
         {#if error}
           <p class="text-xs text-(--color-offline)">{error}</p>
         {/if}
 
-        <div class="flex justify-end gap-2 pt-2">
-          <button
-            class="px-3 py-1.5 text-sm rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
-            onclick={onclose}
-          >
-            Cancel
-          </button>
-          <button
-            class="px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
-            onclick={transport === 'oauth' ? handleOAuthSubmit : handleSubmit}
-            disabled={submitting}
-          >
-            {#if submitting}
-              {transport === 'oauth' ? 'Connecting…' : 'Adding…'}
-            {:else}
-              {transport === 'oauth' ? 'Save & Connect' : 'Add Server'}
-            {/if}
-          </button>
-        </div>
+        {#if !showingDcrFallback}
+          <div class="flex justify-end gap-2 pt-2">
+            <button
+              class="px-3 py-1.5 text-sm rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+              onclick={handleCancel}
+            >
+              Cancel
+            </button>
+            <button
+              class="px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
+              onclick={transport === 'oauth' ? handleOAuthSubmit : handleSubmit}
+              disabled={submitting}
+            >
+              {#if submitting}
+                {transport === 'oauth' ? 'Connecting…' : 'Adding…'}
+              {:else if selectedOAuthEntry}
+                Connect with {selectedOAuthEntry.name}
+              {:else if transport === 'oauth'}
+                Save & Connect
+              {:else}
+                Add Server
+              {/if}
+            </button>
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
