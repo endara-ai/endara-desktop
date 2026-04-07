@@ -44,11 +44,49 @@ export interface OAuthStatus {
   status: OAuthStatusValue;
   has_access_token: boolean;
   has_refresh_token: boolean;
-  expires_at: string | null;
+  expires_at: number | null;
   expires_in_seconds: number | null;
-  last_refreshed_at: string | null;
-  next_refresh_at: string | null;
+  last_refreshed_at: number | null;
+  next_refresh_at: number | null;
   state: string | null;
+}
+
+export interface OAuthStartSuccess {
+  authorize_url: string;
+}
+
+export interface OAuthStartDcrUnsupported {
+  error: 'dcr_unsupported';
+  authorization_endpoint?: string;
+  message?: string;
+}
+
+export interface OAuthStartDiscoveryFailed {
+  error: 'discovery_failed';
+  detail?: string;
+}
+
+export type OAuthStartResult = OAuthStartSuccess | OAuthStartDcrUnsupported | OAuthStartDiscoveryFailed;
+
+export type OAuthSetupStatus = 'awaiting_credentials' | 'awaiting_auth' | 'authorized';
+
+export interface OAuthSetupResponse {
+  session_id: string;
+  status: OAuthSetupStatus;
+  authorize_url?: string;
+  discovery?: {
+    auth_server: string;
+    dcr_used: boolean;
+    scopes_available?: string[];
+  };
+  dcr_error?: string;
+}
+
+export interface OAuthSetupStatusResponse {
+  session_id: string;
+  status: OAuthSetupStatus;
+  name: string;
+  url: string;
 }
 
 export type Theme = 'light' | 'dark' | 'system';

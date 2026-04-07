@@ -30,9 +30,9 @@
     connection_failed: 'Connection Failed',
   };
 
-  function formatTime(iso: string | null): string {
-    if (!iso) return '—';
-    const d = new Date(iso);
+  function formatTime(unixSeconds: number | null): string {
+    if (unixSeconds === null || unixSeconds === undefined) return '—';
+    const d = new Date(unixSeconds * 1000);
     return d.toLocaleString();
   }
 
@@ -93,9 +93,17 @@
     if (!name || actionInProgress) return;
     actionInProgress = true;
     try {
-      const { authorize_url } = await startOAuth(name);
-      await openUrl(authorize_url);
-      toast.success('Browser opened for authorization');
+      const result = await startOAuth(name);
+      if ('authorize_url' in result) {
+        await openUrl(result.authorize_url);
+        toast.success('Browser opened for authorization');
+      } else if ('error' in result && result.error === 'discovery_failed') {
+        toast.error('OAuth discovery failed. Go to Settings to configure OAuth server URL manually.');
+      } else if ('error' in result && result.error === 'dcr_unsupported') {
+        toast.error('This server requires manual OAuth app registration. Go to Settings to enter your Client ID.');
+      } else {
+        toast.error('Failed to start OAuth flow');
+      }
     } catch {
       toast.error('Failed to start OAuth flow');
     }
@@ -117,7 +125,7 @@
     showDisconnectConfirm = false;
   }
 
-  let canRefresh = $derived(status !== null && ['authenticated', 'auth_required'].includes(status.status));
+  let canRefresh = $derived(status !== null && status.has_refresh_token && ['authenticated', 'auth_required'].includes(status.status));
   let canReconnect = $derived(status !== null && ['disconnected', 'auth_required', 'needs_login'].includes(status.status));
   let canDisconnect = $derived(status !== null && ['authenticated', 'refreshing', 'auth_required'].includes(status.status));
 </script>
@@ -174,7 +182,7 @@
         </div>
         <div>
           <div class="text-xs text-(--color-text-secondary)">Next Refresh</div>
-          <div class="font-medium">{formatTime(status.next_refresh_at)}</div>
+          <div class="font-medium">{status.has_refresh_token ? formatTime(status.next_refresh_at) : '—'}</div>
         </div>
       </div>
     </div>

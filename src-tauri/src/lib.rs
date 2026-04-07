@@ -436,6 +436,7 @@ struct AddEndpointArgs {
     client_id: Option<String>,
     client_secret: Option<String>,
     scopes: Option<String>,
+    token_endpoint: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -449,6 +450,11 @@ struct EndpointConfig {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    oauth_server_url: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    scopes: Option<String>,
+    token_endpoint: Option<String>,
 }
 
 #[tauri::command]
@@ -472,6 +478,13 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                 let headers = ep.get("headers").and_then(|v| v.as_table()).map(|t| {
                     t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
                 });
+                let oauth_server_url = ep.get("oauth_server_url").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let client_id = ep.get("client_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let client_secret = ep.get("client_secret").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let scopes = ep.get("scopes").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" ")
+                });
+                let token_endpoint = ep.get("token_endpoint").and_then(|v| v.as_str()).map(|s| s.to_string());
 
                 return Ok(EndpointConfig {
                     name: name.clone(),
@@ -483,6 +496,11 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     description,
                     env,
                     headers,
+                    oauth_server_url,
+                    client_id,
+                    client_secret,
+                    scopes,
+                    token_endpoint,
                 });
             }
         }
@@ -503,6 +521,11 @@ struct UpdateEndpointArgs {
     description: Option<String>,
     env: Option<HashMap<String, String>>,
     headers: Option<HashMap<String, String>>,
+    oauth_server_url: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    scopes: Option<String>,
+    token_endpoint: Option<String>,
 }
 
 #[tauri::command]
@@ -565,6 +588,26 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                         }
                         table.insert("headers".to_string(), toml::Value::Table(headers_table));
                     }
+                }
+                if let Some(oauth_server_url) = &args.oauth_server_url {
+                    table.insert("oauth_server_url".to_string(), toml::Value::String(oauth_server_url.clone()));
+                }
+                if let Some(client_id) = &args.client_id {
+                    table.insert("client_id".to_string(), toml::Value::String(client_id.clone()));
+                }
+                if let Some(client_secret) = &args.client_secret {
+                    table.insert("client_secret".to_string(), toml::Value::String(client_secret.clone()));
+                }
+                if let Some(scopes) = &args.scopes {
+                    let arr: Vec<toml::Value> = scopes.split_whitespace()
+                        .map(|s| toml::Value::String(s.to_string()))
+                        .collect();
+                    if !arr.is_empty() {
+                        table.insert("scopes".to_string(), toml::Value::Array(arr));
+                    }
+                }
+                if let Some(token_endpoint) = &args.token_endpoint {
+                    table.insert("token_endpoint".to_string(), toml::Value::String(token_endpoint.clone()));
                 }
                 break;
             }
@@ -669,6 +712,9 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
         if !arr.is_empty() {
             endpoint.insert("scopes".to_string(), toml::Value::Array(arr));
         }
+    }
+    if let Some(token_endpoint) = args.token_endpoint {
+        endpoint.insert("token_endpoint".to_string(), toml::Value::String(token_endpoint));
     }
 
     let endpoints = parsed

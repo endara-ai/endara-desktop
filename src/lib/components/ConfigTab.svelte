@@ -3,7 +3,7 @@
   import { selectedEndpoint, endpoints } from '$lib/stores';
   import { sanitizeName } from '$lib/utils';
 
-  type TransportType = 'stdio' | 'sse' | 'http';
+  type TransportType = 'stdio' | 'sse' | 'http' | 'oauth';
 
   let loading = $state(true);
   let saving = $state(false);
@@ -22,6 +22,10 @@
   let url = $state('');
   let envVars: { key: string; value: string }[] = $state([]);
   let headerVars: { key: string; value: string }[] = $state([]);
+  let oauthServerUrl = $state('');
+  let clientId = $state('');
+  let clientSecret = $state('');
+  let scopes = $state('');
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
@@ -59,6 +63,10 @@
         headerVars = config.headers
           ? Object.entries(config.headers).map(([key, value]) => ({ key, value }))
           : [];
+        oauthServerUrl = config.oauth_server_url ?? '';
+        clientId = config.client_id ?? '';
+        clientSecret = config.client_secret ?? '';
+        scopes = config.scopes ?? '';
       })
       .catch(() => {
         error = 'Unable to load endpoint configuration';
@@ -103,6 +111,13 @@
       if (args.trim()) {
         params.args = args.trim().split(/\s+/);
       }
+    } else if (transport === 'oauth') {
+      if (!url.trim()) { error = 'Server URL is required'; return; }
+      params.url = url.trim();
+      if (oauthServerUrl.trim()) params.oauth_server_url = oauthServerUrl.trim();
+      if (clientId.trim()) params.client_id = clientId.trim();
+      if (clientSecret.trim()) params.client_secret = clientSecret.trim();
+      if (scopes.trim()) params.scopes = scopes.trim();
     } else {
       if (!url.trim()) { error = 'URL is required'; return; }
       params.url = url.trim();
@@ -175,7 +190,7 @@
         <fieldset class="border-none p-0 m-0">
           <legend class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Transport</legend>
           <div class="flex gap-2">
-            {#each ['stdio', 'sse', 'http'] as t}
+            {#each ['stdio', 'sse', 'http', 'oauth'] as t}
               <button
                 class="px-3 py-1.5 text-xs rounded-lg border transition-colors
                   {transport === t
@@ -238,6 +253,38 @@
             <input id="config-ep-args" type="text" bind:value={args} placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
           </div>
+        {:else if transport === 'oauth'}
+          <div>
+            <label for="config-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Server URL</label>
+            <input id="config-ep-url" type="text" bind:value={url} placeholder="https://api.githubcopilot.com/mcp/"
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+          </div>
+          <details class="border border-(--color-border) rounded-lg">
+            <summary class="px-3 py-2 text-xs font-medium text-(--color-text-secondary) cursor-pointer hover:bg-(--color-surface-hover) rounded-lg select-none">Advanced</summary>
+            <div class="px-3 pb-3 space-y-3">
+              <div>
+                <label for="config-ep-oauth-server" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">OAuth Server URL</label>
+                <input id="config-ep-oauth-server" type="text" bind:value={oauthServerUrl} placeholder="Auto-discovered"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                <p class="text-[11px] text-(--color-text-secondary) mt-0.5">Leave blank to auto-discover via RFC 9728</p>
+              </div>
+              <div>
+                <label for="config-ep-client-id" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client ID</label>
+                <input id="config-ep-client-id" type="text" bind:value={clientId} placeholder="Auto via Dynamic Client Registration"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              </div>
+              <div>
+                <label for="config-ep-client-secret" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client Secret <span class="text-(--color-text-secondary)/50">(optional)</span></label>
+                <input id="config-ep-client-secret" type="text" bind:value={clientSecret} placeholder=""
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              </div>
+              <div>
+                <label for="config-ep-scopes" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Scopes <span class="text-(--color-text-secondary)/50">(space-separated)</span></label>
+                <input id="config-ep-scopes" type="text" bind:value={scopes} placeholder="repo read:user"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              </div>
+            </div>
+          </details>
         {:else}
           <div>
             <label for="config-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">URL</label>

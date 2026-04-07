@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
-import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus } from './types';
+import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse } from './types';
 import { relayPort } from './stores';
 
 function getBaseUrl() {
@@ -117,6 +117,7 @@ export interface AddEndpointParams {
   client_id?: string;
   client_secret?: string;
   scopes?: string;
+  token_endpoint?: string;
 }
 
 export async function addEndpoint(params: AddEndpointParams): Promise<void> {
@@ -167,6 +168,11 @@ export interface EndpointConfig {
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
+  oauth_server_url?: string;
+  client_id?: string;
+  client_secret?: string;
+  scopes?: string;
+  token_endpoint?: string;
 }
 
 export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
@@ -184,10 +190,48 @@ export interface UpdateEndpointParams {
   description?: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
+  oauth_server_url?: string;
+  client_id?: string;
+  client_secret?: string;
+  scopes?: string;
+  token_endpoint?: string;
 }
 
-export async function startOAuth(name: string): Promise<{ authorize_url: string }> {
-  return fetchJson<{ authorize_url: string }>(`/endpoints/${encodeURIComponent(name)}/oauth/start`, { method: 'POST' });
+export async function startOAuth(name: string): Promise<OAuthStartResult> {
+  const res = await fetch(`${getBaseUrl()}/endpoints/${encodeURIComponent(name)}/oauth/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const data = await res.json();
+  // If the server returns dcr_unsupported, return it as a typed result instead of throwing
+  if (!res.ok && data?.error === 'dcr_unsupported') {
+    return data as OAuthStartResult;
+  }
+  if (!res.ok && data?.error === 'discovery_failed') {
+    return data as OAuthStartResult;
+  }
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.error || `HTTP ${res.status}: ${res.statusText}`);
+  }
+  return data as OAuthStartResult;
+}
+
+export async function setOAuthCredentials(
+  name: string,
+  clientId: string,
+  clientSecret?: string,
+): Promise<void> {
+  const body: Record<string, string> = { client_id: clientId };
+  if (clientSecret) body.client_secret = clientSecret;
+  const res = await fetch(`${getBaseUrl()}/endpoints/${encodeURIComponent(name)}/oauth/credentials`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.message || data?.error || `HTTP ${res.status}: ${res.statusText}`);
+  }
 }
 
 export async function getOAuthStatus(name: string): Promise<OAuthStatus> {
@@ -210,6 +254,78 @@ export async function updateEndpoint(params: UpdateEndpointParams): Promise<void
     await reloadConfig();
   } catch {
     // Relay not reachable; it will pick up config changes on next start
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OAuth Setup (preflight) API
+// ---------------------------------------------------------------------------
+
+export interface OAuthSetupParams {
+  name: string;
+  url: string;
+  scopes?: string[];
+  tool_prefix?: string;
+}
+
+export async function oauthSetup(params: OAuthSetupParams): Promise<OAuthSetupResponse> {
+  const res = await fetch(`${getBaseUrl()}/oauth/setup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json();
+  // 422 with dcr_error is an expected flow — return typed response
+  if (!res.ok && res.status === 422 && data?.dcr_error) {
+    return data as OAuthSetupResponse;
+  }
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.error || `HTTP ${res.status}: ${res.statusText}`);
+  }
+  return data as OAuthSetupResponse;
+}
+
+export async function oauthSetupCredentials(
+  sessionId: string,
+  clientId: string,
+  clientSecret?: string,
+): Promise<{ status: string; authorize_url: string }> {
+  const body: Record<string, string> = { client_id: clientId };
+  if (clientSecret) body.client_secret = clientSecret;
+  const res = await fetch(`${getBaseUrl()}/oauth/setup/${encodeURIComponent(sessionId)}/credentials`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function oauthSetupStatus(sessionId: string): Promise<OAuthSetupStatusResponse> {
+  return fetchJson<OAuthSetupStatusResponse>(`/oauth/setup/${encodeURIComponent(sessionId)}/status`);
+}
+
+export async function oauthSetupCommit(sessionId: string): Promise<{ status: string; name: string }> {
+  const res = await fetch(`${getBaseUrl()}/oauth/setup/${encodeURIComponent(sessionId)}/commit`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function oauthSetupCancel(sessionId: string): Promise<void> {
+  const res = await fetch(`${getBaseUrl()}/oauth/setup/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
   }
 }
 
