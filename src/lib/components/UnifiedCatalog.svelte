@@ -81,7 +81,7 @@
           <div class="flex items-center gap-2 shrink-0">
             <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-(--color-surface-alt) text-(--color-text-secondary)">{entry.endpoint}</span>
             {#if !entry.available}
-              <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">⚠️ Unavailable</span>
+              <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"><svg class="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5.5v3.5"/><circle cx="8" cy="11.5" r="0.75" fill="currentColor" stroke="none"/><path d="M3 13.5L8 3l5 10.5H3z"/></svg> Unavailable</span>
             {/if}
             {#if entry.annotations?.readOnlyHint === true}
               <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Read-only</span>
