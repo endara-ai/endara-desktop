@@ -130,7 +130,8 @@
         <button
           class="px-2.5 py-1 text-xs rounded-lg border border-(--color-offline)/30 text-(--color-offline) hover:bg-(--color-offline)/10 transition-colors"
           onclick={() => showRestartConfirm = true}
-        >Restart</button>
+          title={ep.transport === 'stdio' ? 'Kill and restart the server process' : ep.transport === 'sse' ? 'Reconnect the SSE event stream' : ep.transport === 'http' ? 'Re-run the MCP handshake' : 'Reload tokens and reconnect'}
+        >{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'}</button>
         <button
           class="px-2.5 py-1 text-xs rounded-lg border border-(--color-offline)/30 text-(--color-offline) hover:bg-(--color-offline)/10 transition-colors"
           onclick={() => showDeleteConfirm = true}
@@ -174,9 +175,9 @@
 
     {#if showRestartConfirm}
       <ConfirmModal
-        title="Restart Endpoint"
-        message="Are you sure you want to restart '{ep.name}'? This will temporarily disconnect the endpoint."
-        confirmLabel="Restart"
+        title="{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'} Endpoint"
+        message="Are you sure you want to {ep.transport === 'stdio' ? 'restart' : 'reconnect'} '{ep.name}'? This will temporarily disconnect the endpoint."
+        confirmLabel={ep.transport === 'stdio' ? 'Restart' : 'Reconnect'}
         onconfirm={handleRestart}
         oncancel={() => showRestartConfirm = false}
       />
