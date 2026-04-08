@@ -187,7 +187,7 @@
         <p class="text-xs text-(--color-text-secondary) mt-1">
           {$relaySidecarStatus === 'stopped'
             ? 'Relay is stopped. Click Retry to start it again.'
-            : `Relay failed to start on port ${$relayPort}. Check Relay Logs for details.`}
+            : `Relay failed to start on port ${$relayPort}. Check Logs for details.`}
         </p>
         {#if $relaySidecarError}
           <div class="mt-2 p-2 rounded bg-red-500/10 border border-red-500/20">
