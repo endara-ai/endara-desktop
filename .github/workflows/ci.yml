@@ -36,9 +36,10 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Install system dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          version: 1.0
       - name: Create dummy sidecar for check (Unix)
         if: runner.os != 'Windows'
         run: |
