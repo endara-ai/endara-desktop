@@ -3,9 +3,9 @@ import type { RelaySidecarStatusType } from './stores';
 export type TopLevelTabId = 'servers' | 'unified-catalog' | 'relay-logs' | 'settings';
 
 export const allTopLevelTabs = [
-  { id: 'servers' as const, label: 'MCP Servers' },
-  { id: 'unified-catalog' as const, label: 'Unified Catalog' },
-  { id: 'relay-logs' as const, label: 'Relay Logs' },
+  { id: 'servers' as const, label: 'Servers' },
+  { id: 'unified-catalog' as const, label: 'Catalog' },
+  { id: 'relay-logs' as const, label: 'Logs' },
   { id: 'settings' as const, label: 'Settings' },
 ];
 

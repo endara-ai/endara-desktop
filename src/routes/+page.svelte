@@ -31,7 +31,7 @@
     : ($relaySidecarStatus === 'stopped') ? 'Relay stopped'
     : 'Relay status unknown'
   );
-  const relayFailureMessage = $derived($relaySidecarError ?? 'Relay failed to start. Check Relay Logs for more details.');
+  const relayFailureMessage = $derived($relaySidecarError ?? 'Relay failed to start. Check Logs for more details.');
 
   let pollInterval: ReturnType<typeof setInterval> | undefined;
   let sidebar: Sidebar | undefined = $state();
@@ -158,7 +158,7 @@
       <div class="space-y-3">
         <h1 class="text-2xl font-semibold text-(--color-text)">Endara Desktop couldn&apos;t start the relay</h1>
         <p class="text-sm text-(--color-text-secondary)">
-          The app can&apos;t connect to the relay on port {$relayPort}. Review the startup error below, check the relay logs, or update your settings and try again.
+          The app can&apos;t connect to the relay on port {$relayPort}. Review the startup error below, check the logs, or update your settings and try again.
         </p>
       </div>
 
@@ -179,7 +179,7 @@
           class="rounded-lg border border-(--color-border) px-4 py-2 text-sm font-medium text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
           onclick={openRelayLogs}
         >
-          View Relay Logs
+          View Logs
         </button>
         <button
           class="rounded-lg border border-(--color-border) px-4 py-2 text-sm font-medium text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
