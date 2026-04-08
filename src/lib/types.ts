@@ -49,6 +49,16 @@ export interface OAuthStatus {
   last_refreshed_at: number | null;
   next_refresh_at: number | null;
   state: string | null;
+  transition_history?: Array<{ from: string; to: string; reason: string; ago_ms: number }>;
+}
+
+export interface OAuthDisplayStatus {
+  color: 'green' | 'yellow' | 'blue' | 'orange' | 'gray' | 'red';
+  label: string;
+  healthDotVariant: HealthStatus;
+  canConnect: boolean;
+  canDisconnect: boolean;
+  canRefresh: boolean;
 }
 
 export interface OAuthStartSuccess {
