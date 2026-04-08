@@ -27,11 +27,66 @@
   let clientSecret = $state('');
   let scopes = $state('');
 
+  // Original value snapshots for dirty-state tracking
+  let originalTransport: TransportType = $state('stdio');
+  let originalPrefix = $state('');
+  let originalPrefixCustom = $state(false);
+  let originalDescription = $state('');
+  let originalCommand = $state('');
+  let originalArgs = $state('');
+  let originalUrl = $state('');
+  let originalEnvVars = $state('[]');
+  let originalHeaderVars = $state('[]');
+  let originalOauthServerUrl = $state('');
+  let originalClientId = $state('');
+  let originalClientSecret = $state('');
+  let originalScopes = $state('');
+
+  function snapshotOriginals() {
+    originalTransport = transport;
+    originalPrefix = prefix;
+    originalPrefixCustom = prefixCustom;
+    originalDescription = description;
+    originalCommand = command;
+    originalArgs = args;
+    originalUrl = url;
+    originalEnvVars = JSON.stringify(envVars);
+    originalHeaderVars = JSON.stringify(headerVars);
+    originalOauthServerUrl = oauthServerUrl;
+    originalClientId = clientId;
+    originalClientSecret = clientSecret;
+    originalScopes = scopes;
+  }
+
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
+
+  let isDirty = $derived(
+    name !== originalName ||
+    transport !== originalTransport ||
+    prefix !== originalPrefix ||
+    prefixCustom !== originalPrefixCustom ||
+    description !== originalDescription ||
+    command !== originalCommand ||
+    args !== originalArgs ||
+    url !== originalUrl ||
+    JSON.stringify(envVars) !== originalEnvVars ||
+    JSON.stringify(headerVars) !== originalHeaderVars ||
+    oauthServerUrl !== originalOauthServerUrl ||
+    clientId !== originalClientId ||
+    clientSecret !== originalClientSecret ||
+    scopes !== originalScopes
+  );
 
   $effect(() => {
     if (!prefixCustom) {
       prefix = sanitizeName(name);
+    }
+  });
+
+  // Clear stale success message when user makes a new change
+  $effect(() => {
+    if (isDirty && success) {
+      success = '';
     }
   });
 
@@ -67,6 +122,7 @@
         clientId = config.client_id ?? '';
         clientSecret = config.client_secret ?? '';
         scopes = config.scopes ?? '';
+        snapshotOriginals();
       })
       .catch(() => {
         error = 'Unable to load endpoint configuration';
@@ -160,6 +216,7 @@
       if (params.name !== $selectedEndpoint) {
         selectedEndpoint.set(params.name);
       }
+      snapshotOriginals();
       success = 'Configuration saved';
       setTimeout(() => { success = ''; }, 3000);
     } catch (e) {
@@ -228,7 +285,7 @@
             type="text"
             value={prefix}
             oninput={(event) => handlePrefixInput((event.currentTarget as HTMLInputElement).value)}
-            placeholder="my_server"
+            placeholder={sanitizeName(name) || 'tool_prefix'}
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)"
           />
           <p class="text-[11px] text-(--color-text-secondary) mt-0.5">
@@ -367,7 +424,7 @@
           <button
             class="px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
             onclick={handleSave}
-            disabled={saving}
+            disabled={!isDirty || saving}
           >
             {saving ? 'Saving…' : 'Save Changes'}
           </button>

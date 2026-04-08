@@ -663,7 +663,7 @@
             type="text"
             value={prefix}
             oninput={(event) => handlePrefixInput((event.currentTarget as HTMLInputElement).value)}
-            placeholder="my_server"
+            placeholder={sanitizeName(name) || 'tool_prefix'}
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)"
           />
           <p class="text-[11px] text-(--color-text-secondary) mt-0.5">
