@@ -194,7 +194,7 @@
   {:else}
     <div class="flex-1 flex items-center justify-center text-(--color-text-secondary)">
       <div class="text-center">
-        <div class="text-4xl mb-3">⚡</div>
+        <div class="text-4xl mb-3 text-(--color-text-secondary)"><svg class="inline-block w-10 h-10" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2L5 11h5l-1.5 7L15 9h-5l1.5-7z"/></svg></div>
         <div class="text-sm">Select an endpoint to view details</div>
       </div>
     </div>
