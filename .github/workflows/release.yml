@@ -3,17 +3,14 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      relay_version:
-        description: 'Relay version to bundle (e.g. v0.1.0, or "latest")'
-        required: false
-        default: 'v0.1.0-rc3'
 
 permissions:
   contents: write
 
 env:
-  RELAY_VERSION: ${{ inputs.relay_version || 'v0.1.0-rc3' }}
+  # For tag pushes, use the tag name (relay releases with matching version).
+  # For manual workflow_dispatch runs, fall back to 'latest'.
+  RELAY_VERSION: ${{ github.ref_name && startsWith(github.ref_name, 'v') && github.ref_name || 'latest' }}
 
 jobs:
   publish:
@@ -94,7 +91,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Endara Desktop ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download and install.'
+          generateReleaseNotes: true
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, 'rc') }}
           args: --target ${{ matrix.target }}
