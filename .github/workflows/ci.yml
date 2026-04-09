@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
       - name: Install dependencies
         run: npm ci
       - name: Svelte check
@@ -35,6 +36,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install system dependencies
         if: runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@latest
