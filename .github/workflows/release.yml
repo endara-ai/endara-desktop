@@ -7,13 +7,13 @@ on:
       relay_version:
         description: 'Relay version to bundle (e.g. v0.1.0, or "latest")'
         required: false
-        default: 'latest'
+        default: 'v0.1.0-rc3'
 
 permissions:
   contents: write
 
 env:
-  RELAY_VERSION: ${{ inputs.relay_version || 'latest' }}
+  RELAY_VERSION: ${{ inputs.relay_version || 'v0.1.0-rc3' }}
 
 jobs:
   publish:
