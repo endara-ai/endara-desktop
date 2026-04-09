@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Kill any running relay process before dev restart
 
-CONFIG="$HOME/.endara/config.toml"
-PORT=9400
+# If ENDARA_DEV_PORT is set, use it directly (dev mode port isolation)
+if [ -n "$ENDARA_DEV_PORT" ]; then
+  PORT=$ENDARA_DEV_PORT
+else
+  CONFIG="$HOME/.endara/config.toml"
+  PORT=9400
 
-# Try to read port from config
-if [ -f "$CONFIG" ]; then
-  PARSED_PORT=$(grep -A5 '\[relay\]' "$CONFIG" | grep '^port' | head -1 | sed 's/.*= *//' | tr -d ' ')
-  if [ -n "$PARSED_PORT" ] && [ "$PARSED_PORT" -gt 0 ] 2>/dev/null; then
-    PORT=$PARSED_PORT
+  # Try to read port from config
+  if [ -f "$CONFIG" ]; then
+    PARSED_PORT=$(grep -A5 '\[relay\]' "$CONFIG" | grep '^port' | head -1 | sed 's/.*= *//' | tr -d ' ')
+    if [ -n "$PARSED_PORT" ] && [ "$PARSED_PORT" -gt 0 ] 2>/dev/null; then
+      PORT=$PARSED_PORT
+    fi
   fi
 fi
 

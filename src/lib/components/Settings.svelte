@@ -10,6 +10,7 @@
   let portInput: number = $state($relayPort);
   let portSaved = $state(false);
   let portError = $state<string | null>(null);
+  let configFilePath = $state('~/.endara/config.toml');
 
   async function savePort() {
     const port = Math.floor(portInput);
@@ -31,7 +32,7 @@
   const connectionItems = $derived([
     { label: 'MCP Endpoint', value: `http://localhost:${$relayPort}/mcp` },
     { label: 'SSE Endpoint', value: `http://localhost:${$relayPort}/mcp/sse` },
-    { label: 'Config File', value: '~/.endara/config.toml' },
+    { label: 'Config File', value: configFilePath },
   ]);
 
   let copiedIndex: number | null = $state(null);
@@ -106,6 +107,7 @@
     } catch (e) {
       console.error('Failed to get build info:', e);
     }
+    invoke('get_config_path_display').then((p: unknown) => { if (typeof p === 'string') configFilePath = p; }).catch(() => {});
     fetchRelayStatus();
     fetchJsExecutionMode();
     statusPollInterval = setInterval(fetchRelayStatus, 5000);
