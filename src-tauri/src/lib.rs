@@ -989,12 +989,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(
-            tauri_plugin_autostart::Builder::new()
-                .macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent)
-                .args(["--autostarted"])
-                .build(),
-        )
+        .plugin({
+            let builder = tauri_plugin_autostart::Builder::new().args(["--autostarted"]);
+            #[cfg(target_os = "macos")]
+            let builder =
+                builder.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
+            builder.build()
+        })
         .manage(relay_state)
         .invoke_handler(tauri::generate_handler![
             start_relay,
