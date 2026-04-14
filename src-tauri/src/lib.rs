@@ -537,7 +537,7 @@ async fn check_for_update(
                 version: upd.version.clone(),
                 current_version: upd.current_version.clone(),
                 body: upd.body.clone(),
-                date: upd.date.clone(),
+                date: upd.date.as_ref().map(|d| d.to_string()),
             };
             // Store the update for later installation
             if let Ok(mut guard) = pending.0.lock() {
