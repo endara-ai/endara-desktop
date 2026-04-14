@@ -124,4 +124,5 @@ export const selectedEndpointData = derived(
 export const updateStatus = writable<string>('idle');
 export const updateVersion = writable<string | null>(null);
 export const updateError = writable<string | null>(null);
+export const updateChannel = writable<'stable' | 'beta'>('stable');
 

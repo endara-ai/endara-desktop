@@ -1,17 +1,16 @@
 <script lang="ts">
-  import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError } from '$lib/stores';
+  import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel } from '$lib/stores';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus, getConfig, reloadConfig } from '$lib/api';
   import { canRetryRelay, restartRelay } from '$lib/relaySidecarUi';
-  import { checkForUpdate, downloadAndInstall, restartApp } from '$lib/updater';
+  import { checkForUpdate, downloadAndInstall, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
+  import { toast } from 'svelte-sonner';
 
   let portInput: number = $state($relayPort);
   let portSaved = $state(false);
   let portError = $state<string | null>(null);
-  let configFilePath = $state('~/.endara/config.toml');
-  let autoStartEnabled = $state(false);
 
   async function savePort() {
     const port = Math.floor(portInput);
@@ -33,7 +32,7 @@
   const connectionItems = $derived([
     { label: 'MCP Endpoint', value: `http://localhost:${$relayPort}/mcp` },
     { label: 'SSE Endpoint', value: `http://localhost:${$relayPort}/mcp/sse` },
-    { label: 'Config File', value: configFilePath },
+    { label: 'Config File', value: '~/.endara/config.toml' },
   ]);
 
   let copiedIndex: number | null = $state(null);
@@ -56,9 +55,44 @@
   let relayStatus: RelayStatus | null = $state(null);
   let statusPollInterval: ReturnType<typeof setInterval> | undefined;
   let retryingRelay = $state(false);
+  let selectedChannel: 'stable' | 'beta' = $state('stable');
+  let channelChanging = $state(false);
 
   function setTheme(t: Theme) {
     theme.set(t);
+  }
+
+  async function fetchUpdateChannel() {
+    try {
+      const channel = await getUpdateChannel();
+      if (channel === 'stable' || channel === 'beta') {
+        selectedChannel = channel;
+        updateChannel.set(channel);
+      }
+    } catch (e) {
+      console.error('Failed to get update channel:', e);
+    }
+  }
+
+  async function handleChannelChange(channel: 'stable' | 'beta') {
+    if (channelChanging || channel === selectedChannel) return;
+    const previousChannel = selectedChannel;
+    channelChanging = true;
+    try {
+      await setUpdateChannel(channel);
+      selectedChannel = channel;
+      updateChannel.set(channel);
+      // Show info toast when switching from beta to stable
+      if (previousChannel === 'beta' && channel === 'stable') {
+        toast.info("You're now on the stable channel. You'll stay on your current version until a stable release newer than your current version is available.");
+      }
+      // Immediately check for updates on the new channel
+      await checkForUpdate();
+    } catch (e) {
+      console.error('Failed to set update channel:', e);
+    } finally {
+      channelChanging = false;
+    }
   }
 
   async function fetchRelayStatus() {
@@ -90,26 +124,6 @@
     }
   }
 
-  async function toggleAutoStart() {
-    const newValue = !autoStartEnabled;
-    autoStartEnabled = newValue;
-    try {
-      await invoke('set_autostart', { enabled: newValue });
-    } catch (e) {
-      // Revert on failure
-      autoStartEnabled = !newValue;
-      console.error('Failed to set autostart:', e);
-    }
-  }
-
-  async function fetchAutoStart() {
-    try {
-      autoStartEnabled = await invoke<boolean>('get_autostart');
-    } catch (e) {
-      console.error('Failed to get autostart:', e);
-    }
-  }
-
   async function fetchJsExecutionMode() {
     try {
       const config = await getConfig();
@@ -128,10 +142,9 @@
     } catch (e) {
       console.error('Failed to get build info:', e);
     }
-    invoke('get_config_path_display').then((p: unknown) => { if (typeof p === 'string') configFilePath = p; }).catch(() => {});
     fetchRelayStatus();
     fetchJsExecutionMode();
-    fetchAutoStart();
+    fetchUpdateChannel();
     statusPollInterval = setInterval(fetchRelayStatus, 5000);
   });
 
@@ -271,22 +284,6 @@
       </button>
     </div>
 
-    <div class="flex items-start justify-between gap-4">
-      <div>
-        <div class="text-sm font-medium">Start on Login</div>
-        <div class="text-xs text-(--color-text-secondary) mt-0.5">Automatically start Endara Desktop when you log in to your computer.</div>
-      </div>
-      <button
-        class="shrink-0 relative w-10 h-5 rounded-full transition-colors {autoStartEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
-        onclick={() => toggleAutoStart()}
-        role="switch"
-        aria-checked={autoStartEnabled}
-        aria-label="Toggle start on login"
-      >
-        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {autoStartEnabled ? 'translate-x-5' : ''}"></span>
-      </button>
-    </div>
-
     <div class="pt-4 mt-4 border-t border-(--color-border)">
       <div class="text-xs font-medium text-(--color-text-secondary) uppercase tracking-wide mb-2">Connection Info</div>
       <div class="space-y-3 mb-3">
@@ -365,6 +362,31 @@
           Current version: <span class="font-mono">{buildInfo.version}</span>
         </div>
       {/if}
+
+      <!-- Update Channel Selector -->
+      <fieldset class="border-none p-0 mb-4">
+        <legend class="block text-xs font-medium mb-1.5">Update Channel</legend>
+        <div class="flex gap-2">
+          <button
+            class="flex-1 px-3 py-2 text-xs rounded-lg border transition-colors
+              {selectedChannel === 'stable' ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)' : 'border-(--color-border) hover:bg-(--color-surface-hover)'}"
+            onclick={() => handleChannelChange('stable')}
+            disabled={channelChanging}
+          >
+            <div class="font-medium">Stable</div>
+            <div class="text-[0.65rem] mt-0.5 opacity-70">Only receive final releases</div>
+          </button>
+          <button
+            class="flex-1 px-3 py-2 text-xs rounded-lg border transition-colors
+              {selectedChannel === 'beta' ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)' : 'border-(--color-border) hover:bg-(--color-surface-hover)'}"
+            onclick={() => handleChannelChange('beta')}
+            disabled={channelChanging}
+          >
+            <div class="font-medium">Beta</div>
+            <div class="text-[0.65rem] mt-0.5 opacity-70">Receive pre-release (RC) builds</div>
+          </button>
+        </div>
+      </fieldset>
 
       {#if $updateStatus === 'idle'}
         <button

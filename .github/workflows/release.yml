@@ -96,3 +96,30 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'rc') }}
           args: --target ${{ matrix.target }}
           tauriScript: npx tauri
+
+  # Publish latest.json to gh-pages for the auto-updater
+  # This provides a stable URL: https://endara-ai.github.io/endara-desktop/latest.json
+  publish-update-manifest:
+    runs-on: ubuntu-latest
+    needs: [publish]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Wait briefly for GitHub to finalize release assets
+      - name: Wait for release assets to finalize
+        run: sleep 30
+
+      - name: Download latest.json from release
+        run: |
+          mkdir -p gh-pages-deploy
+          gh release download "${{ github.ref_name }}" --pattern "latest.json" --dir gh-pages-deploy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./gh-pages-deploy
+          # Keep existing files on gh-pages (in case we add more assets later)
+          keep_files: true

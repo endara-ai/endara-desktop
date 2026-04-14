@@ -8,7 +8,13 @@ use tauri::{
     AppHandle, Emitter, Manager, RunEvent, State,
 };
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex;
+
+// Update channel URLs
+const STABLE_UPDATE_URL: &str =
+    "https://github.com/endara-ai/endara-desktop/releases/latest/download/latest.json";
+const BETA_UPDATE_URL: &str = "https://endara-ai.github.io/endara-desktop/latest.json";
 
 /// Workaround: In Tauri v2, `set_activation_policy` is only available on `App`,
 /// not on `AppHandle`, so it cannot be called from event handlers.
@@ -29,45 +35,16 @@ fn set_macos_activation_policy(regular: bool) {
     app.setActivationPolicy(policy);
 }
 
-/// Dev-mode data directory name (relative to home).
-const DEV_DATA_DIR_NAME: &str = ".endara-dev";
-
-/// Default relay port for dev mode.
-const DEV_RELAY_PORT: u16 = 9500;
-
-/// Default relay port for production.
-const DEFAULT_RELAY_PORT: u16 = 9400;
-
-/// Returns `true` when running in dev mode.
-///
-/// Dev mode is detected via `cfg!(debug_assertions)` (true during `cargo tauri dev`,
-/// false in release builds) **or** when the `ENDARA_DATA_DIR` env var is set.
-fn is_dev_mode() -> bool {
-    cfg!(debug_assertions) || std::env::var("ENDARA_DATA_DIR").is_ok()
-}
-
-/// Returns the base data directory: `~/.endara-dev` in dev mode, `~/.endara` in production.
-fn data_dir() -> Result<std::path::PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| "Could not determine home directory".to_string())?;
-    if is_dev_mode() {
-        Ok(home.join(DEV_DATA_DIR_NAME))
-    } else {
-        Ok(home.join(".endara"))
-    }
-}
-
 /// Check if a port is already in use by attempting a TCP connection.
 fn is_port_in_use(port: u16) -> bool {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_ok()
 }
 
-/// Read the relay port from config.toml [relay] section.
-/// Uses the dev or production data directory based on `is_dev_mode()`.
+/// Read the relay port from ~/.endara/config.toml [relay] section.
 /// Returns None if the file doesn't exist, can't be parsed, or has no port setting.
 fn read_port_from_config() -> Option<u16> {
-    let dir = data_dir().ok()?;
-    let config_path = dir.join("config.toml");
+    let config_path = dirs::home_dir()?.join(".endara").join("config.toml");
     let contents = std::fs::read_to_string(&config_path).ok()?;
     let parsed: toml::Table = contents.parse().ok()?;
     parsed
@@ -101,9 +78,11 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Return the path to config.toml in the appropriate data directory.
+/// Return the path to `~/.endara/config.toml`.
 fn config_path() -> Result<std::path::PathBuf, String> {
-    data_dir().map(|d| d.join("config.toml"))
+    dirs::home_dir()
+        .map(|h| h.join(".endara").join("config.toml"))
+        .ok_or_else(|| "Could not determine home directory".to_string())
 }
 
 /// Read and parse `~/.endara/config.toml`, returning `Err` if the file is missing or invalid.
@@ -127,6 +106,21 @@ fn write_config(table: &toml::Table) -> Result<(), String> {
     std::fs::write(&path, &new_contents).map_err(|e| format!("Failed to write config: {e}"))
 }
 
+/// Read the update channel from ~/.endara/config.toml [desktop] section.
+/// Returns "stable" if not set or on any error.
+fn read_update_channel() -> String {
+    let Ok(parsed) = read_config() else {
+        return "stable".to_string();
+    };
+    parsed
+        .get("desktop")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("update_channel"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "stable".to_string())
+}
+
 /// Holds the relay sidecar child process handle.
 pub struct RelayState {
     child: Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>,
@@ -137,7 +131,6 @@ pub struct RelayState {
     port: Arc<Mutex<u16>>,
     last_sidecar_status: Arc<Mutex<String>>,
     last_sidecar_error: Arc<Mutex<Option<String>>>,
-    log_buffer: Arc<Mutex<Vec<RelayLogPayload>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -162,6 +155,18 @@ pub struct RelaySidecarStatusPayload {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Holds a pending update that has been checked but not yet installed.
+pub struct PendingUpdate(std::sync::Mutex<Option<tauri_plugin_updater::Update>>);
+
+/// Metadata about an available update.
+#[derive(Serialize, Clone)]
+pub struct UpdateMetadata {
+    pub version: String,
+    pub current_version: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
 }
 
 async fn emit_sidecar_status(app: &AppHandle, status: &str, error: Option<String>) {
@@ -205,16 +210,16 @@ async fn spawn_relay(
     port: u16,
 ) -> Result<tauri_plugin_shell::process::CommandChild, String> {
     let config_file = config_path()?;
-    let base_dir = data_dir()?;
 
     // Ensure log directory exists for relay file logging
-    let log_dir = base_dir.join("logs");
-    let _ = std::fs::create_dir_all(&log_dir);
+    if let Some(home) = dirs::home_dir() {
+        let log_dir = home.join(".endara").join("logs");
+        let _ = std::fs::create_dir_all(&log_dir);
+    }
 
-    let dev = is_dev_mode();
     eprintln!(
-        "[relay] attempting to spawn sidecar (dev={}) with config: {:?}, port: {}",
-        dev, config_file, port
+        "[relay] attempting to spawn sidecar with config: {:?}, port: {}",
+        config_file, port
     );
 
     // Pre-flight port conflict check
@@ -229,19 +234,6 @@ async fn spawn_relay(
     emit_sidecar_status(app, "starting", None).await;
 
     let port_str = port.to_string();
-    let config_lossy = config_file.to_string_lossy().to_string();
-    let data_dir_lossy = base_dir.to_string_lossy().to_string();
-
-    // Build sidecar args — in dev mode use --data-dir (without --config) so
-    // the relay derives its config path from data-dir and performs the
-    // first-run config copy from production.  In production mode pass
-    // --config explicitly.
-    let sidecar_args: Vec<&str> = if dev {
-        vec!["start", "--data-dir", &data_dir_lossy, "--port", &port_str]
-    } else {
-        vec!["start", "--config", &config_lossy, "--port", &port_str]
-    };
-
     let (mut rx, child) = app
         .shell()
         .sidecar("endara-relay")
@@ -249,7 +241,13 @@ async fn spawn_relay(
             eprintln!("[relay] FAILED to create sidecar command: {e}");
             format!("Failed to create sidecar command: {e}")
         })?
-        .args(&sidecar_args)
+        .args([
+            "start",
+            "--config",
+            &config_file.to_string_lossy(),
+            "--port",
+            &port_str,
+        ])
         .spawn()
         .map_err(|e| {
             eprintln!("[relay] FAILED to spawn relay sidecar: {e}");
@@ -268,17 +266,6 @@ async fn spawn_relay(
                     // Detect successful startup from stdout
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
-                    }
-                    if let Some(state) = app_handle.try_state::<RelayState>() {
-                        let mut buf = state.log_buffer.lock().await;
-                        buf.push(RelayLogPayload {
-                            level: "info".to_string(),
-                            message: text.clone(),
-                        });
-                        let len = buf.len();
-                        if len > 5000 {
-                            buf.drain(..len - 5000);
-                        }
                     }
                     let _ = app_handle.emit(
                         "relay-log",
@@ -300,17 +287,6 @@ async fn spawn_relay(
                     // Detect successful startup from stderr (tracing outputs to stderr)
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
-                    }
-                    if let Some(state) = app_handle.try_state::<RelayState>() {
-                        let mut buf = state.log_buffer.lock().await;
-                        buf.push(RelayLogPayload {
-                            level: level.to_string(),
-                            message: text.clone(),
-                        });
-                        let len = buf.len();
-                        if len > 5000 {
-                            buf.drain(..len - 5000);
-                        }
                     }
                     let _ = app_handle.emit(
                         "relay-log",
@@ -468,28 +444,6 @@ async fn get_sidecar_status(
 }
 
 #[tauri::command]
-async fn get_config_path_display() -> Result<String, String> {
-    let path = config_path()?;
-    if let Some(home) = dirs::home_dir() {
-        let path_str = path.to_string_lossy();
-        let home_str = home.to_string_lossy();
-        if path_str.starts_with(home_str.as_ref()) {
-            return Ok(format!("~{}", &path_str[home_str.len()..]));
-        }
-    }
-    Ok(path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-async fn get_buffered_relay_logs(
-    state: State<'_, RelayState>,
-) -> Result<Vec<RelayLogPayload>, String> {
-    let mut buf = state.log_buffer.lock().await;
-    let logs = buf.drain(..).collect();
-    Ok(logs)
-}
-
-#[tauri::command]
 async fn get_relay_port(state: State<'_, RelayState>) -> Result<u16, String> {
     Ok(*state.port.lock().await)
 }
@@ -526,6 +480,95 @@ async fn set_js_execution_mode(enabled: bool) -> Result<(), String> {
     }
 
     write_config(&table)
+}
+
+/// Get the current update channel ("stable" or "beta").
+#[tauri::command]
+async fn get_update_channel() -> Result<String, String> {
+    Ok(read_update_channel())
+}
+
+/// Set the update channel and persist it to config.toml.
+#[tauri::command]
+async fn set_update_channel(channel: String) -> Result<(), String> {
+    let mut table = read_config().unwrap_or_else(|_| toml::Table::new());
+
+    // Ensure [desktop] section exists
+    let desktop = table
+        .entry("desktop")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or("Invalid [desktop] section in config")?;
+
+    desktop.insert("update_channel".to_string(), toml::Value::String(channel));
+
+    write_config(&table)
+}
+
+/// Check for an available update using the channel-specific endpoint.
+/// Stores the update in PendingUpdate state if found.
+#[tauri::command]
+async fn check_for_update(
+    app: AppHandle,
+    pending: State<'_, PendingUpdate>,
+) -> Result<Option<UpdateMetadata>, String> {
+    let channel = read_update_channel();
+    let url = if channel == "beta" {
+        BETA_UPDATE_URL
+    } else {
+        STABLE_UPDATE_URL
+    };
+
+    let update = app
+        .updater_builder()
+        .endpoints(vec![url
+            .parse()
+            .map_err(|e| format!("Invalid URL: {e}"))?])
+        .map_err(|e| format!("Failed to configure updater: {e}"))?
+        .build()
+        .map_err(|e| format!("Failed to build updater: {e}"))?
+        .check()
+        .await
+        .map_err(|e| format!("Failed to check for update: {e}"))?;
+
+    match update {
+        Some(upd) => {
+            let metadata = UpdateMetadata {
+                version: upd.version.clone(),
+                current_version: upd.current_version.clone(),
+                body: upd.body.clone(),
+                date: upd.date.as_ref().map(|d| d.to_string()),
+            };
+            // Store the update for later installation
+            if let Ok(mut guard) = pending.0.lock() {
+                *guard = Some(upd);
+            }
+            Ok(Some(metadata))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Download and install the pending update.
+#[tauri::command]
+async fn download_and_install_update(pending: State<'_, PendingUpdate>) -> Result<(), String> {
+    let update = {
+        let mut guard = pending
+            .0
+            .lock()
+            .map_err(|e| format!("Failed to lock pending update: {e}"))?;
+        guard.take()
+    };
+
+    match update {
+        Some(upd) => {
+            upd.download_and_install(|_, _| {}, || {})
+                .await
+                .map_err(|e| format!("Failed to download and install update: {e}"))?;
+            Ok(())
+        }
+        None => Err("No pending update to install".to_string()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -927,56 +970,21 @@ async fn remove_endpoint(name: String) -> Result<(), String> {
     write_config(&parsed)
 }
 
-/// Check if autostart is enabled.
-#[tauri::command]
-fn get_autostart(app: AppHandle) -> Result<bool, String> {
-    use tauri_plugin_autostart::ManagerExt;
-    app.autolaunch()
-        .is_enabled()
-        .map_err(|e| format!("Failed to check autostart: {e}"))
-}
-
-/// Enable or disable autostart.
-#[tauri::command]
-fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
-    use tauri_plugin_autostart::ManagerExt;
-    let manager = app.autolaunch();
-    if enabled {
-        manager
-            .enable()
-            .map_err(|e| format!("Failed to enable autostart: {e}"))
-    } else {
-        manager
-            .disable()
-            .map_err(|e| format!("Failed to disable autostart: {e}"))
-    }
-}
-
-/// Check if app was started with the autostart flag.
-fn is_autostarted() -> bool {
-    std::env::args().any(|arg| arg == "--autostarted")
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let relay_state = RelayState {
         child: Arc::new(Mutex::new(None)),
         pid: Arc::new(std::sync::Mutex::new(None)),
         running: Arc::new(Mutex::new(false)),
-        port: Arc::new(Mutex::new(read_port_from_config().unwrap_or(
-            if is_dev_mode() {
-                DEV_RELAY_PORT
-            } else {
-                DEFAULT_RELAY_PORT
-            },
-        ))),
+        port: Arc::new(Mutex::new(read_port_from_config().unwrap_or(9400))),
         last_sidecar_status: Arc::new(Mutex::new("unknown".to_string())),
         last_sidecar_error: Arc::new(Mutex::new(None)),
-        log_buffer: Arc::new(Mutex::new(Vec::new())),
     };
 
     let child_handle = relay_state.child.clone();
     let pid_handle = relay_state.pid.clone();
+
+    let pending_update = PendingUpdate(std::sync::Mutex::new(None));
 
     tauri::Builder::default()
         .plugin(
@@ -989,14 +997,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin({
-            let builder = tauri_plugin_autostart::Builder::new().args(["--autostarted"]);
-            #[cfg(target_os = "macos")]
-            let builder =
-                builder.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
-            builder.build()
-        })
         .manage(relay_state)
+        .manage(pending_update)
         .invoke_handler(tauri::generate_handler![
             start_relay,
             stop_relay,
@@ -1011,10 +1013,10 @@ pub fn run() {
             get_relay_port,
             set_relay_port,
             set_js_execution_mode,
-            get_config_path_display,
-            get_buffered_relay_logs,
-            get_autostart,
-            set_autostart,
+            get_update_channel,
+            set_update_channel,
+            check_for_update,
+            download_and_install_update,
         ])
         .setup(|app| {
             // Build tray menu
@@ -1086,10 +1088,8 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let port = if let Some(state) = app_handle.try_state::<RelayState>() {
                     *state.port.lock().await
-                } else if is_dev_mode() {
-                    DEV_RELAY_PORT
                 } else {
-                    DEFAULT_RELAY_PORT
+                    9400
                 };
                 match spawn_relay(&app_handle, port).await {
                     Ok(child) => {
@@ -1108,20 +1108,9 @@ pub fn run() {
                 }
             });
 
-            // Handle autostarted launch: hide window and set accessory mode
-            if is_autostarted() {
-                // Hide the window when auto-launched
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
-                }
-                // Set accessory mode (no Dock icon, no Cmd-Tab)
-                #[cfg(target_os = "macos")]
-                set_macos_activation_policy(false);
-            } else {
-                // Normal launch: ensure app appears in Cmd-Tab on startup
-                #[cfg(target_os = "macos")]
-                set_macos_activation_policy(true);
-            }
+            // Ensure app appears in Cmd-Tab on startup
+            #[cfg(target_os = "macos")]
+            set_macos_activation_policy(true);
 
             Ok(())
         })

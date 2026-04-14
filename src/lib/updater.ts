@@ -1,21 +1,24 @@
-import { check, Update } from '@tauri-apps/plugin-updater';
+import { invoke } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { updateStatus, updateVersion, updateError } from './stores';
 
-let updateInstance: Update | null = null;
+interface UpdateMetadata {
+  version: string;
+  current_version: string;
+  body: string | null;
+  date: string | null;
+}
 
 export async function checkForUpdate() {
   updateStatus.set('checking');
   updateError.set(null);
   try {
-    const update = await check();
-    if (update) {
-      updateVersion.set(update.version);
+    const metadata = await invoke<UpdateMetadata | null>('check_for_update');
+    if (metadata) {
+      updateVersion.set(metadata.version);
       updateStatus.set('available');
-      updateInstance = update;
     } else {
       updateStatus.set('up-to-date');
-      // Reset to idle after 10s
       setTimeout(() => updateStatus.set('idle'), 10000);
     }
   } catch (e) {
@@ -25,10 +28,9 @@ export async function checkForUpdate() {
 }
 
 export async function downloadAndInstall() {
-  if (!updateInstance) return;
   updateStatus.set('downloading');
   try {
-    await updateInstance.downloadAndInstall();
+    await invoke('download_and_install_update');
     updateStatus.set('ready');
   } catch (e) {
     updateError.set(e instanceof Error ? e.message : String(e));
@@ -38,5 +40,13 @@ export async function downloadAndInstall() {
 
 export async function restartApp() {
   await relaunch();
+}
+
+export async function getUpdateChannel(): Promise<string> {
+  return invoke<string>('get_update_channel');
+}
+
+export async function setUpdateChannel(channel: 'stable' | 'beta'): Promise<void> {
+  await invoke('set_update_channel', { channel });
 }
 
