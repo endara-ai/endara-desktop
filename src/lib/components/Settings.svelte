@@ -6,6 +6,7 @@
   import { canRetryRelay, restartRelay } from '$lib/relaySidecarUi';
   import { checkForUpdate, downloadAndInstall, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
+  import { toast } from 'svelte-sonner';
 
   let portInput: number = $state($relayPort);
   let portSaved = $state(false);
@@ -75,11 +76,16 @@
 
   async function handleChannelChange(channel: 'stable' | 'beta') {
     if (channelChanging || channel === selectedChannel) return;
+    const previousChannel = selectedChannel;
     channelChanging = true;
     try {
       await setUpdateChannel(channel);
       selectedChannel = channel;
       updateChannel.set(channel);
+      // Show info toast when switching from beta to stable
+      if (previousChannel === 'beta' && channel === 'stable') {
+        toast.info("You're now on the stable channel. You'll stay on your current version until a stable release newer than your current version is available.");
+      }
       // Immediately check for updates on the new channel
       await checkForUpdate();
     } catch (e) {
