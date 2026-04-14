@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError } from '$lib/stores';
+  import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel } from '$lib/stores';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus, getConfig, reloadConfig } from '$lib/api';
   import { canRetryRelay, restartRelay } from '$lib/relaySidecarUi';
-  import { checkForUpdate, downloadAndInstall, restartApp } from '$lib/updater';
+  import { checkForUpdate, downloadAndInstall, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
 
   let portInput: number = $state($relayPort);
@@ -54,9 +54,39 @@
   let relayStatus: RelayStatus | null = $state(null);
   let statusPollInterval: ReturnType<typeof setInterval> | undefined;
   let retryingRelay = $state(false);
+  let selectedChannel: 'stable' | 'beta' = $state('stable');
+  let channelChanging = $state(false);
 
   function setTheme(t: Theme) {
     theme.set(t);
+  }
+
+  async function fetchUpdateChannel() {
+    try {
+      const channel = await getUpdateChannel();
+      if (channel === 'stable' || channel === 'beta') {
+        selectedChannel = channel;
+        updateChannel.set(channel);
+      }
+    } catch (e) {
+      console.error('Failed to get update channel:', e);
+    }
+  }
+
+  async function handleChannelChange(channel: 'stable' | 'beta') {
+    if (channelChanging || channel === selectedChannel) return;
+    channelChanging = true;
+    try {
+      await setUpdateChannel(channel);
+      selectedChannel = channel;
+      updateChannel.set(channel);
+      // Immediately check for updates on the new channel
+      await checkForUpdate();
+    } catch (e) {
+      console.error('Failed to set update channel:', e);
+    } finally {
+      channelChanging = false;
+    }
   }
 
   async function fetchRelayStatus() {
@@ -108,6 +138,7 @@
     }
     fetchRelayStatus();
     fetchJsExecutionMode();
+    fetchUpdateChannel();
     statusPollInterval = setInterval(fetchRelayStatus, 5000);
   });
 
@@ -325,6 +356,31 @@
           Current version: <span class="font-mono">{buildInfo.version}</span>
         </div>
       {/if}
+
+      <!-- Update Channel Selector -->
+      <fieldset class="border-none p-0 mb-4">
+        <legend class="block text-xs font-medium mb-1.5">Update Channel</legend>
+        <div class="flex gap-2">
+          <button
+            class="flex-1 px-3 py-2 text-xs rounded-lg border transition-colors
+              {selectedChannel === 'stable' ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)' : 'border-(--color-border) hover:bg-(--color-surface-hover)'}"
+            onclick={() => handleChannelChange('stable')}
+            disabled={channelChanging}
+          >
+            <div class="font-medium">Stable</div>
+            <div class="text-[0.65rem] mt-0.5 opacity-70">Only receive final releases</div>
+          </button>
+          <button
+            class="flex-1 px-3 py-2 text-xs rounded-lg border transition-colors
+              {selectedChannel === 'beta' ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)' : 'border-(--color-border) hover:bg-(--color-surface-hover)'}"
+            onclick={() => handleChannelChange('beta')}
+            disabled={channelChanging}
+          >
+            <div class="font-medium">Beta</div>
+            <div class="text-[0.65rem] mt-0.5 opacity-70">Receive pre-release (RC) builds</div>
+          </button>
+        </div>
+      </fieldset>
 
       {#if $updateStatus === 'idle'}
         <button
