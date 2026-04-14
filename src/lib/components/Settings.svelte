@@ -11,6 +11,7 @@
   let portInput: number = $state($relayPort);
   let portSaved = $state(false);
   let portError = $state<string | null>(null);
+  let autoStartEnabled = $state(false);
 
   async function savePort() {
     const port = Math.floor(portInput);
@@ -124,6 +125,25 @@
     }
   }
 
+  async function toggleAutoStart() {
+    const newValue = !autoStartEnabled;
+    autoStartEnabled = newValue;
+    try {
+      await invoke('set_autostart', { enabled: newValue });
+    } catch (e) {
+      autoStartEnabled = !newValue;
+      console.error('Failed to set autostart:', e);
+    }
+  }
+
+  async function fetchAutoStart() {
+    try {
+      autoStartEnabled = await invoke<boolean>('get_autostart');
+    } catch (e) {
+      console.error('Failed to get autostart:', e);
+    }
+  }
+
   async function fetchJsExecutionMode() {
     try {
       const config = await getConfig();
@@ -144,6 +164,7 @@
     }
     fetchRelayStatus();
     fetchJsExecutionMode();
+    fetchAutoStart();
     fetchUpdateChannel();
     statusPollInterval = setInterval(fetchRelayStatus, 5000);
   });
@@ -281,6 +302,22 @@
         aria-label="Toggle JS execution mode"
       >
         <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$jsExecutionMode ? 'translate-x-5' : ''}"></span>
+      </button>
+    </div>
+
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <div class="text-sm font-medium">Start on Login</div>
+        <div class="text-xs text-(--color-text-secondary) mt-0.5">Automatically start Endara Desktop when you log in to your computer.</div>
+      </div>
+      <button
+        class="shrink-0 relative w-10 h-5 rounded-full transition-colors {autoStartEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+        onclick={() => toggleAutoStart()}
+        role="switch"
+        aria-checked={autoStartEnabled}
+        aria-label="Toggle start on login"
+      >
+        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {autoStartEnabled ? 'translate-x-5' : ''}"></span>
       </button>
     </div>
 
