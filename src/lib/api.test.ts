@@ -52,6 +52,68 @@ describe('api', () => {
       const result = await getEndpoints();
       expect(result).toEqual(mockEndpoints);
     });
+
+    it('maps starting health to unknown', async () => {
+      const { getEndpoints } = await import('./api');
+      const mockEndpoints = [{ name: 'ep1', transport: 'stdio', health: 'starting', tool_count: 0, last_activity: null }];
+      mockFetchSuccess(mockEndpoints);
+
+      const result = await getEndpoints();
+      expect(result[0].health).toBe('unknown');
+    });
+
+    it('maps lifecycle Failed state to error health with error message', async () => {
+      const { getEndpoints } = await import('./api');
+      const mockEndpoints = [{
+        name: 'failed-ep',
+        transport: 'stdio',
+        health: 'healthy',
+        tool_count: 0,
+        last_activity: null,
+        lifecycle: { state: 'Failed', error: 'Connection refused' },
+      }];
+      mockFetchSuccess(mockEndpoints);
+
+      const result = await getEndpoints();
+      expect(result[0].health).toBe('error');
+      expect(result[0].error).toBe('Connection refused');
+      expect(result[0].lifecycle).toEqual({ state: 'Failed', error: 'Connection refused' });
+    });
+
+    it('preserves lifecycle Ready state without modifying health', async () => {
+      const { getEndpoints } = await import('./api');
+      const mockEndpoints = [{
+        name: 'ready-ep',
+        transport: 'stdio',
+        health: 'healthy',
+        tool_count: 5,
+        last_activity: null,
+        lifecycle: { state: 'Ready', server_name: 'my-server' },
+      }];
+      mockFetchSuccess(mockEndpoints);
+
+      const result = await getEndpoints();
+      expect(result[0].health).toBe('healthy');
+      expect(result[0].error).toBeUndefined();
+      expect(result[0].lifecycle).toEqual({ state: 'Ready', server_name: 'my-server' });
+    });
+
+    it('handles lifecycle Initializing state', async () => {
+      const { getEndpoints } = await import('./api');
+      const mockEndpoints = [{
+        name: 'init-ep',
+        transport: 'stdio',
+        health: 'starting',
+        tool_count: 0,
+        last_activity: null,
+        lifecycle: { state: 'Initializing' },
+      }];
+      mockFetchSuccess(mockEndpoints);
+
+      const result = await getEndpoints();
+      expect(result[0].health).toBe('unknown');
+      expect(result[0].lifecycle).toEqual({ state: 'Initializing' });
+    });
   });
 
   describe('getEndpointTools', () => {

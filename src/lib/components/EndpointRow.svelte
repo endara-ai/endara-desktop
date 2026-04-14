@@ -4,6 +4,7 @@
   import HealthDot from './HealthDot.svelte';
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
+  import FailedEndpointBadge from './FailedEndpointBadge.svelte';
 
   let { endpoint }: { endpoint: Endpoint } = $props();
 
@@ -29,6 +30,17 @@
     endpoint.transport === 'oauth' ? $oauthStatuses.get(endpoint.name) : undefined
   );
 
+  // Extract error message from lifecycle if it's in Failed state
+  let lifecycleError = $derived(
+    endpoint.lifecycle?.state === 'Failed' ? endpoint.lifecycle.error : undefined
+  );
+
+  // Combined error message for display
+  let errorMessage = $derived(endpoint.error || lifecycleError || 'Unknown error');
+
+  // Whether the endpoint is in a failed/error state
+  let isFailed = $derived(!!endpoint.error || endpoint.health === 'error' || endpoint.health === 'failed');
+
   function select() {
     selectedEndpoint.set(endpoint.name);
   }
@@ -44,15 +56,18 @@
   <div class="relative flex-shrink-0" style="width: 20px; height: 20px;">
     <EndpointIcon {endpoint} size={20} />
     <span class="absolute -bottom-0.5 -right-0.5">
-      <HealthDot health={endpoint.error ? 'error' : endpoint.health} />
+      <HealthDot health={isFailed ? 'error' : endpoint.health} />
     </span>
   </div>
   <div class="flex-1 min-w-0">
-    <div class="text-sm font-medium truncate {endpoint.error ? 'text-red-500' : ''}">{endpoint.name}</div>
+    <div class="text-sm font-medium truncate {isFailed ? 'text-red-500' : ''}">{endpoint.name}</div>
     <div class="flex items-center gap-2 mt-0.5">
       <TransportBadge transport={endpoint.transport} />
-      {#if endpoint.error}
-        <!-- error state: just show badge, no extra text -->
+      {#if isFailed}
+        <FailedEndpointBadge error={errorMessage} />
+        <span class="text-xs text-red-500 truncate max-w-[120px]" title={errorMessage}>
+          {errorMessage}
+        </span>
       {:else if endpoint.disabled}
         <span class="text-xs text-(--color-text-secondary)">Disabled</span>
       {:else}
