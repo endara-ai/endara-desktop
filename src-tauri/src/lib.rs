@@ -8,7 +8,13 @@ use tauri::{
     AppHandle, Emitter, Manager, RunEvent, State,
 };
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex;
+
+// Update channel URLs
+const STABLE_UPDATE_URL: &str =
+    "https://github.com/endara-ai/endara-desktop/releases/latest/download/latest.json";
+const BETA_UPDATE_URL: &str = "https://endara-ai.github.io/endara-desktop/latest.json";
 
 /// Workaround: In Tauri v2, `set_activation_policy` is only available on `App`,
 /// not on `AppHandle`, so it cannot be called from event handlers.
@@ -85,8 +91,8 @@ fn read_config() -> Result<toml::Table, String> {
     if !path.exists() {
         return Err("Config file not found".to_string());
     }
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read config: {e}"))?;
+    let contents =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read config: {e}"))?;
     contents
         .parse()
         .map_err(|e| format!("Failed to parse config: {e}"))
@@ -95,10 +101,24 @@ fn read_config() -> Result<toml::Table, String> {
 /// Serialize and write a `toml::Table` back to `~/.endara/config.toml`.
 fn write_config(table: &toml::Table) -> Result<(), String> {
     let path = config_path()?;
-    let new_contents = toml::to_string_pretty(table)
-        .map_err(|e| format!("Failed to serialize config: {e}"))?;
-    std::fs::write(&path, &new_contents)
-        .map_err(|e| format!("Failed to write config: {e}"))
+    let new_contents =
+        toml::to_string_pretty(table).map_err(|e| format!("Failed to serialize config: {e}"))?;
+    std::fs::write(&path, &new_contents).map_err(|e| format!("Failed to write config: {e}"))
+}
+
+/// Read the update channel from ~/.endara/config.toml [desktop] section.
+/// Returns "stable" if not set or on any error.
+fn read_update_channel() -> String {
+    let Ok(parsed) = read_config() else {
+        return "stable".to_string();
+    };
+    parsed
+        .get("desktop")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("update_channel"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "stable".to_string())
 }
 
 /// Holds the relay sidecar child process handle.
@@ -135,6 +155,18 @@ pub struct RelaySidecarStatusPayload {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Holds a pending update that has been checked but not yet installed.
+pub struct PendingUpdate(std::sync::Mutex<Option<tauri_plugin_updater::Update>>);
+
+/// Metadata about an available update.
+#[derive(Serialize, Clone)]
+pub struct UpdateMetadata {
+    pub version: String,
+    pub current_version: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
 }
 
 async fn emit_sidecar_status(app: &AppHandle, status: &str, error: Option<String>) {
@@ -185,7 +217,10 @@ async fn spawn_relay(
         let _ = std::fs::create_dir_all(&log_dir);
     }
 
-    eprintln!("[relay] attempting to spawn sidecar with config: {:?}, port: {}", config_file, port);
+    eprintln!(
+        "[relay] attempting to spawn sidecar with config: {:?}, port: {}",
+        config_file, port
+    );
 
     // Pre-flight port conflict check
     if is_port_in_use(port) {
@@ -206,7 +241,13 @@ async fn spawn_relay(
             eprintln!("[relay] FAILED to create sidecar command: {e}");
             format!("Failed to create sidecar command: {e}")
         })?
-        .args(["start", "--config", &config_file.to_string_lossy(), "--port", &port_str])
+        .args([
+            "start",
+            "--config",
+            &config_file.to_string_lossy(),
+            "--port",
+            &port_str,
+        ])
         .spawn()
         .map_err(|e| {
             eprintln!("[relay] FAILED to spawn relay sidecar: {e}");
@@ -226,10 +267,13 @@ async fn spawn_relay(
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
                     }
-                    let _ = app_handle.emit("relay-log", RelayLogPayload {
-                        level: "info".to_string(),
-                        message: text,
-                    });
+                    let _ = app_handle.emit(
+                        "relay-log",
+                        RelayLogPayload {
+                            level: "info".to_string(),
+                            message: text,
+                        },
+                    );
                 }
                 CommandEvent::Stderr(line) => {
                     let text = strip_ansi(&String::from_utf8_lossy(&line));
@@ -244,18 +288,26 @@ async fn spawn_relay(
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
                     }
-                    let _ = app_handle.emit("relay-log", RelayLogPayload {
-                        level: level.to_string(),
-                        message: text.clone(),
-                    });
+                    let _ = app_handle.emit(
+                        "relay-log",
+                        RelayLogPayload {
+                            level: level.to_string(),
+                            message: text.clone(),
+                        },
+                    );
                     // Emit relay-health event for ERROR lines
                     if level == "error" {
-                        let _ = app_handle.emit("relay-health", RelayHealthPayload {
-                            status: "error".to_string(),
-                            message: Some(text.clone()),
-                        });
+                        let _ = app_handle.emit(
+                            "relay-health",
+                            RelayHealthPayload {
+                                status: "error".to_string(),
+                                message: Some(text.clone()),
+                            },
+                        );
                         // Emit sidecar failed status for critical errors
-                        if text.contains("Failed to start HTTP server") || text.contains("Address already in use") {
+                        if text.contains("Failed to start HTTP server")
+                            || text.contains("Address already in use")
+                        {
                             emit_sidecar_status(&app_handle, "failed", Some(text.clone())).await;
                         }
                     }
@@ -273,10 +325,16 @@ async fn spawn_relay(
                         *state.child.lock().await = None;
                     }
                     // Emit relay-health event for termination
-                    let _ = app_handle.emit("relay-health", RelayHealthPayload {
-                        status: "disconnected".to_string(),
-                        message: Some(format!("Process terminated (code: {:?}, signal: {:?})", code, signal)),
-                    });
+                    let _ = app_handle.emit(
+                        "relay-health",
+                        RelayHealthPayload {
+                            status: "disconnected".to_string(),
+                            message: Some(format!(
+                                "Process terminated (code: {:?}, signal: {:?})",
+                                code, signal
+                            )),
+                        },
+                    );
 
                     // Emit sidecar lifecycle status based on exit code
                     let exited_cleanly = code == Some(0) || (code.is_none() && signal.is_some());
@@ -286,8 +344,12 @@ async fn spawn_relay(
                         emit_sidecar_status(
                             &app_handle,
                             "failed",
-                            Some(format!("Process exited with code: {:?}, signal: {:?}", code, signal)),
-                        ).await;
+                            Some(format!(
+                                "Process exited with code: {:?}, signal: {:?}",
+                                code, signal
+                            )),
+                        )
+                        .await;
                     }
                     break;
                 }
@@ -328,7 +390,9 @@ async fn stop_relay(state: State<'_, RelayState>) -> Result<RelayStatusInfo, Str
     }
     let mut child_guard = state.child.lock().await;
     if let Some(child) = child_guard.take() {
-        child.kill().map_err(|e| format!("Failed to kill relay: {e}"))?;
+        child
+            .kill()
+            .map_err(|e| format!("Failed to kill relay: {e}"))?;
     }
     *state.running.lock().await = false;
     Ok(RelayStatusInfo { running: false })
@@ -393,10 +457,7 @@ async fn set_relay_port(port: u16, state: State<'_, RelayState>) -> Result<(), S
 
     // Set port in the [relay] section
     if let Some(relay) = table.get_mut("relay").and_then(|v| v.as_table_mut()) {
-        relay.insert(
-            "port".to_string(),
-            toml::Value::Integer(port as i64),
-        );
+        relay.insert("port".to_string(), toml::Value::Integer(port as i64));
     } else {
         return Err("Missing [relay] section in config".to_string());
     }
@@ -419,6 +480,95 @@ async fn set_js_execution_mode(enabled: bool) -> Result<(), String> {
     }
 
     write_config(&table)
+}
+
+/// Get the current update channel ("stable" or "beta").
+#[tauri::command]
+async fn get_update_channel() -> Result<String, String> {
+    Ok(read_update_channel())
+}
+
+/// Set the update channel and persist it to config.toml.
+#[tauri::command]
+async fn set_update_channel(channel: String) -> Result<(), String> {
+    let mut table = read_config().unwrap_or_else(|_| toml::Table::new());
+
+    // Ensure [desktop] section exists
+    let desktop = table
+        .entry("desktop")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or("Invalid [desktop] section in config")?;
+
+    desktop.insert("update_channel".to_string(), toml::Value::String(channel));
+
+    write_config(&table)
+}
+
+/// Check for an available update using the channel-specific endpoint.
+/// Stores the update in PendingUpdate state if found.
+#[tauri::command]
+async fn check_for_update(
+    app: AppHandle,
+    pending: State<'_, PendingUpdate>,
+) -> Result<Option<UpdateMetadata>, String> {
+    let channel = read_update_channel();
+    let url = if channel == "beta" {
+        BETA_UPDATE_URL
+    } else {
+        STABLE_UPDATE_URL
+    };
+
+    let update = app
+        .updater_builder()
+        .endpoints(vec![url
+            .parse()
+            .map_err(|e| format!("Invalid URL: {e}"))?])
+        .map_err(|e| format!("Failed to configure updater: {e}"))?
+        .build()
+        .map_err(|e| format!("Failed to build updater: {e}"))?
+        .check()
+        .await
+        .map_err(|e| format!("Failed to check for update: {e}"))?;
+
+    match update {
+        Some(upd) => {
+            let metadata = UpdateMetadata {
+                version: upd.version.clone(),
+                current_version: upd.current_version.clone(),
+                body: upd.body.clone(),
+                date: upd.date.clone(),
+            };
+            // Store the update for later installation
+            if let Ok(mut guard) = pending.0.lock() {
+                *guard = Some(upd);
+            }
+            Ok(Some(metadata))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Download and install the pending update.
+#[tauri::command]
+async fn download_and_install_update(pending: State<'_, PendingUpdate>) -> Result<(), String> {
+    let update = {
+        let mut guard = pending
+            .0
+            .lock()
+            .map_err(|e| format!("Failed to lock pending update: {e}"))?;
+        guard.take()
+    };
+
+    match update {
+        Some(upd) => {
+            upd.download_and_install(|_, _| {}, || {})
+                .await
+                .map_err(|e| format!("Failed to download and install update: {e}"))?;
+            Ok(())
+        }
+        None => Err("No pending update to install".to_string()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -464,27 +614,64 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
     if let Some(toml::Value::Array(endpoints)) = parsed.get("endpoints") {
         for ep in endpoints {
             if ep.get("name").and_then(|v| v.as_str()) == Some(&name) {
-                let transport = ep.get("transport").and_then(|v| v.as_str()).unwrap_or("stdio").to_string();
-                let command = ep.get("command").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let transport = ep
+                    .get("transport")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("stdio")
+                    .to_string();
+                let command = ep
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 let args = ep.get("args").and_then(|v| v.as_array()).map(|arr| {
-                    arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
                 });
-                let url = ep.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let tool_prefix = ep.get("tool_prefix").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let description = ep.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let url = ep
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let tool_prefix = ep
+                    .get("tool_prefix")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let description = ep
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 let env = ep.get("env").and_then(|v| v.as_table()).map(|t| {
-                    t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
+                    t.iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                        .collect()
                 });
                 let headers = ep.get("headers").and_then(|v| v.as_table()).map(|t| {
-                    t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
+                    t.iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                        .collect()
                 });
-                let oauth_server_url = ep.get("oauth_server_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let client_id = ep.get("client_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let client_secret = ep.get("client_secret").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let oauth_server_url = ep
+                    .get("oauth_server_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let client_id = ep
+                    .get("client_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let client_secret = ep
+                    .get("client_secret")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 let scopes = ep.get("scopes").and_then(|v| v.as_array()).map(|arr| {
-                    arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" ")
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 });
-                let token_endpoint = ep.get("token_endpoint").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let token_endpoint = ep
+                    .get("token_endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
                 return Ok(EndpointConfig {
                     name: name.clone(),
@@ -553,23 +740,35 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                 // Clear old fields and set new ones
                 table.clear();
                 table.insert("name".to_string(), toml::Value::String(args.name.clone()));
-                table.insert("transport".to_string(), toml::Value::String(args.transport.clone()));
+                table.insert(
+                    "transport".to_string(),
+                    toml::Value::String(args.transport.clone()),
+                );
                 if let Some(tool_prefix) = &args.tool_prefix {
-                    table.insert("tool_prefix".to_string(), toml::Value::String(tool_prefix.clone()));
+                    table.insert(
+                        "tool_prefix".to_string(),
+                        toml::Value::String(tool_prefix.clone()),
+                    );
                 }
 
                 if let Some(cmd) = &args.command {
                     table.insert("command".to_string(), toml::Value::String(cmd.clone()));
                 }
                 if let Some(cmd_args) = &args.args {
-                    let arr: Vec<toml::Value> = cmd_args.iter().map(|a| toml::Value::String(a.clone())).collect();
+                    let arr: Vec<toml::Value> = cmd_args
+                        .iter()
+                        .map(|a| toml::Value::String(a.clone()))
+                        .collect();
                     table.insert("args".to_string(), toml::Value::Array(arr));
                 }
                 if let Some(url) = &args.url {
                     table.insert("url".to_string(), toml::Value::String(url.clone()));
                 }
                 if let Some(description) = &args.description {
-                    table.insert("description".to_string(), toml::Value::String(description.clone()));
+                    table.insert(
+                        "description".to_string(),
+                        toml::Value::String(description.clone()),
+                    );
                 }
                 if let Some(env) = &args.env {
                     if !env.is_empty() {
@@ -590,16 +789,26 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                     }
                 }
                 if let Some(oauth_server_url) = &args.oauth_server_url {
-                    table.insert("oauth_server_url".to_string(), toml::Value::String(oauth_server_url.clone()));
+                    table.insert(
+                        "oauth_server_url".to_string(),
+                        toml::Value::String(oauth_server_url.clone()),
+                    );
                 }
                 if let Some(client_id) = &args.client_id {
-                    table.insert("client_id".to_string(), toml::Value::String(client_id.clone()));
+                    table.insert(
+                        "client_id".to_string(),
+                        toml::Value::String(client_id.clone()),
+                    );
                 }
                 if let Some(client_secret) = &args.client_secret {
-                    table.insert("client_secret".to_string(), toml::Value::String(client_secret.clone()));
+                    table.insert(
+                        "client_secret".to_string(),
+                        toml::Value::String(client_secret.clone()),
+                    );
                 }
                 if let Some(scopes) = &args.scopes {
-                    let arr: Vec<toml::Value> = scopes.split_whitespace()
+                    let arr: Vec<toml::Value> = scopes
+                        .split_whitespace()
                         .map(|s| toml::Value::String(s.to_string()))
                         .collect();
                     if !arr.is_empty() {
@@ -607,7 +816,10 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                     }
                 }
                 if let Some(token_endpoint) = &args.token_endpoint {
-                    table.insert("token_endpoint".to_string(), toml::Value::String(token_endpoint.clone()));
+                    table.insert(
+                        "token_endpoint".to_string(),
+                        toml::Value::String(token_endpoint.clone()),
+                    );
                 }
                 break;
             }
@@ -627,8 +839,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
 
     // Read existing config or create default
     let contents = if path.exists() {
-        std::fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read config: {e}"))?
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read config: {e}"))?
     } else {
         // Create parent directory if needed
         if let Some(parent) = path.parent() {
@@ -697,16 +908,23 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
         }
     }
     if let Some(oauth_server_url) = args.oauth_server_url {
-        endpoint.insert("oauth_server_url".to_string(), toml::Value::String(oauth_server_url));
+        endpoint.insert(
+            "oauth_server_url".to_string(),
+            toml::Value::String(oauth_server_url),
+        );
     }
     if let Some(client_id) = args.client_id {
         endpoint.insert("client_id".to_string(), toml::Value::String(client_id));
     }
     if let Some(client_secret) = args.client_secret {
-        endpoint.insert("client_secret".to_string(), toml::Value::String(client_secret));
+        endpoint.insert(
+            "client_secret".to_string(),
+            toml::Value::String(client_secret),
+        );
     }
     if let Some(scopes) = args.scopes {
-        let arr: Vec<toml::Value> = scopes.split_whitespace()
+        let arr: Vec<toml::Value> = scopes
+            .split_whitespace()
             .map(|s| toml::Value::String(s.to_string()))
             .collect();
         if !arr.is_empty() {
@@ -714,7 +932,10 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
         }
     }
     if let Some(token_endpoint) = args.token_endpoint {
-        endpoint.insert("token_endpoint".to_string(), toml::Value::String(token_endpoint));
+        endpoint.insert(
+            "token_endpoint".to_string(),
+            toml::Value::String(token_endpoint),
+        );
     }
 
     let endpoints = parsed
@@ -763,16 +984,21 @@ pub fn run() {
     let child_handle = relay_state.child.clone();
     let pid_handle = relay_state.pid.clone();
 
+    let pending_update = PendingUpdate(std::sync::Mutex::new(None));
+
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new()
-            .level(log::LevelFilter::Info)
-            .build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .manage(relay_state)
+        .manage(pending_update)
         .invoke_handler(tauri::generate_handler![
             start_relay,
             stop_relay,
@@ -787,16 +1013,22 @@ pub fn run() {
             get_relay_port,
             set_relay_port,
             set_js_execution_mode,
+            get_update_channel,
+            set_update_channel,
+            check_for_update,
+            download_and_install_update,
         ])
         .setup(|app| {
             // Build tray menu
             let status_item =
                 MenuItem::with_id(app, "status", "Endara — Running", false, None::<&str>)?;
             let open_item = MenuItem::with_id(app, "open", "Open Endara", true, None::<&str>)?;
-            let update_item = MenuItem::with_id(app, "check_update", "Check for Updates", true, None::<&str>)?;
+            let update_item =
+                MenuItem::with_id(app, "check_update", "Check for Updates", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-            let menu = Menu::with_items(app, &[&status_item, &open_item, &update_item, &quit_item])?;
+            let menu =
+                Menu::with_items(app, &[&status_item, &open_item, &update_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -831,7 +1063,9 @@ pub fn run() {
                                 if let Some(pid) = pid_guard.take() {
                                     eprintln!("[relay] killing sidecar pid {} on tray quit", pid);
                                     #[cfg(unix)]
-                                    unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+                                    unsafe {
+                                        libc::kill(pid as i32, libc::SIGTERM);
+                                    }
                                 }
                             }
                             // Also kill via child handle as fallback
@@ -900,7 +1134,9 @@ pub fn run() {
                         if let Some(pid) = guard.take() {
                             eprintln!("[relay] killing sidecar pid {} on app exit", pid);
                             #[cfg(unix)]
-                            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+                            unsafe {
+                                libc::kill(pid as i32, libc::SIGTERM);
+                            }
                         }
                     }
                     // Also try the async child.kill() as fallback, in a separate thread
@@ -915,7 +1151,8 @@ pub fn run() {
                                 }
                             });
                         }
-                    }).join();
+                    })
+                    .join();
                 }
                 _ => {}
             }
