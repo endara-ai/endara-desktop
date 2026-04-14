@@ -35,7 +35,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["nsis", "msi", "dmg", "deb", "appimage"],
+    "targets": ["app", "nsis", "msi", "dmg", "deb", "appimage"],
     "externalBin": [
       "binaries/endara-relay"
     ],

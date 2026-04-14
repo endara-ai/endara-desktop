@@ -970,6 +970,36 @@ async fn remove_endpoint(name: String) -> Result<(), String> {
     write_config(&parsed)
 }
 
+/// Check if autostart is enabled.
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Failed to check autostart: {e}"))
+}
+
+/// Enable or disable autostart.
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if enabled {
+        manager
+            .enable()
+            .map_err(|e| format!("Failed to enable autostart: {e}"))
+    } else {
+        manager
+            .disable()
+            .map_err(|e| format!("Failed to disable autostart: {e}"))
+    }
+}
+
+/// Check if app was started with the autostart flag.
+fn is_autostarted() -> bool {
+    std::env::args().any(|arg| arg == "--autostarted")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let relay_state = RelayState {
@@ -997,6 +1027,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin({
+            let builder = tauri_plugin_autostart::Builder::new().args(["--autostarted"]);
+            #[cfg(target_os = "macos")]
+            let builder =
+                builder.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
+            builder.build()
+        })
         .manage(relay_state)
         .manage(pending_update)
         .invoke_handler(tauri::generate_handler![
@@ -1017,6 +1054,8 @@ pub fn run() {
             set_update_channel,
             check_for_update,
             download_and_install_update,
+            get_autostart,
+            set_autostart,
         ])
         .setup(|app| {
             // Build tray menu
@@ -1108,9 +1147,20 @@ pub fn run() {
                 }
             });
 
-            // Ensure app appears in Cmd-Tab on startup
-            #[cfg(target_os = "macos")]
-            set_macos_activation_policy(true);
+            // Handle autostarted launch: hide window and set accessory mode
+            if is_autostarted() {
+                // Hide the window when auto-launched
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                // Set accessory mode (no Dock icon, no Cmd-Tab)
+                #[cfg(target_os = "macos")]
+                set_macos_activation_policy(false);
+            } else {
+                // Normal launch: ensure app appears in Cmd-Tab on startup
+                #[cfg(target_os = "macos")]
+                set_macos_activation_policy(true);
+            }
 
             Ok(())
         })
