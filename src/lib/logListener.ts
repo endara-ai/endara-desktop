@@ -54,6 +54,24 @@ export async function initRelayLogListener() {
 
   await Promise.allSettled(listenerRegistrations);
 
+  // Replay any buffered logs that arrived before the listener was ready
+  try {
+    const buffered = await invoke<Array<{ level: string; message: string }>>('get_buffered_relay_logs');
+    if (buffered && buffered.length > 0) {
+      const lines: RelayLogLine[] = buffered.map(entry => ({
+        timestamp: new Date().toLocaleTimeString(),
+        level: (entry.level as RelayLogLine['level']) || 'info',
+        message: entry.message,
+      }));
+      relayLogLines.update(existing => {
+        const merged = [...lines, ...existing];
+        return merged.length > 5000 ? merged.slice(-5000) : merged;
+      });
+    }
+  } catch (e) {
+    console.error('Failed to get buffered relay logs:', e);
+  }
+
   try {
     const { status, error } = await invoke<RelaySidecarStatusSnapshot>('get_sidecar_status');
     applySidecarStatus(status, error);

@@ -29,6 +29,7 @@
     "shell:allow-kill",
     "updater:default",
     "process:default",
-    "dialog:default"
+    "dialog:default",
+    "autostart:default"
   ]
 }

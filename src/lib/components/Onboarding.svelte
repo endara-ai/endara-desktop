@@ -1,5 +1,7 @@
 <script lang="ts">
   import { relayPort } from '$lib/stores';
+  import { invoke } from '@tauri-apps/api/core';
+  import { onMount } from 'svelte';
   import AddEndpointModal from './AddEndpointModal.svelte';
 
   const RELAY_MCP_URL = $derived(`http://localhost:${$relayPort}/mcp`);
@@ -12,6 +14,28 @@
     navigator.clipboard.writeText(text);
     copied = true;
     setTimeout(() => copied = false, 2000);
+  }
+
+  let autostart = $state(false);
+
+  onMount(async () => {
+    try {
+      autostart = await invoke<boolean>('get_autostart');
+    } catch (e) {
+      console.error('Failed to get autostart state:', e);
+    }
+  });
+
+  async function toggleAutostart() {
+    const newValue = !autostart;
+    autostart = newValue;
+    try {
+      await invoke('set_autostart', { enabled: newValue });
+    } catch (e) {
+      // Revert on failure
+      autostart = !newValue;
+      console.error('Failed to set autostart:', e);
+    }
   }
 </script>
 
@@ -50,6 +74,25 @@
     >
       Add Your First Server
     </button>
+
+    <!-- Autostart toggle -->
+    <div class="rounded-lg border border-(--color-border) bg-(--color-surface-alt) p-4">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <div class="text-sm font-medium text-(--color-text)">Start on Login</div>
+          <div class="text-xs text-(--color-text-secondary) mt-0.5">Automatically start Endara Desktop when you log in to your computer.</div>
+        </div>
+        <button
+          class="shrink-0 relative w-10 h-5 rounded-full transition-colors {autostart ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+          onclick={() => toggleAutostart()}
+          role="switch"
+          aria-checked={autostart}
+          aria-label="Toggle start on login"
+        >
+          <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {autostart ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 
