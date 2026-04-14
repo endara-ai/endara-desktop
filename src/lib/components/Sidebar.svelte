@@ -14,6 +14,7 @@
     healthy: '● Healthy',
     degraded: '◐ Degraded',
     error: '⚠ Error',
+    failed: '⚠ Failed',
     offline: '○ Offline',
     unknown: '? Unknown',
     disabled: '⏸ Disabled',

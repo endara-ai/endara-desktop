@@ -1,4 +1,4 @@
-export type HealthStatus = 'healthy' | 'degraded' | 'offline' | 'unknown' | 'error';
+export type HealthStatus = 'healthy' | 'degraded' | 'offline' | 'unknown' | 'error' | 'failed';
 
 export interface RelayStatus {
   status: string;
@@ -6,6 +6,30 @@ export interface RelayStatus {
   endpoint_count: number;
   healthy_count: number;
 }
+
+// Lifecycle state from the management API (GET /api/endpoints)
+export type LifecycleState = 'Initializing' | 'Ready' | 'Failed' | 'Stopped';
+
+export interface LifecycleReady {
+  state: 'Ready';
+  server_name: string;
+  server_name_raw?: string;
+}
+
+export interface LifecycleFailed {
+  state: 'Failed';
+  error: string;
+}
+
+export interface LifecycleInitializing {
+  state: 'Initializing';
+}
+
+export interface LifecycleStopped {
+  state: 'Stopped';
+}
+
+export type Lifecycle = LifecycleReady | LifecycleFailed | LifecycleInitializing | LifecycleStopped;
 
 export interface Endpoint {
   name: string;
@@ -15,6 +39,7 @@ export interface Endpoint {
   last_activity: string | null;
   disabled: boolean;
   error?: string;
+  lifecycle?: Lifecycle;
 }
 
 export interface Tool {

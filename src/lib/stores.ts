@@ -95,6 +95,7 @@ export const groupedEndpoints = derived(filteredEndpoints, ($filtered) => {
     healthy: [],
     degraded: [],
     error: [],
+    failed: [],
     offline: [],
     unknown: [],
     disabled: [],

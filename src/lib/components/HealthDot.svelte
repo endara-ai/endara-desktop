@@ -9,6 +9,7 @@
     offline: 'bg-(--color-offline)',
     unknown: 'bg-gray-400',
     error: 'bg-red-500',
+    failed: 'bg-red-500',
   };
 
   const titleMap: Record<HealthStatus, string> = {
@@ -17,6 +18,7 @@
     offline: 'offline',
     unknown: 'Starting…',
     error: 'Error',
+    failed: 'Failed',
   };
 </script>
 
