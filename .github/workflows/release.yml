@@ -10,10 +10,40 @@ permissions:
 env:
   # For tag pushes, use the tag name (relay releases with matching version).
   # For manual workflow_dispatch runs, fall back to 'latest'.
+  # The preflight job validates this release exists before platform builds start.
   RELAY_VERSION: ${{ github.ref_name && startsWith(github.ref_name, 'v') && github.ref_name || 'latest' }}
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      relay_version: ${{ steps.check.outputs.relay_version }}
+    steps:
+      - name: Validate relay release exists
+        id: check
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_name }}" == v* ]]; then
+            RELAY_VERSION="${{ github.ref_name }}"
+          else
+            RELAY_VERSION="latest"
+          fi
+          echo "relay_version=$RELAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Checking for relay release: $RELAY_VERSION"
+          if [[ "$RELAY_VERSION" == "latest" ]]; then
+            gh release view --repo endara-ai/endara-relay --json tagName -q .tagName
+          else
+            gh release view "$RELAY_VERSION" --repo endara-ai/endara-relay --json tagName -q .tagName
+          fi
+          if [[ $? -ne 0 ]]; then
+            echo "::error::Relay release '$RELAY_VERSION' not found in endara-ai/endara-relay. Release the relay first!"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   publish:
+    needs: [preflight]
     strategy:
       fail-fast: false
       matrix:
