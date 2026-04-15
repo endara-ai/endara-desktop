@@ -394,12 +394,6 @@
     <div class="pt-4 mt-4 border-t border-(--color-border)">
       <div class="text-xs font-medium text-(--color-text-secondary) uppercase tracking-wide mb-2">Updates</div>
 
-      {#if buildInfo}
-        <div class="text-xs text-(--color-text-secondary) mb-2">
-          Current version: <span class="font-mono">{buildInfo.version}</span>
-        </div>
-      {/if}
-
       <!-- Update Channel Selector -->
       <fieldset class="border-none p-0 mb-4">
         <legend class="block text-xs font-medium mb-1.5">Update Channel</legend>

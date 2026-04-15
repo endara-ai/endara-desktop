@@ -194,8 +194,12 @@ pub struct BuildInfo {
 
 #[tauri::command]
 async fn get_build_info() -> Result<BuildInfo, String> {
+    // Use BUILD_VERSION from CI if available (includes RC suffix), else fall back to Cargo.toml version
+    let version = option_env!("BUILD_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
     Ok(BuildInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version,
         monorepo_commit: env!("MONOREPO_COMMIT").to_string(),
         relay_commit: env!("RELAY_COMMIT").to_string(),
         desktop_commit: env!("DESKTOP_COMMIT").to_string(),

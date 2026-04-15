@@ -107,6 +107,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Build info for About section — picked up by build.rs
+          DESKTOP_COMMIT: ${{ github.sha }}
+          BUILD_VERSION: ${{ github.ref_name }}
           # Required for updater — generate with: npx @tauri-apps/cli signer generate
           # Store the private key as a GitHub secret named TAURI_SIGNING_PRIVATE_KEY
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
