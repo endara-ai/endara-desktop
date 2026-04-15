@@ -46,8 +46,6 @@
 
   interface BuildInfo {
     version: string;
-    monorepo_commit: string;
-    relay_commit: string;
     desktop_commit: string;
     build_date: string;
   }
@@ -382,10 +380,6 @@
           <span>{buildInfo.build_date}</span>
           <span class="text-(--color-text-secondary)">Desktop</span>
           <span class="font-mono text-[0.6875rem]">{buildInfo.desktop_commit}</span>
-          <span class="text-(--color-text-secondary)">Relay</span>
-          <span class="font-mono text-[0.6875rem]">{buildInfo.relay_commit}</span>
-          <span class="text-(--color-text-secondary)">Monorepo</span>
-          <span class="font-mono text-[0.6875rem]">{buildInfo.monorepo_commit}</span>
         </div>
       </div>
     {/if}

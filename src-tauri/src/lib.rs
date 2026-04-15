@@ -186,8 +186,6 @@ async fn emit_sidecar_status(app: &AppHandle, status: &str, error: Option<String
 #[derive(Serialize, Clone)]
 pub struct BuildInfo {
     pub version: String,
-    pub monorepo_commit: String,
-    pub relay_commit: String,
     pub desktop_commit: String,
     pub build_date: String,
 }
@@ -200,8 +198,6 @@ async fn get_build_info() -> Result<BuildInfo, String> {
         .to_string();
     Ok(BuildInfo {
         version,
-        monorepo_commit: env!("MONOREPO_COMMIT").to_string(),
-        relay_commit: env!("RELAY_COMMIT").to_string(),
         desktop_commit: env!("DESKTOP_COMMIT").to_string(),
         build_date: env!("BUILD_DATE").to_string(),
     })
