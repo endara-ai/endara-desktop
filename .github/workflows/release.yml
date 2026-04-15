@@ -104,6 +104,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Patch tauri.conf.json version from git tag (e.g., v0.1.0-rc8 → 0.1.0-rc8)
+      # This ensures the built app reports the correct version for the updater
+      - name: Patch tauri.conf.json version (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          BUILD_VER=${GITHUB_REF_NAME#v}
+          jq --arg v "$BUILD_VER" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+          echo "Patched tauri.conf.json version to: $BUILD_VER"
+
+      - name: Patch tauri.conf.json version (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          $json = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $json.version = $ver
+          $json | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+          Write-Output "Patched tauri.conf.json version to: $ver"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
