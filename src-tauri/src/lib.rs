@@ -7,6 +7,7 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, RunEvent, State,
 };
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex;
@@ -571,6 +572,20 @@ async fn download_and_install_update(pending: State<'_, PendingUpdate>) -> Resul
     }
 }
 
+/// Show a system notification that an update is ready to install.
+#[tauri::command]
+async fn show_update_notification(app: AppHandle, version: String) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title("Endara Desktop Update Ready")
+        .body(format!(
+            "Version {} is ready to install. Open Endara to restart.",
+            version
+        ))
+        .show()
+        .map_err(|e| format!("Failed to show notification: {e}"))
+}
+
 #[derive(Deserialize)]
 struct AddEndpointArgs {
     name: String,
@@ -1034,6 +1049,7 @@ pub fn run() {
                 builder.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
             builder.build()
         })
+        .plugin(tauri_plugin_notification::init())
         .manage(relay_state)
         .manage(pending_update)
         .invoke_handler(tauri::generate_handler![
@@ -1054,6 +1070,7 @@ pub fn run() {
             set_update_channel,
             check_for_update,
             download_and_install_update,
+            show_update_notification,
             get_autostart,
             set_autostart,
         ])
