@@ -4,7 +4,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus, getConfig, reloadConfig } from '$lib/api';
   import { canRetryRelay, restartRelay } from '$lib/relaySidecarUi';
-  import { checkForUpdate, downloadAndInstall, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
+  import { checkAndAutoDownload, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
   import { toast } from 'svelte-sonner';
 
@@ -85,8 +85,8 @@
       if (previousChannel === 'beta' && channel === 'stable') {
         toast.info("You're now on the stable channel. You'll stay on your current version until a stable release newer than your current version is available.");
       }
-      // Immediately check for updates on the new channel
-      await checkForUpdate();
+      // Immediately check for updates on the new channel (auto-downloads if available)
+      await checkAndAutoDownload();
     } catch (e) {
       console.error('Failed to set update channel:', e);
     } finally {
@@ -416,7 +416,7 @@
       {#if $updateStatus === 'idle'}
         <button
           class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
-          onclick={() => checkForUpdate()}
+          onclick={() => checkAndAutoDownload()}
         >
           Check for Updates
         </button>
@@ -428,27 +428,27 @@
           </svg>
           Checking for updates...
         </div>
-      {:else if $updateStatus === 'available'}
-        <div class="space-y-2">
-          <p class="text-xs">Version <span class="font-mono font-medium">{$updateVersion}</span> available</p>
-          <button
-            class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white hover:opacity-90 transition-opacity"
-            onclick={() => downloadAndInstall()}
-          >
-            Download &amp; Install
-          </button>
-        </div>
-      {:else if $updateStatus === 'downloading'}
+      {:else if $updateStatus === 'available' || $updateStatus === 'downloading'}
         <div class="flex items-center gap-2 text-xs text-(--color-text-secondary)">
           <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          Downloading update...
+          {#if $updateVersion}
+            Downloading version {$updateVersion}...
+          {:else}
+            Downloading update...
+          {/if}
         </div>
       {:else if $updateStatus === 'ready'}
         <div class="space-y-2">
-          <p class="text-xs">Update ready! Restart to apply.</p>
+          <p class="text-xs">
+            {#if $updateVersion}
+              Version <span class="font-mono font-medium">{$updateVersion}</span> downloaded, restart to apply.
+            {:else}
+              Update downloaded, restart to apply.
+            {/if}
+          </p>
           <button
             class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white hover:opacity-90 transition-opacity"
             onclick={() => restartApp()}
@@ -463,7 +463,7 @@
           <p class="text-xs text-red-600 dark:text-red-400">Update check failed: {$updateError}</p>
           <button
             class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
-            onclick={() => checkForUpdate()}
+            onclick={() => checkAndAutoDownload()}
           >
             Retry
           </button>
