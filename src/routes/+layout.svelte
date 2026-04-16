@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { checkAndAutoDownload } from '$lib/updater';
+  import { activeTopLevelTab } from '$lib/stores';
   import { Toaster } from 'svelte-sonner';
 
   let { children } = $props();
@@ -16,6 +17,7 @@
 
     // Listen for tray "Check for Updates" event
     const unlisten = listen('check-for-update', () => {
+      activeTopLevelTab.set('settings');
       checkAndAutoDownload();
     });
 
