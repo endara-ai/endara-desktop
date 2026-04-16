@@ -32,7 +32,7 @@
 
   // Extract error message from lifecycle if it's in Failed state
   let lifecycleError = $derived(
-    endpoint.lifecycle?.state === 'Failed' ? endpoint.lifecycle.error : undefined
+    endpoint.lifecycle?.state === 'Failed' ? endpoint.lifecycle.error?.detail : undefined
   );
 
   // Combined error message for display

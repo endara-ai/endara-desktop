@@ -70,14 +70,14 @@ describe('api', () => {
         health: 'healthy',
         tool_count: 0,
         last_activity: null,
-        lifecycle: { state: 'Failed', error: 'Connection refused' },
+        lifecycle: { state: 'Failed', error: { kind: 'Transport', detail: 'Connection refused' } },
       }];
       mockFetchSuccess(mockEndpoints);
 
       const result = await getEndpoints();
       expect(result[0].health).toBe('error');
       expect(result[0].error).toBe('Connection refused');
-      expect(result[0].lifecycle).toEqual({ state: 'Failed', error: 'Connection refused' });
+      expect(result[0].lifecycle).toEqual({ state: 'Failed', error: { kind: 'Transport', detail: 'Connection refused' } });
     });
 
     it('preserves lifecycle Ready state without modifying health', async () => {
