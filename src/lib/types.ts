@@ -16,9 +16,14 @@ export interface LifecycleReady {
   server_name_raw?: string;
 }
 
+export interface LifecycleError {
+  kind: string;
+  detail: string;
+}
+
 export interface LifecycleFailed {
   state: 'Failed';
-  error: string;
+  error: LifecycleError;
 }
 
 export interface LifecycleInitializing {

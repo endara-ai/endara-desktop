@@ -47,7 +47,7 @@ export async function getEndpoints(): Promise<Endpoint[]> {
     if (ep.lifecycle?.state === 'Failed') {
       ep.health = 'error';
       // Extract error detail from lifecycle
-      ep.error = ep.lifecycle.error;
+      ep.error = ep.lifecycle.error.detail;
     }
   }
   return data;
