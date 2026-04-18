@@ -2,7 +2,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { checkAndAutoDownload } from '$lib/updater';
+  import { checkAndAutoDownload, listenForUpdateChecks } from '$lib/updater';
   import { activeTopLevelTab } from '$lib/stores';
   import { Toaster } from 'svelte-sonner';
 
@@ -21,10 +21,15 @@
       checkAndAutoDownload();
     });
 
+    // Listen for backend `update://checked` events so the UI reflects the
+    // channel the updater actually used on every check.
+    const unlistenChecked = listenForUpdateChecks();
+
     return () => {
       clearTimeout(initialTimeout);
       clearInterval(interval);
       unlisten.then((fn) => fn());
+      unlistenChecked.then((fn) => fn());
     };
   });
 </script>
