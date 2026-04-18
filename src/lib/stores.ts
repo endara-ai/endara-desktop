@@ -126,4 +126,7 @@ export const updateStatus = writable<string>('idle');
 export const updateVersion = writable<string | null>(null);
 export const updateError = writable<string | null>(null);
 export const updateChannel = writable<'stable' | 'beta'>('stable');
+// The channel that was actually used on the most recent update check, sourced
+// from the Rust `update://checked` event. Null until the first check runs.
+export const lastCheckedChannel = writable<'stable' | 'beta' | null>(null);
 

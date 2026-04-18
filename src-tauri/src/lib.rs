@@ -100,8 +100,18 @@ fn read_config() -> Result<toml::Table, String> {
 }
 
 /// Serialize and write a `toml::Table` back to `~/.endara/config.toml`.
+/// Ensures the parent directory exists before writing so a missing `~/.endara/`
+/// does not surface as an unhelpful "No such file or directory" error.
 fn write_config(table: &toml::Table) -> Result<(), String> {
     let path = config_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create config directory {}: {e}",
+                parent.display()
+            )
+        })?;
+    }
     let new_contents =
         toml::to_string_pretty(table).map_err(|e| format!("Failed to serialize config: {e}"))?;
     std::fs::write(&path, &new_contents).map_err(|e| format!("Failed to write config: {e}"))
@@ -168,6 +178,15 @@ pub struct UpdateMetadata {
     pub current_version: String,
     pub body: Option<String>,
     pub date: Option<String>,
+}
+
+/// Event payload emitted from `check_for_update` so the frontend can display
+/// which channel was actually used for the check (and cannot visually drift
+/// from the persisted value).
+#[derive(Serialize, Clone)]
+pub struct UpdateCheckedPayload {
+    pub channel: String,
+    pub url: String,
 }
 
 async fn emit_sidecar_status(app: &AppHandle, status: &str, error: Option<String>) {
@@ -519,6 +538,16 @@ async fn check_for_update(
     } else {
         STABLE_UPDATE_URL
     };
+
+    // Surface the effective channel so the UI can display which feed was checked
+    // and stay in sync with the persisted backend value on every check.
+    let _ = app.emit(
+        "update://checked",
+        UpdateCheckedPayload {
+            channel: channel.clone(),
+            url: url.to_string(),
+        },
+    );
 
     let update = app
         .updater_builder()

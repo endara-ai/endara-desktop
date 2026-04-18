@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel } from '$lib/stores';
+  import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from '$lib/stores';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus, getConfig, reloadConfig } from '$lib/api';
@@ -57,6 +57,15 @@
   let selectedChannel: 'stable' | 'beta' = $state('stable');
   let channelChanging = $state(false);
 
+  // Keep the local toggle state in sync with the `updateChannel` store so any
+  // backend-sourced re-sync (e.g. from `checkAndAutoDownload` or the
+  // `update://checked` event) is reflected in the UI without manual wiring.
+  $effect(() => {
+    if ($updateChannel === 'stable' || $updateChannel === 'beta') {
+      selectedChannel = $updateChannel;
+    }
+  });
+
   function setTheme(t: Theme) {
     theme.set(t);
   }
@@ -65,7 +74,6 @@
     try {
       const channel = await getUpdateChannel();
       if (channel === 'stable' || channel === 'beta') {
-        selectedChannel = channel;
         updateChannel.set(channel);
       }
     } catch (e) {
@@ -77,10 +85,12 @@
     if (channelChanging || channel === selectedChannel) return;
     const previousChannel = selectedChannel;
     channelChanging = true;
+    // Optimistically reflect the change so the toggle feels responsive; we
+    // revert on failure below.
+    selectedChannel = channel;
+    updateChannel.set(channel);
     try {
       await setUpdateChannel(channel);
-      selectedChannel = channel;
-      updateChannel.set(channel);
       // Show info toast when switching from beta to stable
       if (previousChannel === 'beta' && channel === 'stable') {
         toast.info("You're now on the stable channel. You'll stay on your current version until a stable release newer than your current version is available.");
@@ -88,7 +98,12 @@
       // Immediately check for updates on the new channel (auto-downloads if available)
       await checkAndAutoDownload();
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
       console.error('Failed to set update channel:', e);
+      toast.error(`Failed to switch update channel: ${message}`);
+      // Revert the optimistic UI change so the toggle reflects persisted truth.
+      selectedChannel = previousChannel;
+      updateChannel.set(previousChannel);
     } finally {
       channelChanging = false;
     }
@@ -468,6 +483,12 @@
             Retry
           </button>
         </div>
+      {/if}
+
+      {#if $lastCheckedChannel}
+        <p class="text-[0.65rem] text-(--color-text-secondary)/70 mt-2">
+          Checked {$lastCheckedChannel} channel
+        </p>
       {/if}
     </div>
   </div>
