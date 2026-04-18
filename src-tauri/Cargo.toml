@@ -1,6 +1,6 @@
 [package]
 name = "endara-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Endara Desktop — relay management tray app"
 authors = ["Endara"]
 edition = "2021"
