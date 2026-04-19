@@ -30,27 +30,12 @@
 
 /* ============================================================
    Tailwind v4 theme — tokens the Tailwind utility layer needs.
-   Back-compat --color-* aliases read from the new Endara tokens,
-   so existing utilities (bg-(--color-surface), text-(--color-text),
-   bg-accent, etc.) keep working without any component changes.
    ============================================================ */
 
 @theme {
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-serif: 'Source Serif 4', 'Iowan Old Style', 'Georgia', serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, SFMono-Regular, 'Cascadia Code', Consolas, monospace;
-
-  --color-surface: var(--surface);
-  --color-surface-alt: var(--surface-alt);
-  --color-surface-hover: var(--surface-hover);
-  --color-border: var(--border);
-  --color-text: var(--fg1);
-  --color-text-secondary: var(--fg2);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-healthy: var(--healthy);
-  --color-degraded: var(--degraded);
-  --color-offline: var(--offline);
 }
 
 /* ============================================================

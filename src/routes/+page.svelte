@@ -149,15 +149,15 @@
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 {#if showRelayStartupFailure}
-  <div class="flex h-screen w-screen items-center justify-center bg-(--color-surface-alt) p-6">
-    <div class="w-full max-w-2xl rounded-2xl border border-red-500/20 bg-(--color-surface) p-8 shadow-sm">
+  <div class="flex h-screen w-screen items-center justify-center bg-(--surface-alt) p-6">
+    <div class="w-full max-w-2xl rounded-2xl border border-red-500/20 bg-(--surface) p-8 shadow-sm">
       <div class="mb-6 inline-flex items-center rounded-full bg-red-500/10 px-3 py-1 text-xs font-medium text-red-600 dark:text-red-400">
         Relay startup failed
       </div>
 
       <div class="space-y-3">
-        <h1 class="text-2xl font-semibold text-(--color-text)">Endara Desktop couldn&apos;t start the relay</h1>
-        <p class="text-sm text-(--color-text-secondary)">
+        <h1 class="text-2xl font-semibold text-(--fg1)">Endara Desktop couldn&apos;t start the relay</h1>
+        <p class="text-sm text-(--fg2)">
           The app can&apos;t connect to the relay on port {$relayPort}. Review the startup error below, check the logs, or update your settings and try again.
         </p>
       </div>
@@ -169,20 +169,20 @@
 
       <div class="mt-8 flex flex-wrap gap-3">
         <button
-          class="rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          class="rounded-lg bg-(--accent) px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           onclick={handleRetryRelay}
           disabled={retryingRelay}
         >
           {retryingRelay ? 'Retrying…' : 'Retry'}
         </button>
         <button
-          class="rounded-lg border border-(--color-border) px-4 py-2 text-sm font-medium text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
+          class="rounded-lg border border-(--border) px-4 py-2 text-sm font-medium text-(--fg1) transition-colors hover:bg-(--surface-hover)"
           onclick={openRelayLogs}
         >
           View Logs
         </button>
         <button
-          class="rounded-lg border border-(--color-border) px-4 py-2 text-sm font-medium text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
+          class="rounded-lg border border-(--border) px-4 py-2 text-sm font-medium text-(--fg1) transition-colors hover:bg-(--surface-hover)"
           onclick={openSettings}
         >
           Open Settings

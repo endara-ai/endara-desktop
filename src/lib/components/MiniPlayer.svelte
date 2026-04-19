@@ -6,11 +6,11 @@
   let totalCt = $derived($endpoints.length);
 </script>
 
-<div class="fixed bottom-4 right-4 z-40 bg-(--color-surface) border border-(--color-border) rounded-xl shadow-lg p-3 w-56">
+<div class="fixed bottom-4 right-4 z-40 bg-(--surface) border border-(--border) rounded-xl shadow-lg p-3 w-56">
   <div class="flex items-center justify-between mb-2">
-    <span class="text-xs font-semibold text-(--color-text-secondary)">Endara</span>
+    <span class="text-xs font-semibold text-(--fg2)">Endara</span>
     <button
-      class="text-xs text-(--color-accent) hover:underline"
+      class="text-xs text-(--accent) hover:underline"
       onclick={() => miniPlayerMode.set(false)}
     >Expand</button>
   </div>
@@ -27,7 +27,7 @@
         </div>
       {/each}
       {#if $endpoints.length > 3}
-        <div class="text-xs text-(--color-text-secondary)">+{$endpoints.length - 3} more</div>
+        <div class="text-xs text-(--fg2)">+{$endpoints.length - 3} more</div>
       {/if}
     </div>
   {/if}

@@ -501,7 +501,7 @@
 
 <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="presentation" onclick={handleCancel} onkeydown={handleKeydown}>
   <div
-    class="bg-(--color-surface) rounded-xl shadow-xl border border-(--color-border) p-6 w-[36rem] max-w-[90vw] max-h-[90vh] overflow-y-auto"
+    class="bg-(--surface) rounded-xl shadow-xl border border-(--border) p-6 w-[36rem] max-w-[90vw] max-h-[90vh] overflow-y-auto"
     role="dialog"
     aria-modal="true"
     aria-label="Add Server"
@@ -511,29 +511,29 @@
   >
     {#if step === 'browse'}
       <!-- Step 1: Browse Catalog -->
-      <h3 class="text-base font-semibold mb-4 text-(--color-text)">Add Server</h3>
+      <h3 class="text-base font-semibold mb-4 text-(--fg1)">Add Server</h3>
 
       <input
         type="text"
         bind:value={search}
         placeholder="Search servers…"
-        class="w-full text-sm px-3 py-2 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) mb-4"
+        class="w-full text-sm px-3 py-2 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) mb-4"
       />
 
       <!-- Filter toggles -->
       <div class="flex gap-2 mb-4">
         <button
           class="px-3 py-1 text-xs rounded-full border transition-colors {showOAuth
-            ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)'
-            : 'border-(--color-border) text-(--color-text-secondary) hover:bg-(--color-surface-hover)'}"
+            ? 'border-(--accent) bg-(--accent)/10 text-(--accent)'
+            : 'border-(--border) text-(--fg2) hover:bg-(--surface-hover)'}"
           onclick={() => showOAuth = !showOAuth}
         >
           OAuth
         </button>
         <button
           class="px-3 py-1 text-xs rounded-full border transition-colors {showLocal
-            ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)'
-            : 'border-(--color-border) text-(--color-text-secondary) hover:bg-(--color-surface-hover)'}"
+            ? 'border-(--accent) bg-(--accent)/10 text-(--accent)'
+            : 'border-(--border) text-(--fg2) hover:bg-(--surface-hover)'}"
           onclick={() => showLocal = !showLocal}
         >
           Local
@@ -546,14 +546,14 @@
           {#if item.type === 'oauth'}
             {@const service = item.entry as OAuthCatalogEntry}
             <button
-              class="w-full text-left p-3 rounded-lg border border-(--color-border) hover:border-(--color-accent) hover:bg-(--color-surface-hover) transition-colors flex items-center gap-3"
+              class="w-full text-left p-3 rounded-lg border border-(--border) hover:border-(--accent) hover:bg-(--surface-hover) transition-colors flex items-center gap-3"
               onclick={() => selectOAuthService(service)}
             >
-              <span class="w-5 h-5 flex-shrink-0 text-(--color-text-secondary)">{@html service.icon}</span>
-              <span class="text-sm font-medium text-(--color-text) flex-shrink-0">{service.name}</span>
-              <p class="text-xs text-(--color-text-secondary) line-clamp-1 flex-1 min-w-0">{service.description}</p>
+              <span class="w-5 h-5 flex-shrink-0 text-(--fg2)">{@html service.icon}</span>
+              <span class="text-sm font-medium text-(--fg1) flex-shrink-0">{service.name}</span>
+              <p class="text-xs text-(--fg2) line-clamp-1 flex-1 min-w-0">{service.description}</p>
               <div class="flex items-center gap-1.5 flex-shrink-0">
-                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--color-accent)/10 text-(--color-accent) font-medium">
+                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent) font-medium">
                   {CATEGORY_LABELS[service.category] ?? service.category}
                 </span>
                 <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--hint-read-bg) text-(--hint-read-fg) font-medium">
@@ -564,14 +564,14 @@
           {:else}
             {@const server = item.entry as CatalogServer}
             <button
-              class="w-full text-left p-3 rounded-lg border border-(--color-border) hover:border-(--color-accent) hover:bg-(--color-surface-hover) transition-colors flex items-center gap-3"
+              class="w-full text-left p-3 rounded-lg border border-(--border) hover:border-(--accent) hover:bg-(--surface-hover) transition-colors flex items-center gap-3"
               onclick={() => selectCatalog(server)}
             >
-              <span class="w-5 h-5 flex-shrink-0 text-(--color-text-secondary)">{@html server.icon}</span>
-              <span class="text-sm font-medium text-(--color-text) flex-shrink-0">{server.name}</span>
-              <p class="text-xs text-(--color-text-secondary) line-clamp-1 flex-1 min-w-0">{server.description}</p>
+              <span class="w-5 h-5 flex-shrink-0 text-(--fg2)">{@html server.icon}</span>
+              <span class="text-sm font-medium text-(--fg1) flex-shrink-0">{server.name}</span>
+              <p class="text-xs text-(--fg2) line-clamp-1 flex-1 min-w-0">{server.description}</p>
               <div class="flex items-center gap-1.5 flex-shrink-0">
-                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--color-accent)/10 text-(--color-accent) font-medium">
+                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent) font-medium">
                   {CATEGORY_LABELS[server.category] ?? server.category}
                 </span>
                 {#if server.envVars.some(e => e.required)}
@@ -586,16 +586,16 @@
       </div>
 
       <button
-        class="w-full text-left p-3 rounded-lg border border-dashed border-(--color-border) hover:border-(--color-accent) hover:bg-(--color-surface-hover) transition-colors"
+        class="w-full text-left p-3 rounded-lg border border-dashed border-(--border) hover:border-(--accent) hover:bg-(--surface-hover) transition-colors"
         onclick={selectCustom}
       >
-        <span class="text-sm font-medium text-(--color-text-secondary)">Custom Server</span>
-        <p class="text-xs text-(--color-text-secondary)/70">Configure a server manually with any transport</p>
+        <span class="text-sm font-medium text-(--fg2)">Custom Server</span>
+        <p class="text-xs text-(--fg2)/70">Configure a server manually with any transport</p>
       </button>
 
       <div class="flex justify-end pt-4">
         <button
-          class="px-3 py-1.5 text-sm rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+          class="px-3 py-1.5 text-sm rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
           onclick={handleCancel}
         >
           Cancel
@@ -605,7 +605,7 @@
       <!-- Step 2: Configure -->
       <div class="flex items-center gap-2 mb-4">
         <button
-          class="p-1 rounded-md hover:bg-(--color-surface-hover) transition-colors text-(--color-text-secondary)"
+          class="p-1 rounded-md hover:bg-(--surface-hover) transition-colors text-(--fg2)"
           onclick={goBack}
           title="Back to catalog"
         >
@@ -613,7 +613,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <h3 class="text-base font-semibold text-(--color-text)">
+        <h3 class="text-base font-semibold text-(--fg1)">
           {selectedCatalog ? `Configure ${selectedCatalog.name}` : selectedOAuthEntry ? `Connect ${selectedOAuthEntry.name}` : 'Custom Server'}
         </h3>
       </div>
@@ -622,14 +622,14 @@
         {#if !selectedCatalog && !selectedOAuthEntry}
           <!-- Custom: transport selector -->
           <fieldset class="border-none p-0 m-0 mb-1">
-            <legend class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Transport</legend>
+            <legend class="block text-xs font-medium mb-1 text-(--fg2)">Transport</legend>
             <div class="flex gap-2">
               {#each ['stdio', 'sse', 'http', 'oauth'] as t}
                 <button
                   class="px-3 py-1.5 text-xs rounded-lg border transition-colors
                     {transport === t
-                      ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)'
-                      : 'border-(--color-border) hover:bg-(--color-surface-hover) text-(--color-text-secondary)'}"
+                      ? 'border-(--accent) bg-(--accent)/10 text-(--accent)'
+                      : 'border-(--border) hover:bg-(--surface-hover) text-(--fg2)'}"
                   onclick={() => transport = t as TransportType}
                 >
                   {t.toUpperCase()}
@@ -640,18 +640,18 @@
         {/if}
 
         <div>
-          <label for="modal-ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
+          <label for="modal-ep-name" class="block text-xs font-medium mb-1 text-(--fg2)">Name</label>
           <input id="modal-ep-name" type="text" bind:value={name} placeholder="my-server"
-            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
         </div>
 
         <div>
           <div class="flex items-center justify-between mb-1 gap-2">
-            <label for="modal-ep-prefix" class="block text-xs font-medium text-(--color-text-secondary)">Tool Prefix</label>
+            <label for="modal-ep-prefix" class="block text-xs font-medium text-(--fg2)">Tool Prefix</label>
             {#if prefixCustom}
               <button
                 type="button"
-                class="text-[11px] text-(--color-accent) hover:text-(--color-accent-hover)"
+                class="text-[11px] text-(--accent) hover:text-(--accent-hover)"
                 onclick={resetPrefix}
               >
                 Reset
@@ -664,73 +664,73 @@
             value={prefix}
             oninput={(event) => handlePrefixInput((event.currentTarget as HTMLInputElement).value)}
             placeholder={sanitizeName(name) || 'tool_prefix'}
-            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)"
           />
-          <p class="text-[11px] text-(--color-text-secondary) mt-0.5">
+          <p class="text-[11px] text-(--fg2) mt-0.5">
             Auto-generated from the name. Tools will be named like {prefixPreview}.
           </p>
         </div>
 
         <div>
-          <label for="modal-ep-desc" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Description <span class="text-(--color-text-secondary)/50">(optional)</span></label>
+          <label for="modal-ep-desc" class="block text-xs font-medium mb-1 text-(--fg2)">Description <span class="text-(--fg2)/50">(optional)</span></label>
           <input id="modal-ep-desc" type="text" bind:value={description} placeholder="Brief description of this server"
-            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
         </div>
 
         {#if transport === 'stdio'}
           <div>
-            <label for="modal-ep-cmd" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Command</label>
+            <label for="modal-ep-cmd" class="block text-xs font-medium mb-1 text-(--fg2)">Command</label>
             <input id="modal-ep-cmd" type="text" bind:value={command} placeholder="npx"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
           <div>
-            <label for="modal-ep-args" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Arguments <span class="text-(--color-text-secondary)/50">(space-separated)</span></label>
+            <label for="modal-ep-args" class="block text-xs font-medium mb-1 text-(--fg2)">Arguments <span class="text-(--fg2)/50">(space-separated)</span></label>
             <input id="modal-ep-args" type="text" bind:value={args} placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
         {:else if transport === 'oauth'}
           <div>
-            <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Server URL</label>
+            <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">Server URL</label>
             <input id="modal-ep-url" type="text" bind:value={url} placeholder="https://mcp.linear.app/sse"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
           <div>
-            <label for="modal-ep-scopes" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Scopes <span class="text-(--color-text-secondary)/50">(optional, space-separated)</span></label>
+            <label for="modal-ep-scopes" class="block text-xs font-medium mb-1 text-(--fg2)">Scopes <span class="text-(--fg2)/50">(optional, space-separated)</span></label>
             <input id="modal-ep-scopes" type="text" bind:value={scopes} placeholder="read write"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-            <p class="text-[11px] text-(--color-text-secondary) mt-0.5">Space-separated. Leave blank for server defaults.</p>
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+            <p class="text-[11px] text-(--fg2) mt-0.5">Space-separated. Leave blank for server defaults.</p>
           </div>
 
           <!-- Collapsible Advanced section — collapsed by default when from catalog -->
-          <details class="border border-(--color-border) rounded-lg" open={!selectedOAuthEntry}>
-            <summary class="px-3 py-2 text-xs font-medium text-(--color-text-secondary) cursor-pointer hover:bg-(--color-surface-hover) rounded-lg select-none">
+          <details class="border border-(--border) rounded-lg" open={!selectedOAuthEntry}>
+            <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">
               Advanced
             </summary>
             <div class="px-3 pb-3 space-y-3">
               <div>
-                <label for="modal-ep-oauth-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">OAuth Server URL</label>
+                <label for="modal-ep-oauth-url" class="block text-xs font-medium mb-1 text-(--fg2)">OAuth Server URL</label>
                 <input id="modal-ep-oauth-url" type="text" bind:value={oauthServerUrl} placeholder="Auto-discovered"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-                <p class="text-[11px] text-(--color-text-secondary) mt-0.5">Leave blank to auto-discover via RFC 9728</p>
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+                <p class="text-[11px] text-(--fg2) mt-0.5">Leave blank to auto-discover via RFC 9728</p>
               </div>
               <div>
-                <label for="modal-ep-client-id" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client ID</label>
+                <label for="modal-ep-client-id" class="block text-xs font-medium mb-1 text-(--fg2)">Client ID</label>
                 <input id="modal-ep-client-id" type="text" bind:value={clientId} placeholder="Auto-registered"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-                <p class="text-[11px] text-(--color-text-secondary) mt-0.5">Leave blank to use Dynamic Client Registration</p>
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+                <p class="text-[11px] text-(--fg2) mt-0.5">Leave blank to use Dynamic Client Registration</p>
               </div>
               <div>
-                <label for="modal-ep-client-secret" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client Secret <span class="text-(--color-text-secondary)/50">(optional)</span></label>
+                <label for="modal-ep-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">Client Secret <span class="text-(--fg2)/50">(optional)</span></label>
                 <input id="modal-ep-client-secret" type="password" bind:value={clientSecret} placeholder="Optional"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
               </div>
             </div>
           </details>
         {:else}
           <div>
-            <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">URL</label>
+            <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">URL</label>
             <input id="modal-ep-url" type="text" bind:value={url} placeholder={transport === 'sse' ? 'http://localhost:3000/sse' : 'http://localhost:3000/mcp'}
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
         {/if}
 
@@ -738,14 +738,14 @@
         {#if selectedCatalog?.userArgs}
           {#each selectedCatalog.userArgs as ua, i}
             <div>
-              <label for="modal-ua-{i}" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">{ua.label}</label>
+              <label for="modal-ua-{i}" class="block text-xs font-medium mb-1 text-(--fg2)">{ua.label}</label>
               <div class="flex gap-2">
                 <input id="modal-ua-{i}" type="text" bind:value={userArgValues[i]} placeholder={ua.placeholder}
-                  class="flex-1 text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                  class="flex-1 text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
                 {#if ua.type === 'directory' || ua.type === 'file'}
                   <button
                     type="button"
-                    class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) text-(--color-text-secondary) transition-colors flex-shrink-0"
+                    class="px-3 py-1.5 text-xs rounded-lg border border-(--border) hover:bg-(--surface-hover) text-(--fg2) transition-colors flex-shrink-0"
                     onclick={async () => {
                       const selected = await dialogOpen({
                         directory: ua.type === 'directory',
@@ -768,14 +768,14 @@
         <!-- Catalog: labeled env var inputs -->
         {#if selectedCatalog && selectedCatalog.envVars.length > 0}
           <div>
-            <span class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Configuration</span>
+            <span class="block text-xs font-medium mb-1 text-(--fg2)">Configuration</span>
             {#each selectedCatalog.envVars as ev}
               <div class="mb-2">
-                <label for="modal-env-{ev.name}" class="block text-[11px] mb-0.5 text-(--color-text-secondary)">
+                <label for="modal-env-{ev.name}" class="block text-[11px] mb-0.5 text-(--fg2)">
                   {ev.label}
-                  {#if ev.required}<span class="text-(--color-offline)">*</span>{/if}
+                  {#if ev.required}<span class="text-(--offline)">*</span>{/if}
                   {#if ev.helpUrl}
-                    <button type="button" class="text-(--color-accent) hover:underline ml-1 inline cursor-pointer bg-transparent border-none p-0 text-[11px]" onclick={() => openUrl(ev.helpUrl!)}>↗</button>
+                    <button type="button" class="text-(--accent) hover:underline ml-1 inline cursor-pointer bg-transparent border-none p-0 text-[11px]" onclick={() => openUrl(ev.helpUrl!)}>↗</button>
                   {/if}
                 </label>
                 <input
@@ -783,7 +783,7 @@
                   type={ev.secret ? 'password' : 'text'}
                   bind:value={catalogEnvValues[ev.name]}
                   placeholder={ev.secret ? '••••••••' : ev.name}
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono"
                 />
               </div>
             {/each}
@@ -793,13 +793,13 @@
         <!-- Custom env var key-value editor -->
         <div>
           <div class="flex items-center justify-between mb-1">
-            <span class="block text-xs font-medium text-(--color-text-secondary)">
+            <span class="block text-xs font-medium text-(--fg2)">
               {selectedCatalog ? 'Additional Environment Variables' : 'Environment Variables'}
-              <span class="text-(--color-text-secondary)/50">(optional)</span>
+              <span class="text-(--fg2)/50">(optional)</span>
             </span>
             <button
               type="button"
-              class="text-xs text-(--color-accent) hover:text-(--color-accent-hover)"
+              class="text-xs text-(--accent) hover:text-(--accent-hover)"
               onclick={() => envVars = [...envVars, { key: '', value: '' }]}
             >
               + Add
@@ -808,12 +808,12 @@
           {#each envVars as envVar, i}
             <div class="flex gap-1 mb-1">
               <input type="text" bind:value={envVar.key} placeholder="KEY"
-                class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+                class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono" />
               <input type="text" bind:value={envVar.value} placeholder="value or $ENV_VAR"
-                class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+                class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono" />
               <button
                 type="button"
-                class="text-xs px-1.5 text-(--color-text-secondary) hover:text-(--color-offline)"
+                class="text-xs px-1.5 text-(--fg2) hover:text-(--offline)"
                 onclick={() => envVars = envVars.filter((_, idx) => idx !== i)}
               >✕</button>
             </div>
@@ -824,13 +824,13 @@
         {#if transport !== 'stdio'}
           <div>
             <div class="flex items-center justify-between mb-1">
-              <span class="block text-xs font-medium text-(--color-text-secondary)">
+              <span class="block text-xs font-medium text-(--fg2)">
                 HTTP Headers
-                <span class="text-(--color-text-secondary)/50">(optional)</span>
+                <span class="text-(--fg2)/50">(optional)</span>
               </span>
               <button
                 type="button"
-                class="text-xs text-(--color-accent) hover:text-(--color-accent-hover)"
+                class="text-xs text-(--accent) hover:text-(--accent-hover)"
                 onclick={() => headerVars = [...headerVars, { key: '', value: '' }]}
               >
                 + Add
@@ -839,12 +839,12 @@
             {#each headerVars as header, i}
               <div class="flex gap-1 mb-1">
                 <input type="text" bind:value={header.key} placeholder="Header-Name"
-                  class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+                  class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono" />
                 <input type="text" bind:value={header.value} placeholder="value or $ENV_VAR"
-                  class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+                  class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono" />
                 <button
                   type="button"
-                  class="text-xs px-1.5 text-(--color-text-secondary) hover:text-(--color-offline)"
+                  class="text-xs px-1.5 text-(--fg2) hover:text-(--offline)"
                   onclick={() => headerVars = headerVars.filter((_, idx) => idx !== i)}
                 >✕</button>
               </div>
@@ -857,7 +857,7 @@
           <div class="flex items-center gap-2">
             <button
               type="button"
-              class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors disabled:opacity-50"
+              class="px-3 py-1.5 text-xs rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors disabled:opacity-50"
               onclick={handleTestConnection}
               disabled={testing || submitting}
             >
@@ -882,7 +882,7 @@
                   Connected — {testResult.toolCount} {testResult.toolCount === 1 ? 'tool' : 'tools'} found
                 </span>
               {:else}
-                <span class="text-xs text-(--color-offline)">{testResult.error}</span>
+                <span class="text-xs text-(--offline)">{testResult.error}</span>
               {/if}
             {/if}
           </div>
@@ -892,35 +892,35 @@
         {#if showingDcrFallback}
           <div class="border rounded-lg p-4 space-y-3" style="border-color: color-mix(in oklab, var(--trans-oauth-fg) 30%, transparent); background: color-mix(in oklab, var(--trans-oauth-fg) 6%, transparent);">
             <div>
-              <p class="text-sm text-(--color-text)">
+              <p class="text-sm text-(--fg1)">
                 <strong>{name}</strong> requires manual client registration.
                 Register an OAuth app with the service, then enter your credentials below.
               </p>
               {#if dcrFallbackData.authorization_endpoint}
-                <p class="text-[11px] text-(--color-text-secondary) mt-1">
-                  Auth server: <code class="bg-(--color-surface-hover) px-1 py-0.5 rounded text-[11px]">{dcrFallbackData.authorization_endpoint}</code>
+                <p class="text-[11px] text-(--fg2) mt-1">
+                  Auth server: <code class="bg-(--surface-hover) px-1 py-0.5 rounded text-[11px]">{dcrFallbackData.authorization_endpoint}</code>
                 </p>
               {/if}
             </div>
 
             <div>
-              <label for="modal-dcr-client-id" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">
-                Client ID <span class="text-(--color-offline)">*</span>
+              <label for="modal-dcr-client-id" class="block text-xs font-medium mb-1 text-(--fg2)">
+                Client ID <span class="text-(--offline)">*</span>
               </label>
               <input id="modal-dcr-client-id" type="text" bind:value={dcrClientId} placeholder="Your registered client ID"
-                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
             </div>
 
             <div>
-              <label for="modal-dcr-client-secret" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">
-                Client Secret <span class="text-(--color-text-secondary)/50">(optional for public clients)</span>
+              <label for="modal-dcr-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">
+                Client Secret <span class="text-(--fg2)/50">(optional for public clients)</span>
               </label>
               <input id="modal-dcr-client-secret" type="password" bind:value={dcrClientSecret} placeholder="Optional"
-                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
             </div>
 
             <button
-              class="w-full px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
+              class="w-full px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
               onclick={handleDcrFallbackSubmit}
               disabled={submitting}
             >
@@ -934,19 +934,19 @@
         {/if}
 
         {#if error}
-          <p class="text-xs text-(--color-offline)">{error}</p>
+          <p class="text-xs text-(--offline)">{error}</p>
         {/if}
 
         {#if !showingDcrFallback}
           <div class="flex justify-end gap-2 pt-2">
             <button
-              class="px-3 py-1.5 text-sm rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+              class="px-3 py-1.5 text-sm rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
               onclick={handleCancel}
             >
               Cancel
             </button>
             <button
-              class="px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
+              class="px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
               onclick={transport === 'oauth' ? handleOAuthSubmit : handleSubmit}
               disabled={submitting}
             >
