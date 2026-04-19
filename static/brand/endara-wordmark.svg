@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 56" role="img" aria-label="Endara">
+  <g fill="#2A2824">
+    <rect x="2" y="8" width="40" height="40" rx="10" fill="#4C6EF5"></rect>
+    <path d="M14 18h16M14 28h12M14 38h16" stroke="#FDFBF7" stroke-width="3" stroke-linecap="round"></path>
+    <text x="56" y="38" font-family="Inter, system-ui, sans-serif" font-size="28" font-weight="600" letter-spacing="-0.01em">Endara</text>
+  </g>
+</svg>

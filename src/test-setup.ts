@@ -33,6 +33,7 @@ Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock, wri
 // Mock document.documentElement
 if (typeof document === 'undefined') {
   const classList = new Set<string>();
+  const attributes = new Map<string, string>();
   const documentElement = {
     classList: {
       add: vi.fn((cls: string) => classList.add(cls)),
@@ -49,6 +50,14 @@ if (typeof document === 'undefined') {
       }),
       contains: vi.fn((cls: string) => classList.has(cls)),
     },
+    setAttribute: vi.fn((name: string, value: string) => {
+      attributes.set(name, value);
+    }),
+    removeAttribute: vi.fn((name: string) => {
+      attributes.delete(name);
+    }),
+    getAttribute: vi.fn((name: string) => attributes.get(name) ?? null),
+    hasAttribute: vi.fn((name: string) => attributes.has(name)),
   };
 
   Object.defineProperty(globalThis, 'document', {

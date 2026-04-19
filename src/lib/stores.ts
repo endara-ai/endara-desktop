@@ -9,18 +9,30 @@ function createThemeStore() {
   const stored = typeof window !== 'undefined' ? localStorage.getItem('endara-theme') as Theme | null : null;
   const store = writable<Theme>(stored || 'system');
 
+  // Apply the dark state to <html> using both the legacy `.dark` class and
+  // the Endara design-system `[data-theme="dark"]` attribute so selectors
+  // in either style resolve correctly while components migrate in Wave 2.
+  const applyDark = (isDark: boolean) => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', isDark);
+    if (isDark) {
+      root.setAttribute('data-theme', 'dark');
+    } else {
+      root.removeAttribute('data-theme');
+    }
+  };
+
   if (typeof window !== 'undefined') {
     store.subscribe((t) => {
       localStorage.setItem('endara-theme', t);
-      const root = document.documentElement;
       if (t === 'dark') {
-        root.classList.add('dark');
+        applyDark(true);
       } else if (t === 'light') {
-        root.classList.remove('dark');
+        applyDark(false);
       } else {
         // system — follow OS preference
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        root.classList.toggle('dark', prefersDark);
+        applyDark(prefersDark);
       }
     });
 
@@ -29,7 +41,7 @@ function createThemeStore() {
       const unsub = store.subscribe((v) => { currentTheme = v; });
       unsub();
       if (currentTheme === 'system') {
-        document.documentElement.classList.toggle('dark', e.matches);
+        applyDark(e.matches);
       }
     });
   }
