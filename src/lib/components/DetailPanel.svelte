@@ -101,7 +101,7 @@
         <div class="relative flex-shrink-0" style="width: 24px; height: 24px;">
           <EndpointIcon endpoint={ep} size={24} />
           <span class="absolute -bottom-0.5 -right-0.5">
-            <HealthDot health={ep.health} />
+            <HealthDot health={ep.health} stacked />
           </span>
         </div>
         <div class="min-w-0">

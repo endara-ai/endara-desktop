@@ -60,7 +60,7 @@
     {#each Object.entries($groupedEndpoints) as [health, eps]}
       {#if eps.length > 0}
         <div>
-          <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-(--fg3) px-2 pt-2 pb-1">
+          <div class="text-[10px] font-semibold uppercase tracking-[0.1em] text-(--fg3) px-2 pt-2 pb-1">
             {healthLabels[health] ?? health}
           </div>
           <div class="space-y-0.5">
