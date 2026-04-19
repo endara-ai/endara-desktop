@@ -247,11 +247,11 @@
     cursor: not-allowed;
   }
   .btn-danger {
-    border-color: rgba(250, 82, 82, 0.35);
+    border-color: color-mix(in oklab, var(--offline) 35%, transparent);
     color: var(--offline);
   }
   .btn-danger:hover:not(:disabled) {
-    background: rgba(250, 82, 82, 0.08);
+    background: color-mix(in oklab, var(--offline) 8%, transparent);
   }
   .btn-accent {
     padding: 6px 12px;

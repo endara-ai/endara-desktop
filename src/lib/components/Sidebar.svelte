@@ -74,7 +74,7 @@
   </div>
 
   <div class="border-t border-(--border) p-3 bg-(--side-bg)">
-    <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-(--fg3) mb-1.5">
+    <div class="text-[10px] font-semibold uppercase tracking-[0.1em] text-(--fg3) mb-1.5">
       Relay MCP URL
     </div>
     <div class="flex items-center gap-1.5">

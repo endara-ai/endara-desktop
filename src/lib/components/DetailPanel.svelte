@@ -257,11 +257,11 @@
     background: var(--hover-bg);
   }
   .btn-danger {
-    border-color: rgba(250, 82, 82, 0.35);
+    border-color: color-mix(in oklab, var(--offline) 35%, transparent);
     color: var(--offline);
   }
   .btn-danger:hover {
-    background: rgba(250, 82, 82, 0.08);
+    background: color-mix(in oklab, var(--offline) 8%, transparent);
   }
 
   /* Detail tabs */

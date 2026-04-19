@@ -556,7 +556,7 @@
                 <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--color-accent)/10 text-(--color-accent) font-medium">
                   {CATEGORY_LABELS[service.category] ?? service.category}
                 </span>
-                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium">
+                <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--hint-read-bg) text-(--hint-read-fg) font-medium">
                   OAuth
                 </span>
               </div>
@@ -575,7 +575,7 @@
                   {CATEGORY_LABELS[server.category] ?? server.category}
                 </span>
                 {#if server.envVars.some(e => e.required)}
-                  <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium">
+                  <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--trans-oauth-bg) text-(--trans-oauth-fg) font-medium">
                     API Key
                   </span>
                 {/if}
@@ -890,7 +890,7 @@
 
         <!-- DCR Fallback Form -->
         {#if showingDcrFallback}
-          <div class="border border-amber-500/30 rounded-lg p-4 bg-amber-500/5 space-y-3">
+          <div class="border rounded-lg p-4 space-y-3" style="border-color: color-mix(in oklab, var(--trans-oauth-fg) 30%, transparent); background: color-mix(in oklab, var(--trans-oauth-fg) 6%, transparent);">
             <div>
               <p class="text-sm text-(--color-text)">
                 <strong>{name}</strong> requires manual client registration.

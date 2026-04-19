@@ -146,7 +146,6 @@
     width: 100%;
     padding: 6px 10px;
     font-size: 13px;
-    line-height: 1.4;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--surface);
