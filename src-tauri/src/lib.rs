@@ -36,16 +36,44 @@ fn set_macos_activation_policy(regular: bool) {
     app.setActivationPolicy(policy);
 }
 
+/// Dev-mode data directory name (relative to home).
+const DEV_DATA_DIR_NAME: &str = ".endara-dev";
+
+/// Default relay port for dev mode.
+const DEV_RELAY_PORT: u16 = 9500;
+
+/// Default relay port for production.
+const DEFAULT_RELAY_PORT: u16 = 9400;
+
+/// Returns `true` when running in dev mode.
+///
+/// Dev mode is detected via `cfg!(debug_assertions)` (true during `cargo tauri dev`,
+/// false in release builds) **or** when the `ENDARA_DATA_DIR` env var is set.
+fn is_dev_mode() -> bool {
+    cfg!(debug_assertions) || std::env::var("ENDARA_DATA_DIR").is_ok()
+}
+
+/// Returns the base data directory: `~/.endara-dev` in dev mode, `~/.endara` in production.
+fn data_dir() -> Result<std::path::PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Could not determine home directory".to_string())?;
+    if is_dev_mode() {
+        Ok(home.join(DEV_DATA_DIR_NAME))
+    } else {
+        Ok(home.join(".endara"))
+    }
+}
+
 /// Check if a port is already in use by attempting a TCP connection.
 fn is_port_in_use(port: u16) -> bool {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_ok()
 }
 
-/// Read the relay port from ~/.endara/config.toml [relay] section.
+/// Read the relay port from config.toml [relay] section.
+/// Uses the dev or production data directory based on `is_dev_mode()`.
 /// Returns None if the file doesn't exist, can't be parsed, or has no port setting.
 fn read_port_from_config() -> Option<u16> {
-    let config_path = dirs::home_dir()?.join(".endara").join("config.toml");
+    let config_path = data_dir().ok()?.join("config.toml");
     let contents = std::fs::read_to_string(&config_path).ok()?;
     let parsed: toml::Table = contents.parse().ok()?;
     parsed
@@ -79,11 +107,28 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Return the path to `~/.endara/config.toml`.
+/// Return the path to config.toml in the appropriate data directory
+/// (`~/.endara-dev/config.toml` in dev mode, `~/.endara/config.toml` in production).
 fn config_path() -> Result<std::path::PathBuf, String> {
-    dirs::home_dir()
-        .map(|h| h.join(".endara").join("config.toml"))
-        .ok_or_else(|| "Could not determine home directory".to_string())
+    data_dir().map(|d| d.join("config.toml"))
+}
+
+/// Build the argument vector passed to the `endara-relay` sidecar.
+///
+/// In dev mode we pass `--data-dir` (letting the relay derive its config path and
+/// perform the first-run copy from production). In production we pass `--config`
+/// directly. Extracted as a pure helper so it is trivially unit-testable.
+fn build_sidecar_args<'a>(
+    dev: bool,
+    data_dir: &'a str,
+    config: &'a str,
+    port: &'a str,
+) -> Vec<&'a str> {
+    if dev {
+        vec!["start", "--data-dir", data_dir, "--port", port]
+    } else {
+        vec!["start", "--config", config, "--port", port]
+    }
 }
 
 /// Read and parse `~/.endara/config.toml`, returning `Err` if the file is missing or invalid.
@@ -142,6 +187,7 @@ pub struct RelayState {
     port: Arc<Mutex<u16>>,
     last_sidecar_status: Arc<Mutex<String>>,
     last_sidecar_error: Arc<Mutex<Option<String>>>,
+    log_buffer: Arc<Mutex<Vec<RelayLogPayload>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -230,16 +276,16 @@ async fn spawn_relay(
     port: u16,
 ) -> Result<tauri_plugin_shell::process::CommandChild, String> {
     let config_file = config_path()?;
+    let base_dir = data_dir()?;
 
     // Ensure log directory exists for relay file logging
-    if let Some(home) = dirs::home_dir() {
-        let log_dir = home.join(".endara").join("logs");
-        let _ = std::fs::create_dir_all(&log_dir);
-    }
+    let log_dir = base_dir.join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
 
+    let dev = is_dev_mode();
     eprintln!(
-        "[relay] attempting to spawn sidecar with config: {:?}, port: {}",
-        config_file, port
+        "[relay] attempting to spawn sidecar (dev={}) with config: {:?}, port: {}",
+        dev, config_file, port
     );
 
     // Pre-flight port conflict check
@@ -254,6 +300,15 @@ async fn spawn_relay(
     emit_sidecar_status(app, "starting", None).await;
 
     let port_str = port.to_string();
+    let config_lossy = config_file.to_string_lossy().to_string();
+    let data_dir_lossy = base_dir.to_string_lossy().to_string();
+
+    // Build sidecar args — in dev mode use --data-dir (without --config) so
+    // the relay derives its config path from data-dir and performs the
+    // first-run config copy from production. In production mode pass
+    // --config explicitly.
+    let sidecar_args = build_sidecar_args(dev, &data_dir_lossy, &config_lossy, &port_str);
+
     let (mut rx, child) = app
         .shell()
         .sidecar("endara-relay")
@@ -261,13 +316,7 @@ async fn spawn_relay(
             eprintln!("[relay] FAILED to create sidecar command: {e}");
             format!("Failed to create sidecar command: {e}")
         })?
-        .args([
-            "start",
-            "--config",
-            &config_file.to_string_lossy(),
-            "--port",
-            &port_str,
-        ])
+        .args(&sidecar_args)
         .spawn()
         .map_err(|e| {
             eprintln!("[relay] FAILED to spawn relay sidecar: {e}");
@@ -286,6 +335,17 @@ async fn spawn_relay(
                     // Detect successful startup from stdout
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
+                    }
+                    if let Some(state) = app_handle.try_state::<RelayState>() {
+                        let mut buf = state.log_buffer.lock().await;
+                        buf.push(RelayLogPayload {
+                            level: "info".to_string(),
+                            message: text.clone(),
+                        });
+                        let len = buf.len();
+                        if len > 5000 {
+                            buf.drain(..len - 5000);
+                        }
                     }
                     let _ = app_handle.emit(
                         "relay-log",
@@ -307,6 +367,17 @@ async fn spawn_relay(
                     // Detect successful startup from stderr (tracing outputs to stderr)
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
+                    }
+                    if let Some(state) = app_handle.try_state::<RelayState>() {
+                        let mut buf = state.log_buffer.lock().await;
+                        buf.push(RelayLogPayload {
+                            level: level.to_string(),
+                            message: text.clone(),
+                        });
+                        let len = buf.len();
+                        if len > 5000 {
+                            buf.drain(..len - 5000);
+                        }
                     }
                     let _ = app_handle.emit(
                         "relay-log",
@@ -461,6 +532,28 @@ async fn get_sidecar_status(
         status: state.last_sidecar_status.lock().await.clone(),
         error: state.last_sidecar_error.lock().await.clone(),
     })
+}
+
+#[tauri::command]
+async fn get_config_path_display() -> Result<String, String> {
+    let path = config_path()?;
+    if let Some(home) = dirs::home_dir() {
+        let path_str = path.to_string_lossy();
+        let home_str = home.to_string_lossy();
+        if path_str.starts_with(home_str.as_ref()) {
+            return Ok(format!("~{}", &path_str[home_str.len()..]));
+        }
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn get_buffered_relay_logs(
+    state: State<'_, RelayState>,
+) -> Result<Vec<RelayLogPayload>, String> {
+    let mut buf = state.log_buffer.lock().await;
+    let logs = buf.drain(..).collect();
+    Ok(logs)
 }
 
 #[tauri::command]
@@ -1046,13 +1139,19 @@ fn is_autostarted() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let default_port = if is_dev_mode() {
+        DEV_RELAY_PORT
+    } else {
+        DEFAULT_RELAY_PORT
+    };
     let relay_state = RelayState {
         child: Arc::new(Mutex::new(None)),
         pid: Arc::new(std::sync::Mutex::new(None)),
         running: Arc::new(Mutex::new(false)),
-        port: Arc::new(Mutex::new(read_port_from_config().unwrap_or(9400))),
+        port: Arc::new(Mutex::new(read_port_from_config().unwrap_or(default_port))),
         last_sidecar_status: Arc::new(Mutex::new("unknown".to_string())),
         last_sidecar_error: Arc::new(Mutex::new(None)),
+        log_buffer: Arc::new(Mutex::new(Vec::new())),
     };
 
     let child_handle = relay_state.child.clone();
@@ -1095,6 +1194,8 @@ pub fn run() {
             get_relay_port,
             set_relay_port,
             set_js_execution_mode,
+            get_config_path_display,
+            get_buffered_relay_logs,
             get_update_channel,
             set_update_channel,
             check_for_update,
@@ -1173,8 +1274,10 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let port = if let Some(state) = app_handle.try_state::<RelayState>() {
                     *state.port.lock().await
+                } else if is_dev_mode() {
+                    DEV_RELAY_PORT
                 } else {
-                    9400
+                    DEFAULT_RELAY_PORT
                 };
                 match spawn_relay(&app_handle, port).await {
                     Ok(child) => {
