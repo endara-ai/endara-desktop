@@ -37,3 +37,6 @@ objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSRunningAppl
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.184"
 
+[dev-dependencies]
+serial_test = "3.4.0"
+

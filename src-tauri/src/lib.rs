@@ -1357,3 +1357,96 @@ pub fn run() {
             }
         });
 }
+
+#[cfg(test)]
+mod dev_mode_tests {
+    use super::*;
+    use serial_test::serial;
+
+    /// RAII guard that snapshots and unsets `ENDARA_DATA_DIR` on construction
+    /// and restores the prior value on drop, so tests cannot leak env state
+    /// into each other even on panic. Tests using this guard must also carry
+    /// `#[serial_test::serial]` to prevent cross-thread interference.
+    struct EnvGuard {
+        prior: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self {
+            let prior = std::env::var("ENDARA_DATA_DIR").ok();
+            std::env::remove_var("ENDARA_DATA_DIR");
+            Self { prior }
+        }
+
+        fn set(&self, value: &str) {
+            std::env::set_var("ENDARA_DATA_DIR", value);
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(v) => std::env::set_var("ENDARA_DATA_DIR", v),
+                None => std::env::remove_var("ENDARA_DATA_DIR"),
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn is_dev_mode_respects_env_var() {
+        let guard = EnvGuard::new();
+        guard.set("/tmp/foo");
+        assert!(is_dev_mode(), "ENDARA_DATA_DIR set => dev mode");
+
+        // After unsetting, `is_dev_mode` still reports true under `cargo test`
+        // because `cfg!(debug_assertions)` is on in test builds. The env-var
+        // branch is therefore the only one we can flip deterministically.
+        std::env::remove_var("ENDARA_DATA_DIR");
+        assert!(is_dev_mode(), "debug_assertions keeps dev mode on in tests");
+    }
+
+    #[test]
+    #[serial]
+    fn data_dir_dev_vs_prod() {
+        let guard = EnvGuard::new();
+        guard.set("/tmp/foo");
+        let dir = data_dir().expect("data_dir should succeed with HOME set");
+        assert!(
+            dir.ends_with(DEV_DATA_DIR_NAME),
+            "dev data_dir should end with {DEV_DATA_DIR_NAME}, got {dir:?}"
+        );
+        // Prod-mode branch can't be covered here because `cfg!(debug_assertions)`
+        // forces `is_dev_mode()` to return true under `cargo test`.
+    }
+
+    #[test]
+    #[serial]
+    fn config_path_joins_data_dir() {
+        let _guard = EnvGuard::new();
+        let cfg = config_path().expect("config_path should succeed");
+        let base = data_dir().expect("data_dir should succeed");
+        assert_eq!(cfg, base.join("config.toml"));
+    }
+
+    #[test]
+    fn build_sidecar_args_dev_vs_prod() {
+        let dev = build_sidecar_args(true, "/tmp/dev", "/tmp/dev/config.toml", "9500");
+        assert_eq!(
+            dev,
+            vec!["start", "--data-dir", "/tmp/dev", "--port", "9500"]
+        );
+
+        let prod = build_sidecar_args(false, "/tmp/dev", "/tmp/prod/config.toml", "9400");
+        assert_eq!(
+            prod,
+            vec![
+                "start",
+                "--config",
+                "/tmp/prod/config.toml",
+                "--port",
+                "9400"
+            ]
+        );
+    }
+}
