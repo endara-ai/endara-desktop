@@ -25,7 +25,7 @@
   };
 
   const sizeClass = $derived(stacked ? 'w-2 h-2' : 'w-2.5 h-2.5');
-  const ringStyle = $derived(stacked ? 'box-shadow: 0 0 0 2px var(--ring-stroke);' : '');
+  const ringStyle = $derived(stacked ? 'border: 2px solid var(--ring-stroke); box-sizing: border-box;' : '');
 </script>
 
 {#if health === 'unknown'}

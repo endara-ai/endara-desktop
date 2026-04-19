@@ -24,7 +24,6 @@
   .ep-trans {
     letter-spacing: 0.08em;
     font-family: var(--font-mono);
-    line-height: 1;
   }
   .ep-trans-sm {
     font-size: 9px;

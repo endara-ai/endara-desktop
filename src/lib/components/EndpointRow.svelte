@@ -1,34 +1,11 @@
 <script lang="ts">
-  import type { Endpoint, OAuthStatusValue } from '$lib/types';
-  import { selectedEndpoint, oauthStatuses } from '$lib/stores';
+  import type { Endpoint } from '$lib/types';
+  import { selectedEndpoint } from '$lib/stores';
   import HealthDot from './HealthDot.svelte';
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
-  import FailedEndpointBadge from './FailedEndpointBadge.svelte';
 
   let { endpoint }: { endpoint: Endpoint } = $props();
-
-  const authLabels: Record<OAuthStatusValue, string> = {
-    authenticated: 'Authenticated',
-    refreshing: 'Refreshing token…',
-    auth_required: 'Authentication required',
-    needs_login: 'Login required',
-    disconnected: 'Disconnected',
-    connection_failed: 'Connection failed',
-  };
-
-  const authIcons: Record<OAuthStatusValue, string> = {
-    authenticated: '<svg class="inline-block w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 7V4.5a2.5 2.5 0 0 0-5 0V7"/><rect x="4" y="7" width="8" height="6.5" rx="1.5"/><circle cx="8" cy="10.5" r="1" fill="currentColor" stroke="none"/></svg>',
-    refreshing: '<svg class="inline-block w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8A5 5 0 1 1 8 3"/><path d="M13 3v5h-5"/></svg>',
-    auth_required: '<svg class="inline-block w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/><circle cx="8" cy="10.5" r="1" fill="currentColor" stroke="none"/></svg>',
-    needs_login: '<svg class="inline-block w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/><circle cx="8" cy="10.5" r="1" fill="currentColor" stroke="none"/></svg>',
-    disconnected: '<svg class="inline-block w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5.5v3.5"/><circle cx="8" cy="11.5" r="0.75" fill="currentColor" stroke="none"/><path d="M3 13.5L8 3l5 10.5H3z"/></svg>',
-    connection_failed: '<svg class="inline-block w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5.5v3.5"/><circle cx="8" cy="11.5" r="0.75" fill="currentColor" stroke="none"/><path d="M3 13.5L8 3l5 10.5H3z"/></svg>',
-  };
-
-  let oauthStatus = $derived(
-    endpoint.transport === 'oauth' ? $oauthStatuses.get(endpoint.name) : undefined
-  );
 
   // Extract error message from lifecycle if it's in Failed state
   let lifecycleError = $derived(
@@ -66,7 +43,6 @@
     <div class="flex items-center gap-1.5 mt-px">
       <TransportBadge transport={endpoint.transport} />
       {#if isFailed}
-        <FailedEndpointBadge error={errorMessage} />
         <span
           class="text-[11px] text-(--offline) truncate max-w-[120px]"
           style="font-family: var(--font-mono);"
@@ -78,9 +54,6 @@
         <span class="text-[11px] text-(--fg3)" style="font-family: var(--font-mono);">Disabled</span>
       {:else}
         <span class="text-[11px] text-(--fg3)" style="font-family: var(--font-mono);">{endpoint.tool_count} tools</span>
-      {/if}
-      {#if oauthStatus}
-        <span class="text-xs text-(--fg3)" title={authLabels[oauthStatus.status]}>{@html authIcons[oauthStatus.status]}</span>
       {/if}
     </div>
   </div>

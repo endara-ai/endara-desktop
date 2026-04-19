@@ -157,9 +157,6 @@
     box-sizing: border-box;
     transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
   }
-  .filter-input::placeholder {
-    color: var(--fg3);
-  }
   .filter-input:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-tint);

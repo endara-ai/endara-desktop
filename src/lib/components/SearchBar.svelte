@@ -30,7 +30,7 @@
     bind:this={inputEl}
     type="text"
     placeholder="Search… ⌘K"
-    class="w-full pl-7 pr-2.5 py-[5px] text-[13px] rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg3) focus:outline-none focus:border-(--accent) focus:shadow-[0_0_0_3px_var(--accent-tint)] transition-shadow"
+    class="w-full pl-7 pr-2.5 py-[5px] text-[13px] rounded-lg border border-(--border) bg-(--surface) text-(--fg1) focus:outline-none focus:border-(--accent) focus:shadow-[0_0_0_3px_var(--accent-tint)] transition-shadow"
     bind:value={$searchQuery}
     onkeydown={handleKeydown}
   />

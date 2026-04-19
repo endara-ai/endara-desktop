@@ -46,7 +46,7 @@
       <SearchBar bind:this={searchBar} />
     </div>
     <button
-      class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border border-(--border) hover:bg-(--hover-bg) transition-colors text-(--fg2) hover:text-(--fg1)"
+      class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-(--surface) border border-(--border) hover:bg-(--hover-bg) transition-colors text-(--fg2) hover:text-(--fg1)"
       onclick={() => showAddModal = true}
       title="Add server"
     >
