@@ -1,15 +1,18 @@
 <script lang="ts">
   import type { HealthStatus } from '$lib/types';
 
-  let { health }: { health: HealthStatus } = $props();
+  let {
+    health,
+    stacked = false,
+  }: { health: HealthStatus; stacked?: boolean } = $props();
 
   const colorMap: Record<HealthStatus, string> = {
-    healthy: 'bg-(--color-healthy)',
-    degraded: 'bg-(--color-degraded)',
-    offline: 'bg-(--color-offline)',
+    healthy: 'bg-(--healthy)',
+    degraded: 'bg-(--degraded)',
+    offline: 'bg-(--offline)',
     unknown: 'bg-gray-400',
-    error: 'bg-red-500',
-    failed: 'bg-red-500',
+    error: 'bg-(--offline)',
+    failed: 'bg-(--offline)',
   };
 
   const titleMap: Record<HealthStatus, string> = {
@@ -20,10 +23,13 @@
     error: 'Error',
     failed: 'Failed',
   };
+
+  const sizeClass = $derived(stacked ? 'w-2 h-2' : 'w-2.5 h-2.5');
+  const ringStyle = $derived(stacked ? 'box-shadow: 0 0 0 2px var(--ring-stroke);' : '');
 </script>
 
 {#if health === 'unknown'}
-  <span class="inline-block w-2.5 h-2.5" title={titleMap[health]}>
+  <span class="inline-block {sizeClass}" title={titleMap[health]}>
     <svg
       class="w-full h-full animate-spin text-gray-400"
       viewBox="0 0 16 16"
@@ -43,7 +49,8 @@
   </span>
 {:else}
   <span
-    class="inline-block w-2.5 h-2.5 rounded-full {colorMap[health]}"
+    class="inline-block {sizeClass} rounded-full {colorMap[health]}"
+    style={ringStyle}
     title={titleMap[health]}
   ></span>
 {/if}

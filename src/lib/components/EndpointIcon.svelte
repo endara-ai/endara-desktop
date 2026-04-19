@@ -13,7 +13,7 @@
 
 {#if iconResult.type === 'svg' || faviconFailed}
   <span
-    class="inline-flex items-center justify-center flex-shrink-0 text-(--color-text-secondary)"
+    class="inline-flex items-center justify-center flex-shrink-0 text-(--fg3)"
     style="width: {size}px; height: {size}px;"
   >
     {@html faviconFailed ? fallbackSvg : iconResult.type === 'svg' ? iconResult.svg : ''}

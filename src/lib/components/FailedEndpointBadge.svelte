@@ -3,7 +3,7 @@
 </script>
 
 <span
-  class="inline-flex items-center justify-center w-4 h-4 text-red-500"
+  class="inline-flex items-center justify-center w-4 h-4 text-(--offline)"
   title={error}
 >
   <svg

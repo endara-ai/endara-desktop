@@ -1,14 +1,40 @@
 <script lang="ts">
-  let { transport }: { transport: string } = $props();
+  let {
+    transport,
+    size = 'sm',
+  }: { transport: string; size?: 'sm' | 'md' } = $props();
 
-  const badgeColors: Record<string, string> = {
-    stdio: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
-    sse: 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300',
-    http: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300',
+  const colorMap: Record<string, string> = {
+    stdio: 'bg-(--trans-stdio-bg) text-(--trans-stdio-fg)',
+    sse: 'bg-(--trans-sse-bg) text-(--trans-sse-fg)',
+    http: 'bg-(--trans-http-bg) text-(--trans-http-fg)',
+    oauth: 'bg-(--trans-oauth-bg) text-(--trans-oauth-fg)',
   };
+
+  const colorClass = $derived(colorMap[transport] ?? 'bg-(--surface-alt) text-(--fg2)');
 </script>
 
-<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider {badgeColors[transport] ?? 'bg-gray-100 text-gray-600'}">
+<span
+  class="ep-trans ep-trans-{size} inline-flex items-center uppercase font-semibold {colorClass}"
+>
   {transport}
 </span>
+
+<style>
+  .ep-trans {
+    letter-spacing: 0.08em;
+    font-family: var(--font-mono);
+    line-height: 1;
+  }
+  .ep-trans-sm {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .ep-trans-md {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: var(--radius-xs);
+  }
+</style>
 

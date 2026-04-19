@@ -47,34 +47,40 @@
 </script>
 
 <button
-  class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left transition-colors
-    hover:bg-(--color-surface-hover)
-    {$selectedEndpoint === endpoint.name ? 'bg-(--color-surface-hover)' : ''}
+  class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left transition-colors
+    hover:bg-(--hover-bg)
+    {$selectedEndpoint === endpoint.name ? 'bg-(--hover-bg)' : ''}
     {endpoint.disabled ? 'opacity-50' : ''}"
   onclick={select}
 >
-  <div class="relative flex-shrink-0" style="width: 20px; height: 20px;">
+  <div class="relative flex-shrink-0 text-(--fg3)" style="width: 20px; height: 20px;">
     <EndpointIcon {endpoint} size={20} />
-    <span class="absolute -bottom-0.5 -right-0.5">
-      <HealthDot health={isFailed ? 'error' : endpoint.health} />
+    <span class="absolute" style="bottom: -1px; right: -1px;">
+      <HealthDot health={isFailed ? 'error' : endpoint.health} stacked={true} />
     </span>
   </div>
   <div class="flex-1 min-w-0">
-    <div class="text-sm font-medium truncate {isFailed ? 'text-red-500' : ''}">{endpoint.name}</div>
-    <div class="flex items-center gap-2 mt-0.5">
+    <div
+      class="text-[13px] font-medium truncate {isFailed ? 'text-(--offline)' : 'text-(--fg1)'}"
+    >{endpoint.name}</div>
+    <div class="flex items-center gap-1.5 mt-px">
       <TransportBadge transport={endpoint.transport} />
       {#if isFailed}
         <FailedEndpointBadge error={errorMessage} />
-        <span class="text-xs text-red-500 truncate max-w-[120px]" title={errorMessage}>
+        <span
+          class="text-[11px] text-(--offline) truncate max-w-[120px]"
+          style="font-family: var(--font-mono);"
+          title={errorMessage}
+        >
           {errorMessage}
         </span>
       {:else if endpoint.disabled}
-        <span class="text-xs text-(--color-text-secondary)">Disabled</span>
+        <span class="text-[11px] text-(--fg3)" style="font-family: var(--font-mono);">Disabled</span>
       {:else}
-        <span class="text-xs text-(--color-text-secondary)">{endpoint.tool_count} tools</span>
+        <span class="text-[11px] text-(--fg3)" style="font-family: var(--font-mono);">{endpoint.tool_count} tools</span>
       {/if}
       {#if oauthStatus}
-        <span class="text-xs" title={authLabels[oauthStatus.status]}>{@html authIcons[oauthStatus.status]}</span>
+        <span class="text-xs text-(--fg3)" title={authLabels[oauthStatus.status]}>{@html authIcons[oauthStatus.status]}</span>
       {/if}
     </div>
   </div>
