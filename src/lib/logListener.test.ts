@@ -24,6 +24,7 @@ describe('logListener', () => {
       expect(mockListen).toHaveBeenCalledWith('relay-health', expect.any(Function));
       expect(mockListen).toHaveBeenCalledWith('relay-sidecar-status', expect.any(Function));
       expect(invoke).toHaveBeenCalledWith('get_sidecar_status');
+      expect(invoke).toHaveBeenCalledWith('get_buffered_relay_logs');
     });
 
     it('only initializes once', async () => {
@@ -35,7 +36,9 @@ describe('logListener', () => {
       await initRelayLogListener(); // second call should be no-op
 
       expect(mockListen).toHaveBeenCalledTimes(3); // still 3, not 6
-      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(invoke).toHaveBeenCalledTimes(2);
+      expect(invoke).toHaveBeenCalledWith('get_buffered_relay_logs');
+      expect(invoke).toHaveBeenCalledWith('get_sidecar_status');
     });
 
     it('syncs the current sidecar status after listeners are ready', async () => {
