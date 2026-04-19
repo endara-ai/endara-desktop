@@ -26,25 +26,25 @@
 </script>
 
 <div class="h-full flex flex-col">
-  <div class="px-4 py-2 border-b border-(--color-border) flex items-center justify-between">
-    <span class="text-xs text-(--color-text-secondary)">{lines.length} lines</span>
+  <div class="px-4 py-2 border-b border-(--border) flex items-center justify-between bg-(--hd-bg)">
+    <span class="text-xs text-(--fg3)">{lines.length} lines</span>
   </div>
   <div
     bind:this={scrollContainer}
-    class="flex-1 overflow-y-auto p-4 font-mono text-xs leading-5 bg-(--color-surface-alt)"
+    class="flex-1 overflow-y-auto p-4 t-mono-log bg-(--surface-sunken)"
   >
     {#if loading}
       <div class="space-y-1">
         {#each [1, 2, 3, 4, 5] as _}
-          <div class="h-4 w-3/4 rounded bg-(--color-surface-hover) animate-pulse"></div>
+          <div class="h-4 w-3/4 rounded bg-(--surface-hover) animate-pulse"></div>
         {/each}
       </div>
     {:else}
       {#each lines as line, i}
-        <div class="hover:bg-(--color-surface-hover) px-1 rounded whitespace-pre-wrap break-all">{line}</div>
+        <div class="hover:bg-(--surface-hover) px-1 rounded whitespace-pre-wrap break-all">{line}</div>
       {/each}
       {#if lines.length === 0}
-        <div class="text-(--color-text-secondary) text-center py-6">No logs available</div>
+        <div class="text-(--fg3) text-center py-6">No logs available</div>
       {/if}
     {/if}
   </div>

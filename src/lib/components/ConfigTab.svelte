@@ -228,21 +228,21 @@
 </script>
 
 <div class="h-full flex flex-col">
-  <div class="px-4 py-2 border-b border-(--color-border)">
-    <span class="text-xs text-(--color-text-secondary)">Endpoint Configuration</span>
+  <div class="px-4 py-2 border-b border-(--border) bg-(--hd-bg)">
+    <span class="text-xs text-(--fg3)">Endpoint Configuration</span>
   </div>
   <div class="flex-1 overflow-y-auto p-4">
     {#if loading}
       <div class="space-y-3">
         {#each [1, 2, 3, 4] as _}
           <div class="space-y-1">
-            <div class="h-3 w-16 rounded bg-(--color-surface-hover) animate-pulse"></div>
-            <div class="h-8 w-full rounded bg-(--color-surface-hover) animate-pulse"></div>
+            <div class="h-3 w-16 rounded bg-(--surface-hover) animate-pulse"></div>
+            <div class="h-8 w-full rounded bg-(--surface-hover) animate-pulse"></div>
           </div>
         {/each}
       </div>
     {:else}
-      <div class="space-y-3 max-w-lg">
+      <div class="cfg-form space-y-3 max-w-lg">
         <!-- Transport selector -->
         <fieldset class="border-none p-0 m-0">
           <legend class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Transport</legend>
@@ -433,3 +433,32 @@
     {/if}
   </div>
 </div>
+
+
+<style>
+  /* Kit-styled inputs scoped to the endpoint configuration form. */
+  .cfg-form :global(input[type="text"]) {
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border-color: var(--border);
+    background: var(--surface);
+    color: var(--fg1);
+    transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
+  }
+  .cfg-form :global(input[type="text"]::placeholder) {
+    color: var(--fg3);
+  }
+  .cfg-form :global(input[type="text"]:focus) {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-tint);
+    outline: none;
+  }
+  /* Labels and legends */
+  .cfg-form :global(label),
+  .cfg-form :global(legend) {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg2);
+  }
+</style>

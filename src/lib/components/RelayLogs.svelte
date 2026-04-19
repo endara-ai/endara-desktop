@@ -41,9 +41,9 @@
 
   function levelColor(level: string): string {
     switch (level) {
-      case 'error': return 'text-red-400';
-      case 'warn': return 'text-yellow-400';
-      default: return 'text-(--color-text)';
+      case 'error': return 'text-(--offline)';
+      case 'warn': return 'text-(--degraded)';
+      default: return 'text-(--fg1)';
     }
   }
 
@@ -75,17 +75,17 @@
 </script>
 
 <div class="h-full flex flex-col">
-  <div class="px-4 py-2 border-b border-(--color-border) flex items-center justify-between">
-    <span class="text-xs text-(--color-text-secondary)">{$relayLogLines.length} lines</span>
-    <div class="flex items-center gap-2">
+  <div class="px-4 py-2 border-b border-(--border) flex items-center justify-between bg-(--hd-bg)">
+    <span class="text-xs text-(--fg3)">{$relayLogLines.length} lines</span>
+    <div class="flex items-center gap-1.5">
       {#if !autoScroll}
         <button
-          class="px-2.5 py-1 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+          class="btn-sec"
           onclick={goToEnd}
         >Go to end</button>
       {/if}
       <button
-        class="px-2.5 py-1 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+        class="btn-sec"
         onclick={clearLogs}
       >Clear</button>
     </div>
@@ -93,20 +93,39 @@
   <div
     bind:this={scrollContainer}
     onscroll={handleScroll}
-    class="flex-1 overflow-y-auto p-4 font-mono text-xs leading-5 bg-(--color-surface-alt)"
+    class="flex-1 overflow-y-auto p-4 t-mono-log bg-(--surface-sunken)"
   >
     {#if $relayLogLines.length === 0}
-      <div class="text-(--color-text-secondary) text-center py-6">
+      <div class="text-(--fg3) text-center py-6">
         No relay logs yet. Logs will appear here when the relay sidecar produces output.
       </div>
     {:else}
       {#each $relayLogLines as line, i}
-        <div class="hover:bg-(--color-surface-hover) px-1 rounded whitespace-pre-wrap break-all {levelColor(line.level)}">
-          <span class="text-(--color-text-secondary) select-none">{line.timestamp}</span>
+        <div class="hover:bg-(--surface-hover) px-1 rounded whitespace-pre-wrap break-all {levelColor(line.level)}">
+          <span class="text-(--fg3) select-none">{line.timestamp}</span>
           {' '}{line.message}
         </div>
       {/each}
     {/if}
   </div>
 </div>
+
+<style>
+  .btn-sec {
+    padding: 4px 10px;
+    font-size: 11px;
+    line-height: 1.4;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg1);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 150ms var(--ease), color 150ms var(--ease);
+  }
+  .btn-sec:hover {
+    background: var(--hover-bg);
+  }
+</style>
 
