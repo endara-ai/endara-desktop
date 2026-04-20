@@ -15,12 +15,12 @@
   import { get } from 'svelte/store';
 
   const dotColor = $derived(
-    ($relaySidecarStatus === 'running' && $relayConnected) ? 'bg-green-500'
-    : ($relaySidecarStatus === 'failed' && $relayConnected) ? 'bg-yellow-500'
-    : ($relaySidecarStatus === 'failed' && !$relayConnected) ? 'bg-red-500'
-    : ($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown') ? 'bg-gray-400'
-    : ($relaySidecarStatus === 'stopped') ? 'bg-red-500'
-    : 'bg-gray-400'
+    ($relaySidecarStatus === 'running' && $relayConnected) ? 'bg-(--healthy)'
+    : ($relaySidecarStatus === 'failed' && $relayConnected) ? 'bg-(--degraded)'
+    : ($relaySidecarStatus === 'failed' && !$relayConnected) ? 'bg-(--offline)'
+    : ($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown') ? 'bg-(--fg3)'
+    : ($relaySidecarStatus === 'stopped') ? 'bg-(--offline)'
+    : 'bg-(--fg3)'
   );
   const dotPulse = $derived($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown');
   const dotTitle = $derived(
@@ -149,15 +149,15 @@
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 {#if showRelayStartupFailure}
-  <div class="flex h-screen w-screen items-center justify-center bg-(--color-surface-alt) p-6">
-    <div class="w-full max-w-2xl rounded-2xl border border-red-500/20 bg-(--color-surface) p-8 shadow-sm">
+  <div class="flex h-screen w-screen items-center justify-center bg-(--surface-alt) p-6">
+    <div class="w-full max-w-2xl rounded-2xl border border-red-500/20 bg-(--surface) p-8 shadow-sm">
       <div class="mb-6 inline-flex items-center rounded-full bg-red-500/10 px-3 py-1 text-xs font-medium text-red-600 dark:text-red-400">
         Relay startup failed
       </div>
 
       <div class="space-y-3">
-        <h1 class="text-2xl font-semibold text-(--color-text)">Endara Desktop couldn&apos;t start the relay</h1>
-        <p class="text-sm text-(--color-text-secondary)">
+        <h1 class="text-2xl font-semibold text-(--fg1)">Endara Desktop couldn&apos;t start the relay</h1>
+        <p class="text-sm text-(--fg2)">
           The app can&apos;t connect to the relay on port {$relayPort}. Review the startup error below, check the logs, or update your settings and try again.
         </p>
       </div>
@@ -169,20 +169,20 @@
 
       <div class="mt-8 flex flex-wrap gap-3">
         <button
-          class="rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          class="rounded-lg bg-(--accent) px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           onclick={handleRetryRelay}
           disabled={retryingRelay}
         >
           {retryingRelay ? 'Retrying…' : 'Retry'}
         </button>
         <button
-          class="rounded-lg border border-(--color-border) px-4 py-2 text-sm font-medium text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
+          class="rounded-lg border border-(--border) px-4 py-2 text-sm font-medium text-(--fg1) transition-colors hover:bg-(--surface-hover)"
           onclick={openRelayLogs}
         >
           View Logs
         </button>
         <button
-          class="rounded-lg border border-(--color-border) px-4 py-2 text-sm font-medium text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
+          class="rounded-lg border border-(--border) px-4 py-2 text-sm font-medium text-(--fg1) transition-colors hover:bg-(--surface-hover)"
           onclick={openSettings}
         >
           Open Settings
@@ -195,14 +195,14 @@
 {:else}
   <div class="flex flex-col h-screen w-screen overflow-hidden">
     <!-- Top-level tab bar -->
-    <div class="flex items-center border-b border-(--color-border) bg-(--color-surface-alt) px-2 pt-1 shrink-0 relative" data-tauri-drag-region>
+    <div class="flex items-center border-b border-(--border) bg-(--chrome-bg) px-2 pt-1 shrink-0 relative" data-tauri-drag-region>
       <div class="flex">
         {#each topLevelTabs as tab}
           <button
-            class="px-4 py-2 text-sm font-medium transition-colors rounded-t-lg -mb-px
+            class="px-[14px] py-1.5 text-[13px] font-medium transition-colors rounded-t-lg -mb-px border-b-2
               {$activeTopLevelTab === tab.id
-                ? 'border-b-2 border-(--color-accent) text-(--color-accent) bg-(--color-surface)'
-                : 'text-(--color-text-secondary) hover:text-(--color-text) hover:bg-(--color-surface-hover)'}"
+                ? 'border-(--accent) text-(--accent) bg-(--win-bg)'
+                : 'border-transparent text-(--fg3) hover:text-(--fg1) hover:bg-(--hover-bg)'}"
             onclick={() => activeTopLevelTab.set(tab.id)}
           >
             {tab.label}
@@ -210,15 +210,15 @@
         {/each}
       </div>
 
-      <!-- Relay status dot -->
+      <!-- Relay status pill -->
       <button
-        class="ml-auto flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-(--color-surface-hover) transition-colors"
+        class="ml-auto flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-(--fg3) hover:bg-(--hover-bg) transition-colors"
         title={dotTitle}
         onclick={() => activeTopLevelTab.set('settings')}
       >
-        <span class="text-xs text-(--color-text-secondary)">Relay</span>
+        <span>Relay</span>
         <span
-          class="w-2.5 h-2.5 rounded-full {dotColor}"
+          class="w-2 h-2 rounded-full {dotColor}"
           class:animate-pulse={dotPulse}
         ></span>
       </button>

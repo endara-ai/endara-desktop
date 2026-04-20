@@ -13,12 +13,12 @@
   let actionInProgress = $state(false);
 
   const statusColors: Record<OAuthStatusValue, string> = {
-    authenticated: 'bg-green-500',
-    needs_login: 'bg-yellow-500',
-    refreshing: 'bg-blue-500',
-    auth_required: 'bg-orange-500',
-    disconnected: 'bg-gray-400',
-    connection_failed: 'bg-red-500',
+    authenticated: 'bg-(--healthy)',
+    needs_login: 'bg-(--degraded)',
+    refreshing: 'bg-(--accent)',
+    auth_required: 'bg-(--degraded)',
+    disconnected: 'bg-(--fg3)',
+    connection_failed: 'bg-(--offline)',
   };
 
   const statusLabels: Record<OAuthStatusValue, string> = {
@@ -134,55 +134,55 @@
   {#if loading}
     <div class="space-y-3">
       {#each [1, 2, 3] as _}
-        <div class="h-12 rounded-lg bg-(--color-surface-hover) animate-pulse"></div>
+        <div class="h-12 rounded-lg bg-(--surface-hover) animate-pulse"></div>
       {/each}
     </div>
   {:else if error}
-    <div class="text-sm text-(--color-offline)">{error}</div>
+    <div class="text-sm text-(--offline)">{error}</div>
   {:else if status}
     <!-- Status -->
-    <div class="p-4 rounded-lg border border-(--color-border)">
-      <div class="text-xs font-medium text-(--color-text-secondary) mb-2">Status</div>
+    <div class="p-4 rounded-lg border border-(--border) bg-(--surface)">
+      <div class="text-xs font-medium text-(--fg2) mb-2">Status</div>
       <div class="flex items-center gap-2">
         <span class="inline-block w-2.5 h-2.5 rounded-full {statusColors[status.status]}"></span>
-        <span class="text-sm font-medium">{statusLabels[status.status]}</span>
+        <span class="t-body font-medium text-(--fg1)">{statusLabels[status.status]}</span>
       </div>
     </div>
 
     <!-- Token Details -->
-    <div class="p-4 rounded-lg border border-(--color-border) space-y-3">
-      <div class="text-xs font-medium text-(--color-text-secondary) mb-1">Token Details</div>
+    <div class="p-4 rounded-lg border border-(--border) bg-(--surface) space-y-3">
+      <div class="text-xs font-medium text-(--fg2) mb-1">Token Details</div>
       <div class="grid grid-cols-2 gap-3 text-sm">
         <div>
-          <div class="text-xs text-(--color-text-secondary)">Access Token</div>
-          <div class="font-medium">{status.has_access_token ? '✓ Present' : '✗ None'}</div>
+          <div class="text-xs text-(--fg3)">Access Token</div>
+          <div class="font-medium text-(--fg1)">{status.has_access_token ? '✓ Present' : '✗ None'}</div>
         </div>
         <div>
-          <div class="text-xs text-(--color-text-secondary)">Refresh Token</div>
-          <div class="font-medium">{status.has_refresh_token ? '✓ Present' : '✗ None'}</div>
+          <div class="text-xs text-(--fg3)">Refresh Token</div>
+          <div class="font-medium text-(--fg1)">{status.has_refresh_token ? '✓ Present' : '✗ None'}</div>
         </div>
       </div>
     </div>
 
     <!-- Timing -->
-    <div class="p-4 rounded-lg border border-(--color-border) space-y-3">
-      <div class="text-xs font-medium text-(--color-text-secondary) mb-1">Timing</div>
+    <div class="p-4 rounded-lg border border-(--border) bg-(--surface) space-y-3">
+      <div class="text-xs font-medium text-(--fg2) mb-1">Timing</div>
       <div class="grid grid-cols-2 gap-3 text-sm">
         <div>
-          <div class="text-xs text-(--color-text-secondary)">Expires In</div>
-          <div class="font-medium">{formatCountdown(status.expires_in_seconds)}</div>
+          <div class="text-xs text-(--fg3)">Expires In</div>
+          <div class="font-medium text-(--fg1)">{formatCountdown(status.expires_in_seconds)}</div>
         </div>
         <div>
-          <div class="text-xs text-(--color-text-secondary)">Expires At</div>
-          <div class="font-medium">{formatTime(status.expires_at)}</div>
+          <div class="text-xs text-(--fg3)">Expires At</div>
+          <div class="font-medium text-(--fg1)">{formatTime(status.expires_at)}</div>
         </div>
         <div>
-          <div class="text-xs text-(--color-text-secondary)">Last Refreshed</div>
-          <div class="font-medium">{formatTime(status.last_refreshed_at)}</div>
+          <div class="text-xs text-(--fg3)">Last Refreshed</div>
+          <div class="font-medium text-(--fg1)">{formatTime(status.last_refreshed_at)}</div>
         </div>
         <div>
-          <div class="text-xs text-(--color-text-secondary)">Next Refresh</div>
-          <div class="font-medium">{status.has_refresh_token ? formatTime(status.next_refresh_at) : '—'}</div>
+          <div class="text-xs text-(--fg3)">Next Refresh</div>
+          <div class="font-medium text-(--fg1)">{status.has_refresh_token ? formatTime(status.next_refresh_at) : '—'}</div>
         </div>
       </div>
     </div>
@@ -191,21 +191,21 @@
     <div class="flex gap-2">
       {#if canRefresh}
         <button
-          class="px-3 py-1.5 text-sm rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors disabled:opacity-50"
+          class="btn-sec"
           onclick={handleRefresh}
           disabled={actionInProgress}
         >Refresh Now</button>
       {/if}
       {#if canReconnect}
         <button
-          class="px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
+          class="btn-accent"
           onclick={handleReconnect}
           disabled={actionInProgress}
         >Reconnect</button>
       {/if}
       {#if canDisconnect}
         <button
-          class="px-3 py-1.5 text-sm rounded-lg border border-(--color-offline)/30 text-(--color-offline) hover:bg-(--color-offline)/10 transition-colors disabled:opacity-50"
+          class="btn-sec btn-danger"
           onclick={() => showDisconnectConfirm = true}
           disabled={actionInProgress}
         >Disconnect</button>
@@ -224,3 +224,54 @@
   {/if}
 </div>
 
+
+<style>
+  .btn-sec {
+    padding: 6px 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg1);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 150ms var(--ease), color 150ms var(--ease);
+  }
+  .btn-sec:hover:not(:disabled) {
+    background: var(--hover-bg);
+  }
+  .btn-sec:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-danger {
+    border-color: color-mix(in oklab, var(--offline) 35%, transparent);
+    color: var(--offline);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--offline) 8%, transparent);
+  }
+  .btn-accent {
+    padding: 6px 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    font-weight: 500;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-fg, #fff);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 150ms var(--ease);
+  }
+  .btn-accent:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  .btn-accent:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+</style>

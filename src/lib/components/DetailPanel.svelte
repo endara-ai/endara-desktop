@@ -93,69 +93,59 @@
   }
 </script>
 
-<div class="flex-1 h-full flex flex-col bg-(--color-surface) min-w-0">
+<div class="flex-1 h-full flex flex-col bg-(--surface) min-w-0">
   {#if $selectedEndpointData}
     {@const ep = $selectedEndpointData}
-    <div class="px-5 py-3 border-b border-(--color-border) flex items-center justify-between">
-      <div class="flex items-center gap-3">
+    <div class="dhdr flex items-center justify-between">
+      <div class="flex items-center gap-3 min-w-0">
         <div class="relative flex-shrink-0" style="width: 24px; height: 24px;">
           <EndpointIcon endpoint={ep} size={24} />
           <span class="absolute -bottom-0.5 -right-0.5">
-            <HealthDot health={ep.health} />
+            <HealthDot health={ep.health} stacked />
           </span>
         </div>
-        <div>
-          <h2 class="text-base font-semibold">{ep.name}</h2>
+        <div class="min-w-0">
+          <h2 class="dhdr-name truncate">{ep.name}</h2>
           <div class="flex items-center gap-2 mt-0.5">
             <TransportBadge transport={ep.transport} />
-            <span class="text-xs text-(--color-text-secondary)">{ep.tool_count} tools</span>
+            <span class="text-[11px] text-(--fg3)">{ep.tool_count} tools</span>
           </div>
         </div>
       </div>
-      <div class="flex items-center gap-2">
-        <div class="flex items-center gap-2">
-          <button
-            class="relative w-10 h-5 rounded-full transition-colors {ep.disabled ? 'bg-gray-300 dark:bg-gray-600' : 'bg-green-500'} {toggling ? 'opacity-50' : ''}"
-            onclick={handleToggle}
-            disabled={toggling}
-            title={ep.disabled ? 'Enable server' : 'Disable server'}
-          >
-            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {ep.disabled ? '' : 'translate-x-5'}"></span>
-          </button>
-        </div>
+      <div class="flex items-center gap-1.5 flex-shrink-0">
         <button
-          class="px-2.5 py-1 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
-          onclick={handleRefresh}
-        >Refresh</button>
+          class="tgl {ep.disabled ? 'tgl-off' : ''} {toggling ? 'opacity-50' : ''}"
+          onclick={handleToggle}
+          disabled={toggling}
+          title={ep.disabled ? 'Enable server' : 'Disable server'}
+          aria-label={ep.disabled ? 'Enable server' : 'Disable server'}
+        ><span></span></button>
+        <button class="btn-sec" onclick={handleRefresh}>Refresh</button>
         <button
-          class="px-2.5 py-1 text-xs rounded-lg border border-(--color-offline)/30 text-(--color-offline) hover:bg-(--color-offline)/10 transition-colors"
+          class="btn-sec btn-danger"
           onclick={() => showRestartConfirm = true}
           title={ep.transport === 'stdio' ? 'Kill and restart the server process' : ep.transport === 'sse' ? 'Reconnect the SSE event stream' : ep.transport === 'http' ? 'Re-run the MCP handshake' : 'Reload tokens and reconnect'}
         >{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'}</button>
-        <button
-          class="px-2.5 py-1 text-xs rounded-lg border border-(--color-offline)/30 text-(--color-offline) hover:bg-(--color-offline)/10 transition-colors"
-          onclick={() => showDeleteConfirm = true}
-        >Delete</button>
+        <button class="btn-sec btn-danger" onclick={() => showDeleteConfirm = true}>Delete</button>
       </div>
     </div>
 
     {#if ep.error}
-      <div class="px-5 py-3 bg-red-50 dark:bg-red-950 border-b border-red-200 dark:border-red-800">
+      <div class="px-5 py-3 border-b" style="background: color-mix(in oklab, var(--offline) 12%, transparent); border-bottom-color: color-mix(in oklab, var(--offline) 30%, transparent);">
         <div class="flex items-start gap-2">
-          <span class="text-red-500 flex-shrink-0">⚠</span>
+          <span class="flex-shrink-0 text-(--offline)">⚠</span>
           <div>
-            <div class="text-sm font-medium text-red-700 dark:text-red-300">Initialization Error</div>
-            <div class="text-xs text-red-600 dark:text-red-400 mt-0.5 whitespace-pre-wrap break-all max-h-[5lh] overflow-y-auto">{ep.error}</div>
+            <div class="text-sm font-medium text-(--offline)">Initialization Error</div>
+            <div class="text-xs text-(--offline) mt-0.5 whitespace-pre-wrap break-all max-h-[5lh] overflow-y-auto opacity-90">{ep.error}</div>
           </div>
         </div>
       </div>
     {/if}
 
-    <div class="flex border-b border-(--color-border)">
+    <div class="dtabs">
       {#each tabs as tab}
         <button
-          class="px-4 py-2 text-sm font-medium transition-colors border-b-2
-            {$activeTab === tab.id ? 'border-(--color-accent) text-(--color-accent)' : 'border-transparent text-(--color-text-secondary) hover:text-(--color-text)'}"
+          class="dtab {$activeTab === tab.id ? 'active' : ''}"
           onclick={() => activeTab.set(tab.id)}
         >{tab.label}</button>
       {/each}
@@ -193,12 +183,111 @@
       />
     {/if}
   {:else}
-    <div class="flex-1 flex items-center justify-center text-(--color-text-secondary)">
+    <div class="flex-1 flex items-center justify-center text-(--fg3)">
       <div class="text-center">
-        <div class="text-4xl mb-3 text-(--color-text-secondary)"><svg class="inline-block w-10 h-10" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2L5 11h5l-1.5 7L15 9h-5l1.5-7z"/></svg></div>
+        <div class="text-4xl mb-3 text-(--fg3)"><svg class="inline-block w-10 h-10" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2L5 11h5l-1.5 7L15 9h-5l1.5-7z"/></svg></div>
         <div class="text-sm">Select an endpoint to view details</div>
       </div>
     </div>
   {/if}
 </div>
 
+<style>
+  .dhdr {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--hd-bg);
+  }
+  .dhdr-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg1);
+    line-height: 1.2;
+  }
+
+  /* Toggle pill (36x20) */
+  .tgl {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--healthy);
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: background-color 150ms var(--ease);
+  }
+  .tgl.tgl-off {
+    background: var(--toggle-off);
+  }
+  .tgl > span {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: #fff;
+    box-shadow: 0 1px 2px var(--scrim);
+    transition: transform 150ms var(--ease);
+  }
+  .tgl:not(.tgl-off) > span {
+    transform: translateX(16px);
+  }
+  .tgl:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Secondary button */
+  .btn-sec {
+    padding: 4px 10px;
+    font-size: 11px;
+    line-height: 1.4;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg1);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 150ms var(--ease), color 150ms var(--ease);
+  }
+  .btn-sec:hover {
+    background: var(--hover-bg);
+  }
+  .btn-danger {
+    border-color: color-mix(in oklab, var(--offline) 35%, transparent);
+    color: var(--offline);
+  }
+  .btn-danger:hover {
+    background: color-mix(in oklab, var(--offline) 8%, transparent);
+  }
+
+  /* Detail tabs */
+  .dtabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--hd-bg);
+  }
+  .dtab {
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg3);
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    cursor: pointer;
+    font-family: inherit;
+    margin-bottom: -1px;
+    transition: color 150ms var(--ease), border-color 150ms var(--ease);
+  }
+  .dtab:hover {
+    color: var(--fg1);
+  }
+  .dtab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+</style>

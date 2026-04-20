@@ -12,6 +12,7 @@
   let portSaved = $state(false);
   let portError = $state<string | null>(null);
   let autoStartEnabled = $state(false);
+  let configFilePath = $state('~/.endara/config.toml');
 
   async function savePort() {
     const port = Math.floor(portInput);
@@ -33,7 +34,7 @@
   const connectionItems = $derived([
     { label: 'MCP Endpoint', value: `http://localhost:${$relayPort}/mcp` },
     { label: 'SSE Endpoint', value: `http://localhost:${$relayPort}/mcp/sse` },
-    { label: 'Config File', value: '~/.endara/config.toml' },
+    { label: 'Config File', value: configFilePath },
   ]);
 
   let copiedIndex: number | null = $state(null);
@@ -179,6 +180,9 @@
     fetchJsExecutionMode();
     fetchAutoStart();
     fetchUpdateChannel();
+    invoke('get_config_path_display').then((p: unknown) => {
+      if (typeof p === 'string') configFilePath = p;
+    }).catch(() => {});
     statusPollInterval = setInterval(fetchRelayStatus, 5000);
   });
 
@@ -224,7 +228,7 @@
     <h2 class="text-lg font-semibold">Settings</h2>
 
     <!-- Relay Status -->
-    <div class="rounded-lg border border-(--color-border) p-4">
+    <div class="rounded-lg border border-(--border) p-4">
       <div class="flex items-center gap-2 mb-3">
         <span
           class="w-2.5 h-2.5 rounded-full {statusDotColor}"
@@ -238,9 +242,9 @@
 
       {#if isGreen && relayStatus}
         <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          <span class="text-(--color-text-secondary)">Uptime</span>
+          <span class="text-(--fg2)">Uptime</span>
           <span>{formatUptime(relayStatus.uptime_seconds)}</span>
-          <span class="text-(--color-text-secondary)">Endpoints</span>
+          <span class="text-(--fg2)">Endpoints</span>
           <span>{relayStatus.endpoint_count} ({relayStatus.healthy_count} healthy)</span>
         </div>
       {/if}
@@ -255,7 +259,7 @@
       {/if}
 
       {#if isRed}
-        <p class="text-xs text-(--color-text-secondary) mt-1">
+        <p class="text-xs text-(--fg2) mt-1">
           {$relaySidecarStatus === 'stopped'
             ? 'Relay is stopped. Click Retry to start it again.'
             : `Relay failed to start on port ${$relayPort}. Check Logs for details.`}
@@ -268,7 +272,7 @@
       {/if}
 
       {#if isStarting}
-        <p class="text-xs text-(--color-text-secondary) mt-1">
+        <p class="text-xs text-(--fg2) mt-1">
           Relay starting...
         </p>
       {/if}
@@ -276,7 +280,7 @@
       {#if showRetryRelayButton}
         <div class="mt-3">
           <button
-            class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            class="px-3 py-1.5 text-xs rounded-lg bg-(--accent) text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             onclick={handleRetryRelay}
             disabled={retryingRelay}
           >
@@ -292,7 +296,7 @@
         {#each ['light', 'dark', 'system'] as t}
           <button
             class="px-3 py-1.5 text-sm rounded-lg border transition-colors
-              {$theme === t ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)' : 'border-(--color-border) hover:bg-(--color-surface-hover)'}"
+              {$theme === t ? 'border-(--accent) bg-(--accent)/10 text-(--accent)' : 'border-(--border) hover:bg-(--surface-hover)'}"
             onclick={() => setTheme(t as Theme)}
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
@@ -304,8 +308,8 @@
     <div class="flex items-start justify-between gap-4">
       <div>
         <div class="text-sm font-medium">JS Execution Mode</div>
-        <div class="text-xs text-(--color-text-secondary) mt-0.5">When enabled, only three meta-tools are exposed to AI clients: list_tools, search_tools, and execute_tools. The AI writes JavaScript to discover and call tools dynamically, reducing context window usage.</div>
-        <div class="text-xs text-(--color-text-secondary)/70 mt-1">When disabled, all tools from all endpoints are listed individually in the MCP catalog.</div>
+        <div class="text-xs text-(--fg2) mt-0.5">When enabled, only three meta-tools are exposed to AI clients: list_tools, search_tools, and execute_tools. The AI writes JavaScript to discover and call tools dynamically, reducing context window usage.</div>
+        <div class="text-xs text-(--fg2)/70 mt-1">When disabled, all tools from all endpoints are listed individually in the MCP catalog.</div>
       </div>
       <button
         class="shrink-0 relative w-10 h-5 rounded-full transition-colors {$jsExecutionMode ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
@@ -321,7 +325,7 @@
     <div class="flex items-start justify-between gap-4">
       <div>
         <div class="text-sm font-medium">Start on Login</div>
-        <div class="text-xs text-(--color-text-secondary) mt-0.5">Automatically start Endara Desktop when you log in to your computer.</div>
+        <div class="text-xs text-(--fg2) mt-0.5">Automatically start Endara Desktop when you log in to your computer.</div>
       </div>
       <button
         class="shrink-0 relative w-10 h-5 rounded-full transition-colors {autoStartEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
@@ -334,11 +338,11 @@
       </button>
     </div>
 
-    <div class="pt-4 mt-4 border-t border-(--color-border)">
-      <div class="text-xs font-medium text-(--color-text-secondary) uppercase tracking-wide mb-2">Connection Info</div>
+    <div class="pt-4 mt-4 border-t border-(--border)">
+      <div class="text-xs font-medium text-(--fg2) uppercase tracking-wide mb-2">Connection Info</div>
       <div class="space-y-3 mb-3">
         <div>
-          <label for="relay-port" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Relay Port</label>
+          <label for="relay-port" class="block text-xs font-medium mb-1 text-(--fg2)">Relay Port</label>
           <div class="flex items-center gap-2">
             <input
               id="relay-port"
@@ -346,10 +350,10 @@
               min="1"
               max="65535"
               bind:value={portInput}
-              class="w-28 text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) focus:outline-none focus:border-(--color-accent)"
+              class="w-28 text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) focus:outline-none focus:border-(--accent)"
             />
             <button
-              class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+              class="px-3 py-1.5 text-xs rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
               onclick={savePort}
             >
               {portSaved ? '✓ Saved' : 'Save'}
@@ -358,7 +362,7 @@
           {#if portError}
             <p class="text-xs text-red-600 dark:text-red-400 mt-1">{portError}</p>
           {:else}
-            <p class="text-xs text-(--color-text-secondary)/70 mt-1">Restart the app to apply port changes.</p>
+            <p class="text-xs text-(--fg2)/70 mt-1">Restart the app to apply port changes.</p>
           {/if}
         </div>
       </div>
@@ -366,11 +370,11 @@
         {#each connectionItems as item, i}
           <div class="flex items-center justify-between gap-2 group">
             <div class="min-w-0">
-              <span class="text-xs text-(--color-text-secondary)">{item.label}</span>
+              <span class="text-xs text-(--fg2)">{item.label}</span>
               <span class="text-xs font-mono ml-2 select-all">{item.value}</span>
             </div>
             <button
-              class="shrink-0 p-1 rounded text-(--color-text-secondary) hover:text-(--color-text) hover:bg-(--color-surface-hover) opacity-0 group-hover:opacity-100 transition-opacity"
+              class="shrink-0 p-1 rounded text-(--fg2) hover:text-(--fg1) hover:bg-(--surface-hover) opacity-0 group-hover:opacity-100 transition-opacity"
               title="Copy to clipboard"
               onclick={() => copyToClipboard(item.value, i)}
             >
@@ -386,22 +390,22 @@
     </div>
 
     {#if buildInfo}
-      <div class="pt-4 mt-4 border-t border-(--color-border)">
-        <div class="text-xs font-medium text-(--color-text-secondary) uppercase tracking-wide mb-2">About</div>
+      <div class="pt-4 mt-4 border-t border-(--border)">
+        <div class="text-xs font-medium text-(--fg2) uppercase tracking-wide mb-2">About</div>
         <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          <span class="text-(--color-text-secondary)">Version</span>
+          <span class="text-(--fg2)">Version</span>
           <span>{buildInfo.version}</span>
-          <span class="text-(--color-text-secondary)">Build Date</span>
+          <span class="text-(--fg2)">Build Date</span>
           <span>{buildInfo.build_date}</span>
-          <span class="text-(--color-text-secondary)">Desktop</span>
+          <span class="text-(--fg2)">Desktop</span>
           <span class="font-mono text-[0.6875rem]">{buildInfo.desktop_commit}</span>
         </div>
       </div>
     {/if}
 
     <!-- Updates -->
-    <div class="pt-4 mt-4 border-t border-(--color-border)">
-      <div class="text-xs font-medium text-(--color-text-secondary) uppercase tracking-wide mb-2">Updates</div>
+    <div class="pt-4 mt-4 border-t border-(--border)">
+      <div class="text-xs font-medium text-(--fg2) uppercase tracking-wide mb-2">Updates</div>
 
       <!-- Update Channel Selector -->
       <fieldset class="border-none p-0 mb-4">
@@ -409,7 +413,7 @@
         <div class="flex gap-2">
           <button
             class="flex-1 px-3 py-2 text-xs rounded-lg border transition-colors
-              {selectedChannel === 'stable' ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)' : 'border-(--color-border) hover:bg-(--color-surface-hover)'}"
+              {selectedChannel === 'stable' ? 'border-(--accent) bg-(--accent)/10 text-(--accent)' : 'border-(--border) hover:bg-(--surface-hover)'}"
             onclick={() => handleChannelChange('stable')}
             disabled={channelChanging}
           >
@@ -418,7 +422,7 @@
           </button>
           <button
             class="flex-1 px-3 py-2 text-xs rounded-lg border transition-colors
-              {selectedChannel === 'beta' ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)' : 'border-(--color-border) hover:bg-(--color-surface-hover)'}"
+              {selectedChannel === 'beta' ? 'border-(--accent) bg-(--accent)/10 text-(--accent)' : 'border-(--border) hover:bg-(--surface-hover)'}"
             onclick={() => handleChannelChange('beta')}
             disabled={channelChanging}
           >
@@ -430,13 +434,13 @@
 
       {#if $updateStatus === 'idle'}
         <button
-          class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+          class="px-3 py-1.5 text-xs rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
           onclick={() => checkAndAutoDownload()}
         >
           Check for Updates
         </button>
       {:else if $updateStatus === 'checking'}
-        <div class="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+        <div class="flex items-center gap-2 text-xs text-(--fg2)">
           <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -444,7 +448,7 @@
           Checking for updates...
         </div>
       {:else if $updateStatus === 'available' || $updateStatus === 'downloading'}
-        <div class="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+        <div class="flex items-center gap-2 text-xs text-(--fg2)">
           <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -465,7 +469,7 @@
             {/if}
           </p>
           <button
-            class="px-3 py-1.5 text-xs rounded-lg bg-(--color-accent) text-white hover:opacity-90 transition-opacity"
+            class="px-3 py-1.5 text-xs rounded-lg bg-(--accent) text-white hover:opacity-90 transition-opacity"
             onclick={() => restartApp()}
           >
             Restart Now
@@ -477,7 +481,7 @@
         <div class="space-y-2">
           <p class="text-xs text-red-600 dark:text-red-400">Update check failed: {$updateError}</p>
           <button
-            class="px-3 py-1.5 text-xs rounded-lg border border-(--color-border) hover:bg-(--color-surface-hover) transition-colors"
+            class="px-3 py-1.5 text-xs rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
             onclick={() => checkAndAutoDownload()}
           >
             Retry
@@ -486,7 +490,7 @@
       {/if}
 
       {#if $lastCheckedChannel}
-        <p class="text-[0.65rem] text-(--color-text-secondary)/70 mt-2">
+        <p class="text-[0.65rem] text-(--fg2)/70 mt-2">
           Checked {$lastCheckedChannel} channel
         </p>
       {/if}

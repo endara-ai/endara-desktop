@@ -228,31 +228,31 @@
 </script>
 
 <div class="h-full flex flex-col">
-  <div class="px-4 py-2 border-b border-(--color-border)">
-    <span class="text-xs text-(--color-text-secondary)">Endpoint Configuration</span>
+  <div class="px-4 py-2 border-b border-(--border) bg-(--hd-bg)">
+    <span class="text-xs text-(--fg3)">Endpoint Configuration</span>
   </div>
   <div class="flex-1 overflow-y-auto p-4">
     {#if loading}
       <div class="space-y-3">
         {#each [1, 2, 3, 4] as _}
           <div class="space-y-1">
-            <div class="h-3 w-16 rounded bg-(--color-surface-hover) animate-pulse"></div>
-            <div class="h-8 w-full rounded bg-(--color-surface-hover) animate-pulse"></div>
+            <div class="h-3 w-16 rounded bg-(--surface-hover) animate-pulse"></div>
+            <div class="h-8 w-full rounded bg-(--surface-hover) animate-pulse"></div>
           </div>
         {/each}
       </div>
     {:else}
-      <div class="space-y-3 max-w-lg">
+      <div class="cfg-form space-y-3 max-w-lg">
         <!-- Transport selector -->
         <fieldset class="border-none p-0 m-0">
-          <legend class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Transport</legend>
+          <legend class="block text-xs font-medium mb-1 text-(--fg2)">Transport</legend>
           <div class="flex gap-2">
             {#each ['stdio', 'sse', 'http', 'oauth'] as t}
               <button
                 class="px-3 py-1.5 text-xs rounded-lg border transition-colors
                   {transport === t
-                    ? 'border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)'
-                    : 'border-(--color-border) hover:bg-(--color-surface-hover) text-(--color-text-secondary)'}"
+                    ? 'border-(--accent) bg-(--accent)/10 text-(--accent)'
+                    : 'border-(--border) hover:bg-(--surface-hover) text-(--fg2)'}"
                 onclick={() => transport = t as TransportType}
               >
                 {t.toUpperCase()}
@@ -262,18 +262,18 @@
         </fieldset>
 
         <div>
-          <label for="config-ep-name" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Name</label>
+          <label for="config-ep-name" class="block text-xs font-medium mb-1 text-(--fg2)">Name</label>
           <input id="config-ep-name" type="text" bind:value={name} placeholder="my-server"
-            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
         </div>
 
         <div>
           <div class="flex items-center justify-between mb-1 gap-2">
-            <label for="config-ep-prefix" class="block text-xs font-medium text-(--color-text-secondary)">Tool Prefix</label>
+            <label for="config-ep-prefix" class="block text-xs font-medium text-(--fg2)">Tool Prefix</label>
             {#if prefixCustom}
               <button
                 type="button"
-                class="text-[11px] text-(--color-accent) hover:text-(--color-accent-hover)"
+                class="text-[11px] text-(--accent) hover:text-(--accent-hover)"
                 onclick={resetPrefix}
               >
                 Reset
@@ -286,80 +286,80 @@
             value={prefix}
             oninput={(event) => handlePrefixInput((event.currentTarget as HTMLInputElement).value)}
             placeholder={sanitizeName(name) || 'tool_prefix'}
-            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)"
           />
-          <p class="text-[11px] text-(--color-text-secondary) mt-0.5">
+          <p class="text-[11px] text-(--fg2) mt-0.5">
             Auto-generated from the name. Tools will be named like {prefixPreview}.
           </p>
         </div>
 
         <div>
-          <label for="config-ep-desc" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Description <span class="text-(--color-text-secondary)/50">(optional)</span></label>
+          <label for="config-ep-desc" class="block text-xs font-medium mb-1 text-(--fg2)">Description <span class="text-(--fg2)/50">(optional)</span></label>
           <input id="config-ep-desc" type="text" bind:value={description} placeholder="Brief description of this server"
-            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
         </div>
 
         {#if transport === 'stdio'}
           <div>
-            <label for="config-ep-cmd" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Command</label>
+            <label for="config-ep-cmd" class="block text-xs font-medium mb-1 text-(--fg2)">Command</label>
             <input id="config-ep-cmd" type="text" bind:value={command} placeholder="npx"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
           <div>
-            <label for="config-ep-args" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Arguments <span class="text-(--color-text-secondary)/50">(space-separated)</span></label>
+            <label for="config-ep-args" class="block text-xs font-medium mb-1 text-(--fg2)">Arguments <span class="text-(--fg2)/50">(space-separated)</span></label>
             <input id="config-ep-args" type="text" bind:value={args} placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
         {:else if transport === 'oauth'}
           <div>
-            <label for="config-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Server URL</label>
+            <label for="config-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">Server URL</label>
             <input id="config-ep-url" type="text" bind:value={url} placeholder="https://api.githubcopilot.com/mcp/"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
-          <details class="border border-(--color-border) rounded-lg">
-            <summary class="px-3 py-2 text-xs font-medium text-(--color-text-secondary) cursor-pointer hover:bg-(--color-surface-hover) rounded-lg select-none">Advanced</summary>
+          <details class="border border-(--border) rounded-lg">
+            <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">Advanced</summary>
             <div class="px-3 pb-3 space-y-3">
               <div>
-                <label for="config-ep-oauth-server" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">OAuth Server URL</label>
+                <label for="config-ep-oauth-server" class="block text-xs font-medium mb-1 text-(--fg2)">OAuth Server URL</label>
                 <input id="config-ep-oauth-server" type="text" bind:value={oauthServerUrl} placeholder="Auto-discovered"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
-                <p class="text-[11px] text-(--color-text-secondary) mt-0.5">Leave blank to auto-discover via RFC 9728</p>
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+                <p class="text-[11px] text-(--fg2) mt-0.5">Leave blank to auto-discover via RFC 9728</p>
               </div>
               <div>
-                <label for="config-ep-client-id" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client ID</label>
+                <label for="config-ep-client-id" class="block text-xs font-medium mb-1 text-(--fg2)">Client ID</label>
                 <input id="config-ep-client-id" type="text" bind:value={clientId} placeholder="Auto via Dynamic Client Registration"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
               </div>
               <div>
-                <label for="config-ep-client-secret" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Client Secret <span class="text-(--color-text-secondary)/50">(optional)</span></label>
+                <label for="config-ep-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">Client Secret <span class="text-(--fg2)/50">(optional)</span></label>
                 <input id="config-ep-client-secret" type="text" bind:value={clientSecret} placeholder=""
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
               </div>
               <div>
-                <label for="config-ep-scopes" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">Scopes <span class="text-(--color-text-secondary)/50">(space-separated)</span></label>
+                <label for="config-ep-scopes" class="block text-xs font-medium mb-1 text-(--fg2)">Scopes <span class="text-(--fg2)/50">(space-separated)</span></label>
                 <input id="config-ep-scopes" type="text" bind:value={scopes} placeholder="repo read:user"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
               </div>
             </div>
           </details>
         {:else}
           <div>
-            <label for="config-ep-url" class="block text-xs font-medium mb-1 text-(--color-text-secondary)">URL</label>
+            <label for="config-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">URL</label>
             <input id="config-ep-url" type="text" bind:value={url} placeholder={transport === 'sse' ? 'http://localhost:3000/sse' : 'http://localhost:3000/mcp'}
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent)" />
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
         {/if}
 
         <!-- Environment Variables -->
         <div>
           <div class="flex items-center justify-between mb-1">
-            <span class="block text-xs font-medium text-(--color-text-secondary)">
+            <span class="block text-xs font-medium text-(--fg2)">
               Environment Variables
-              <span class="text-(--color-text-secondary)/50">(optional)</span>
+              <span class="text-(--fg2)/50">(optional)</span>
             </span>
             <button
               type="button"
-              class="text-xs text-(--color-accent) hover:text-(--color-accent-hover)"
+              class="text-xs text-(--accent) hover:text-(--accent-hover)"
               onclick={() => envVars = [...envVars, { key: '', value: '' }]}
             >
               + Add
@@ -368,12 +368,12 @@
           {#each envVars as envVar, i}
             <div class="flex gap-1 mb-1">
               <input type="text" bind:value={envVar.key} placeholder="KEY"
-                class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+                class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono" />
               <input type="text" bind:value={envVar.value} placeholder="value or $ENV_VAR"
-                class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+                class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono" />
               <button
                 type="button"
-                class="text-xs px-1.5 text-(--color-text-secondary) hover:text-(--color-offline)"
+                class="text-xs px-1.5 text-(--fg2) hover:text-(--offline)"
                 onclick={() => envVars = envVars.filter((_, idx) => idx !== i)}
               >✕</button>
             </div>
@@ -384,13 +384,13 @@
         {#if transport !== 'stdio'}
           <div>
             <div class="flex items-center justify-between mb-1">
-              <span class="block text-xs font-medium text-(--color-text-secondary)">
+              <span class="block text-xs font-medium text-(--fg2)">
                 HTTP Headers
-                <span class="text-(--color-text-secondary)/50">(optional)</span>
+                <span class="text-(--fg2)/50">(optional)</span>
               </span>
               <button
                 type="button"
-                class="text-xs text-(--color-accent) hover:text-(--color-accent-hover)"
+                class="text-xs text-(--accent) hover:text-(--accent-hover)"
                 onclick={() => headerVars = [...headerVars, { key: '', value: '' }]}
               >
                 + Add
@@ -399,12 +399,12 @@
             {#each headerVars as header, i}
               <div class="flex gap-1 mb-1">
                 <input type="text" bind:value={header.key} placeholder="Header-Name"
-                  class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+                  class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono" />
                 <input type="text" bind:value={header.value} placeholder="value or $ENV_VAR"
-                  class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--color-border) bg-(--color-surface) text-(--color-text) placeholder:text-(--color-text-secondary)/50 focus:outline-none focus:border-(--color-accent) font-mono" />
+                  class="flex-1 text-sm px-2 py-1 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono" />
                 <button
                   type="button"
-                  class="text-xs px-1.5 text-(--color-text-secondary) hover:text-(--color-offline)"
+                  class="text-xs px-1.5 text-(--fg2) hover:text-(--offline)"
                   onclick={() => headerVars = headerVars.filter((_, idx) => idx !== i)}
                 >✕</button>
               </div>
@@ -413,7 +413,7 @@
         {/if}
 
         {#if error}
-          <p class="text-xs text-(--color-offline)">{error}</p>
+          <p class="text-xs text-(--offline)">{error}</p>
         {/if}
 
         {#if success}
@@ -422,7 +422,7 @@
 
         <div class="flex justify-end pt-2">
           <button
-            class="px-3 py-1.5 text-sm rounded-lg bg-(--color-accent) text-white hover:bg-(--color-accent-hover) transition-colors disabled:opacity-50"
+            class="px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
             onclick={handleSave}
             disabled={!isDirty || saving}
           >
@@ -433,3 +433,32 @@
     {/if}
   </div>
 </div>
+
+
+<style>
+  /* Kit-styled inputs scoped to the endpoint configuration form. */
+  .cfg-form :global(input[type="text"]) {
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border-color: var(--border);
+    background: var(--surface);
+    color: var(--fg1);
+    transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
+  }
+  .cfg-form :global(input[type="text"]::placeholder) {
+    color: var(--fg3);
+  }
+  .cfg-form :global(input[type="text"]:focus) {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-tint);
+    outline: none;
+  }
+  /* Labels and legends */
+  .cfg-form :global(label),
+  .cfg-form :global(legend) {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg2);
+  }
+</style>
