@@ -40,7 +40,7 @@
     <div
       class="text-[13px] font-medium truncate {isFailed ? 'text-(--offline)' : 'text-(--fg1)'}"
     >{endpoint.name}</div>
-    <div class="flex items-center gap-1.5 mt-px">
+    <div class="flex items-baseline gap-1.5 mt-px">
       <TransportBadge transport={endpoint.transport} />
       {#if isFailed}
         <span
