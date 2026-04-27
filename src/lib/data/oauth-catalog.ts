@@ -76,5 +76,17 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     supportsDcr: true,
     notes: 'Task and project management',
   },
+  {
+    id: 'craft',
+    name: 'Craft',
+    description: 'Docs, notes, and knowledge base',
+    icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 4.5H7a3 3 0 0 0-3 3v5a3 3 0 0 0 3 3h7M14 4.5a3 3 0 0 1 0 6H7M14 4.5v6"/></svg>',
+    category: 'productivity',
+    url: 'https://mcp.craft.do/my/mcp',
+    defaultScopes: ['read', 'write'],
+    supportsDiscovery: true,
+    supportsDcr: true,
+    notes: 'Docs and notes from your Craft workspace',
+  },
 ];
 

@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { oauthCatalog } from './oauth-catalog';
 
 describe('oauthCatalog', () => {
-  it('should have exactly 5 entries', () => {
-    expect(oauthCatalog).toHaveLength(5);
+  it('should have exactly 6 entries', () => {
+    expect(oauthCatalog).toHaveLength(6);
   });
 
   it('should not include Google Drive', () => {
@@ -46,6 +46,14 @@ describe('oauthCatalog', () => {
     expect(todoist).toBeDefined();
     expect(todoist!.url).toBe('https://ai.todoist.net/mcp');
     expect(todoist!.supportsDcr).toBe(true);
+  });
+
+  it('should have the correct Craft entry', () => {
+    const craft = oauthCatalog.find((entry) => entry.id === 'craft');
+    expect(craft).toBeDefined();
+    expect(craft!.url).toBe('https://mcp.craft.do/my/mcp');
+    expect(craft!.supportsDiscovery).toBe(true);
+    expect(craft!.supportsDcr).toBe(true);
   });
 });
 
