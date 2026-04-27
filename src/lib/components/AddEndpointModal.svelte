@@ -694,19 +694,19 @@
             <input id="modal-ep-url" type="text" bind:value={url} placeholder="https://mcp.linear.app/sse"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
-          <div>
-            <label for="modal-ep-scopes" class="block text-xs font-medium mb-1 text-(--fg2)">Scopes <span class="text-(--fg2)/50">(optional, space-separated)</span></label>
-            <input id="modal-ep-scopes" type="text" bind:value={scopes} placeholder="read write"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
-            <p class="text-[11px] text-(--fg2) mt-0.5">Space-separated. Leave blank for server defaults.</p>
-          </div>
 
-          <!-- Collapsible Advanced section — collapsed by default when from catalog -->
-          <details class="border border-(--border) rounded-lg" open={!selectedOAuthEntry}>
+          <!-- Collapsible Advanced section — collapsed by default for all OAuth flows -->
+          <details class="border border-(--border) rounded-lg">
             <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">
               Advanced
             </summary>
             <div class="px-3 pb-3 space-y-3">
+              <div>
+                <label for="modal-ep-scopes" class="block text-xs font-medium mb-1 text-(--fg2)">Scopes <span class="text-(--fg2)/50">(optional, space-separated)</span></label>
+                <input id="modal-ep-scopes" type="text" bind:value={scopes} placeholder="read write"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+                <p class="text-[11px] text-(--fg2) mt-0.5">Space-separated. Leave blank for server defaults.</p>
+              </div>
               <div>
                 <label for="modal-ep-oauth-url" class="block text-xs font-medium mb-1 text-(--fg2)">OAuth Server URL</label>
                 <input id="modal-ep-oauth-url" type="text" bind:value={oauthServerUrl} placeholder="Auto-discovered"
