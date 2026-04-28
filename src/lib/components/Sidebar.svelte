@@ -12,6 +12,7 @@
 
   const healthLabels: Record<string, string> = {
     healthy: '● Healthy',
+    starting: '◌ Refreshing',
     degraded: '◐ Degraded',
     error: '⚠ Error',
     failed: '⚠ Failed',
