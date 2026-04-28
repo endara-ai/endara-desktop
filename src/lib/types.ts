@@ -1,4 +1,4 @@
-export type HealthStatus = 'healthy' | 'degraded' | 'offline' | 'unknown' | 'error' | 'failed';
+export type HealthStatus = 'healthy' | 'degraded' | 'offline' | 'unknown' | 'error' | 'failed' | 'starting';
 
 export interface RelayStatus {
   status: string;

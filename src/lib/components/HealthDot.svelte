@@ -13,25 +13,32 @@
     unknown: 'bg-gray-400',
     error: 'bg-(--offline)',
     failed: 'bg-(--offline)',
+    starting: 'bg-(--accent)',
   };
 
   const titleMap: Record<HealthStatus, string> = {
     healthy: 'healthy',
     degraded: 'degraded',
     offline: 'offline',
-    unknown: 'Starting…',
+    unknown: 'Unknown',
     error: 'Error',
     failed: 'Failed',
+    starting: 'Starting…',
+  };
+
+  const spinnerColorMap: Partial<Record<HealthStatus, string>> = {
+    unknown: 'text-gray-400',
+    starting: 'text-(--accent)',
   };
 
   const sizeClass = $derived(stacked ? 'w-2 h-2' : 'w-2.5 h-2.5');
   const ringStyle = $derived(stacked ? 'border: 2px solid var(--ring-stroke); box-sizing: border-box;' : '');
 </script>
 
-{#if health === 'unknown'}
+{#if health === 'unknown' || health === 'starting'}
   <span class="inline-block {sizeClass}" title={titleMap[health]}>
     <svg
-      class="w-full h-full animate-spin text-gray-400"
+      class="w-full h-full animate-spin {spinnerColorMap[health]}"
       viewBox="0 0 16 16"
       fill="none"
     >

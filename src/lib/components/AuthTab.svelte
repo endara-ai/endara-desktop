@@ -1,15 +1,14 @@
 <script lang="ts">
   import type { OAuthStatus, OAuthStatusValue } from '$lib/types';
   import { selectedEndpoint, oauthStatuses } from '$lib/stores';
-  import { getOAuthStatus, refreshOAuth, revokeOAuth, startOAuth } from '$lib/api';
+  import { getOAuthStatus, refreshOAuth, startOAuth } from '$lib/api';
   import { toast } from 'svelte-sonner';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import ConfirmModal from './ConfirmModal.svelte';
+  import { canReauthorize as canReauthorizeStatus, reauthorize } from '$lib/oauth/actions';
 
   let status = $state<OAuthStatus | null>(null);
   let loading = $state(true);
   let error = $state('');
-  let showDisconnectConfirm = $state(false);
   let actionInProgress = $state(false);
 
   const statusColors: Record<OAuthStatusValue, string> = {
@@ -88,46 +87,25 @@
     actionInProgress = false;
   }
 
-  async function handleReconnect() {
+  async function handleReauthorize() {
     const name = $selectedEndpoint;
     if (!name || actionInProgress) return;
     actionInProgress = true;
     try {
-      const result = await startOAuth(name);
-      if ('authorize_url' in result) {
-        await openUrl(result.authorize_url);
-        toast.success('Browser opened for authorization');
-      } else if ('error' in result && result.error === 'discovery_failed') {
-        toast.error('OAuth discovery failed. Go to Settings to configure OAuth server URL manually.');
-      } else if ('error' in result && result.error === 'dcr_unsupported') {
-        toast.error('This server requires manual OAuth app registration. Go to Settings to enter your Client ID.');
-      } else {
-        toast.error('Failed to start OAuth flow');
-      }
+      await reauthorize(name, {
+        startOAuth,
+        openUrl,
+        onSuccess: toast.success,
+        onError: toast.error,
+      });
     } catch {
       toast.error('Failed to start OAuth flow');
     }
     actionInProgress = false;
   }
 
-  async function handleDisconnect() {
-    const name = $selectedEndpoint;
-    if (!name) return;
-    actionInProgress = true;
-    try {
-      await revokeOAuth(name);
-      toast.success('OAuth disconnected');
-      await fetchStatus(name);
-    } catch {
-      toast.error('Failed to disconnect OAuth');
-    }
-    actionInProgress = false;
-    showDisconnectConfirm = false;
-  }
-
   let canRefresh = $derived(status !== null && status.has_refresh_token && ['authenticated', 'auth_required'].includes(status.status));
-  let canReconnect = $derived(status !== null && ['disconnected', 'auth_required', 'needs_login'].includes(status.status));
-  let canDisconnect = $derived(status !== null && ['authenticated', 'refreshing', 'auth_required'].includes(status.status));
+  let canReauthorize = $derived(status !== null && canReauthorizeStatus(status.status));
 </script>
 
 <div class="h-full overflow-y-auto p-4 space-y-4">
@@ -196,31 +174,16 @@
           disabled={actionInProgress}
         >Refresh Now</button>
       {/if}
-      {#if canReconnect}
+      {#if canReauthorize}
         <button
           class="btn-accent"
-          onclick={handleReconnect}
+          onclick={handleReauthorize}
           disabled={actionInProgress}
-        >Reconnect</button>
-      {/if}
-      {#if canDisconnect}
-        <button
-          class="btn-sec btn-danger"
-          onclick={() => showDisconnectConfirm = true}
-          disabled={actionInProgress}
-        >Disconnect</button>
+          title="Open the browser to sign in again"
+          aria-label="Re-authorize"
+        >Re-authorize</button>
       {/if}
     </div>
-
-    {#if showDisconnectConfirm}
-      <ConfirmModal
-        title="Disconnect OAuth"
-        message="Are you sure you want to disconnect? This will revoke the OAuth tokens and you'll need to re-authorize."
-        confirmLabel="Disconnect"
-        onconfirm={handleDisconnect}
-        oncancel={() => showDisconnectConfirm = false}
-      />
-    {/if}
   {/if}
 </div>
 
