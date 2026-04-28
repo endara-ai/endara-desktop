@@ -55,10 +55,13 @@
 
   async function pollEndpoints() {
     const currentStatus = get(relaySidecarStatus);
-    // If sidecar failed (e.g., port conflict), don't poll — we're not managing what's on that port
+    // If sidecar failed (e.g., port conflict), don't poll — we're not managing what's on that port.
+    // Treat that as a definitive load so the UI can route to the failure screen instead of
+    // showing the loading spinner indefinitely.
     if (shouldSkipEndpointPolling(currentStatus)) {
       relayConnected.set(false);
       endpoints.set([]);
+      initialLoadComplete.set(true);
       return;
     }
     try {
@@ -84,11 +87,24 @@
       if (inferredStatus === 'starting' || inferredStatus === 'unknown') {
         relaySidecarStatus.set('running');
       }
+      // Only mark the initial load complete once we've actually heard back from
+      // the relay — otherwise a failed pre-startup poll would briefly satisfy
+      // showOnboarding's gate and flash the Welcome screen.
+      initialLoadComplete.set(true);
     } catch {
       relayConnected.set(false);
       endpoints.set([]);
     }
   }
+
+  // Show a "Starting relay…" loading state on the servers tab while the sidecar
+  // is still coming up and we haven't yet successfully connected. This replaces
+  // the prior empty Sidebar/DetailPanel flash before the first poll succeeds.
+  const showServersLoading = $derived(
+    !$relayConnected &&
+    !$initialLoadComplete &&
+    ($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown')
+  );
 
   onMount(() => {
     // Sync the relay port FROM the Rust backend (config.toml is the source of truth)
@@ -98,7 +114,7 @@
       }
     }).catch(() => {});
     initRelayLogListener();
-    pollEndpoints().then(() => initialLoadComplete.set(true));
+    pollEndpoints();
     pollInterval = setInterval(pollEndpoints, 2000);
   });
 
@@ -227,12 +243,25 @@
 
     <!-- Tab content -->
     <div class="flex-1 overflow-hidden">
-      <div class="h-full" style:display={$activeTopLevelTab === 'servers' ? ($showOnboarding ? 'block' : 'flex') : 'none'}>
+      <div class="h-full" style:display={$activeTopLevelTab === 'servers' ? 'block' : 'none'}>
         {#if $showOnboarding}
           <Onboarding />
+        {:else if showServersLoading}
+          <div class="flex h-full items-center justify-center">
+            <div class="flex flex-col items-center gap-3 text-(--fg3)">
+              <div
+                class="h-6 w-6 animate-spin rounded-full border-2 border-(--border) border-t-(--accent)"
+                role="status"
+                aria-label="Starting relay"
+              ></div>
+              <p class="text-sm">Starting relay…</p>
+            </div>
+          </div>
         {:else}
-          <Sidebar bind:this={sidebar} />
-          <DetailPanel />
+          <div class="flex h-full">
+            <Sidebar bind:this={sidebar} />
+            <DetailPanel />
+          </div>
         {/if}
       </div>
       <div class="h-full" style:display={$activeTopLevelTab === 'unified-catalog' ? 'block' : 'none'}>
