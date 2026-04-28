@@ -115,37 +115,53 @@ describe('stores', () => {
   });
 
   describe('showOnboarding derived store', () => {
-    it('shows when no endpoints, not dismissed, and initial load complete', async () => {
-      const { endpoints, onboardingDismissed, initialLoadComplete, showOnboarding } = await importStores();
+    it('shows when no endpoints, not dismissed, initial load complete, and relay connected', async () => {
+      const { endpoints, onboardingDismissed, initialLoadComplete, relayConnected, showOnboarding } = await importStores();
       endpoints.set([]);
       onboardingDismissed.set(false);
       initialLoadComplete.set(true);
+      relayConnected.set(true);
       expect(get(showOnboarding)).toBe(true);
     });
 
     it('hides when dismissed', async () => {
-      const { endpoints, onboardingDismissed, initialLoadComplete, showOnboarding } = await importStores();
+      const { endpoints, onboardingDismissed, initialLoadComplete, relayConnected, showOnboarding } = await importStores();
       endpoints.set([]);
       onboardingDismissed.set(true);
       initialLoadComplete.set(true);
+      relayConnected.set(true);
       expect(get(showOnboarding)).toBe(false);
     });
 
     it('hides before initial load completes', async () => {
-      const { endpoints, onboardingDismissed, initialLoadComplete, showOnboarding } = await importStores();
+      const { endpoints, onboardingDismissed, initialLoadComplete, relayConnected, showOnboarding } = await importStores();
       endpoints.set([]);
       onboardingDismissed.set(false);
       initialLoadComplete.set(false);
+      relayConnected.set(true);
       expect(get(showOnboarding)).toBe(false);
     });
 
-    it('shows even when relay sidecar has failed', async () => {
-      const { endpoints, onboardingDismissed, initialLoadComplete, relaySidecarStatus, showOnboarding } = await importStores();
+    it('hides while the relay is not connected, even if initial load was marked complete', async () => {
+      // Regression: a failed pre-startup poll used to flip initialLoadComplete to true,
+      // which briefly satisfied showOnboarding and flashed Welcome before the relay came up.
+      const { endpoints, onboardingDismissed, initialLoadComplete, relayConnected, showOnboarding } = await importStores();
       endpoints.set([]);
       onboardingDismissed.set(false);
       initialLoadComplete.set(true);
+      relayConnected.set(false);
+      expect(get(showOnboarding)).toBe(false);
+    });
+
+    it('hides when relay sidecar has failed and we are not connected', async () => {
+      // The dedicated relay-startup-failure UI should take precedence here; Welcome must not flash.
+      const { endpoints, onboardingDismissed, initialLoadComplete, relayConnected, relaySidecarStatus, showOnboarding } = await importStores();
+      endpoints.set([]);
+      onboardingDismissed.set(false);
+      initialLoadComplete.set(true);
+      relayConnected.set(false);
       relaySidecarStatus.set('failed');
-      expect(get(showOnboarding)).toBe(true);
+      expect(get(showOnboarding)).toBe(false);
     });
   });
 

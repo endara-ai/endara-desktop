@@ -82,10 +82,19 @@ function createRelayPortStore() {
 }
 export const relayPort = createRelayPortStore();
 
+// Welcome ("Onboarding") should only appear once we have a definitive answer
+// from the relay: the initial poll succeeded (`initialLoadComplete`), the relay
+// is reachable (`relayConnected`), and it reported zero endpoints. Otherwise
+// during cold-start we'd flash Welcome between a blank list and the real list.
 export const showOnboarding = derived(
-  [endpoints, onboardingDismissed, initialLoadComplete],
-  ([$endpoints, $onboardingDismissed, $initialLoadComplete]) => {
-    return $initialLoadComplete && $endpoints.length === 0 && !$onboardingDismissed;
+  [endpoints, onboardingDismissed, initialLoadComplete, relayConnected],
+  ([$endpoints, $onboardingDismissed, $initialLoadComplete, $relayConnected]) => {
+    return (
+      $initialLoadComplete &&
+      $relayConnected &&
+      $endpoints.length === 0 &&
+      !$onboardingDismissed
+    );
   }
 );
 
