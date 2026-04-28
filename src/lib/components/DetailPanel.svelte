@@ -10,6 +10,7 @@
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
   import AuthTab from './AuthTab.svelte';
+  import { shouldShowRestartButton } from './detail-panel-helpers';
 
   let showRestartConfirm = $state(false);
   let showDeleteConfirm = $state(false);
@@ -121,7 +122,7 @@
           aria-label={ep.disabled ? 'Enable server' : 'Disable server'}
         ><span></span></button>
         <button class="btn-sec" onclick={handleRefresh}>Refresh</button>
-        {#if ep.transport === 'stdio' || ep.transport === 'sse'}
+        {#if shouldShowRestartButton(ep.transport)}
           <button
             class="btn-sec btn-danger"
             onclick={() => showRestartConfirm = true}
@@ -165,7 +166,7 @@
       {/if}
     </div>
 
-    {#if showRestartConfirm && (ep.transport === 'stdio' || ep.transport === 'sse')}
+    {#if showRestartConfirm && shouldShowRestartButton(ep.transport)}
       <ConfirmModal
         title="{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'} Endpoint"
         message="Are you sure you want to {ep.transport === 'stdio' ? 'restart' : 'reconnect'} '{ep.name}'? This will temporarily disconnect the endpoint."

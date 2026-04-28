@@ -4,6 +4,7 @@
   import { getOAuthStatus, refreshOAuth, startOAuth } from '$lib/api';
   import { toast } from 'svelte-sonner';
   import { openUrl } from '@tauri-apps/plugin-opener';
+  import { canReauthorize as canReauthorizeStatus, reauthorize } from '$lib/oauth/actions';
 
   let status = $state<OAuthStatus | null>(null);
   let loading = $state(true);
@@ -91,17 +92,12 @@
     if (!name || actionInProgress) return;
     actionInProgress = true;
     try {
-      const result = await startOAuth(name);
-      if ('authorize_url' in result) {
-        await openUrl(result.authorize_url);
-        toast.success('Browser opened for authorization');
-      } else if ('error' in result && result.error === 'discovery_failed') {
-        toast.error('OAuth discovery failed. Go to Settings to configure OAuth server URL manually.');
-      } else if ('error' in result && result.error === 'dcr_unsupported') {
-        toast.error('This server requires manual OAuth app registration. Go to Settings to enter your Client ID.');
-      } else {
-        toast.error('Failed to start OAuth flow');
-      }
+      await reauthorize(name, {
+        startOAuth,
+        openUrl,
+        onSuccess: toast.success,
+        onError: toast.error,
+      });
     } catch {
       toast.error('Failed to start OAuth flow');
     }
@@ -109,7 +105,7 @@
   }
 
   let canRefresh = $derived(status !== null && status.has_refresh_token && ['authenticated', 'auth_required'].includes(status.status));
-  let canReauthorize = $derived(status !== null && ['disconnected', 'auth_required', 'needs_login'].includes(status.status));
+  let canReauthorize = $derived(status !== null && canReauthorizeStatus(status.status));
 </script>
 
 <div class="h-full overflow-y-auto p-4 space-y-4">
