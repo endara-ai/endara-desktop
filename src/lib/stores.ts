@@ -105,6 +105,7 @@ export const filteredEndpoints = derived(
 export const groupedEndpoints = derived(filteredEndpoints, ($filtered) => {
   const groups: Record<string, Endpoint[]> = {
     healthy: [],
+    starting: [],
     degraded: [],
     error: [],
     failed: [],

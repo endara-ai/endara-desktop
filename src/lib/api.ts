@@ -40,9 +40,6 @@ export async function getEndpoints(): Promise<Endpoint[]> {
   const data = await fetchJson<Endpoint[]>('/endpoints');
   // Map relay's health states to UI-friendly values
   for (const ep of data) {
-    if ((ep.health as string) === 'starting') {
-      ep.health = 'unknown';
-    }
     // Handle lifecycle.state === "Failed" from the management API
     if (ep.lifecycle?.state === 'Failed') {
       ep.health = 'error';

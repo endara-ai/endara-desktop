@@ -151,6 +151,31 @@ describe('stores', () => {
 
 
 
+  describe('groupedEndpoints derived store', () => {
+    it('buckets a starting endpoint into the starting group, not unknown', async () => {
+      const { endpoints, groupedEndpoints } = await importStores();
+      // The relay emits health: 'starting' for actively-refreshing OAuth endpoints.
+      // Cast since HealthStatus union has not yet been extended (Task 6 territory).
+      endpoints.set([
+        { name: 'oauth-ep', transport: 'oauth', health: 'starting' as unknown as 'healthy', tool_count: 0, last_activity: null, disabled: false },
+      ]);
+      const groups = get(groupedEndpoints);
+      expect(groups.starting).toHaveLength(1);
+      expect(groups.starting[0].name).toBe('oauth-ep');
+      expect(groups.unknown).toHaveLength(0);
+    });
+
+    it('keeps unknown as catch-all for unrecognized health values', async () => {
+      const { endpoints, groupedEndpoints } = await importStores();
+      endpoints.set([
+        { name: 'mystery', transport: 'stdio', health: 'mystery-state' as unknown as 'healthy', tool_count: 0, last_activity: null, disabled: false },
+      ]);
+      const groups = get(groupedEndpoints);
+      expect(groups.unknown).toHaveLength(1);
+      expect(groups.unknown[0].name).toBe('mystery');
+    });
+  });
+
   describe('selectedEndpointData derived store', () => {
     it('returns null when nothing selected', async () => {
       const { selectedEndpointData } = await importStores();

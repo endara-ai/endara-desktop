@@ -53,13 +53,13 @@ describe('api', () => {
       expect(result).toEqual(mockEndpoints);
     });
 
-    it('maps starting health to unknown', async () => {
+    it('passes starting health through unchanged', async () => {
       const { getEndpoints } = await import('./api');
       const mockEndpoints = [{ name: 'ep1', transport: 'stdio', health: 'starting', tool_count: 0, last_activity: null }];
       mockFetchSuccess(mockEndpoints);
 
       const result = await getEndpoints();
-      expect(result[0].health).toBe('unknown');
+      expect(result[0].health).toBe('starting');
     });
 
     it('maps lifecycle Failed state to error health with error message', async () => {
@@ -111,7 +111,7 @@ describe('api', () => {
       mockFetchSuccess(mockEndpoints);
 
       const result = await getEndpoints();
-      expect(result[0].health).toBe('unknown');
+      expect(result[0].health).toBe('starting');
       expect(result[0].lifecycle).toEqual({ state: 'Initializing' });
     });
   });
