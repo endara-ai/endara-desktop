@@ -121,11 +121,13 @@
           aria-label={ep.disabled ? 'Enable server' : 'Disable server'}
         ><span></span></button>
         <button class="btn-sec" onclick={handleRefresh}>Refresh</button>
-        <button
-          class="btn-sec btn-danger"
-          onclick={() => showRestartConfirm = true}
-          title={ep.transport === 'stdio' ? 'Kill and restart the server process' : ep.transport === 'sse' ? 'Reconnect the SSE event stream' : ep.transport === 'http' ? 'Re-run the MCP handshake' : 'Reload tokens and reconnect'}
-        >{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'}</button>
+        {#if ep.transport === 'stdio' || ep.transport === 'sse'}
+          <button
+            class="btn-sec btn-danger"
+            onclick={() => showRestartConfirm = true}
+            title={ep.transport === 'stdio' ? 'Kill and restart the server process' : 'Reconnect the SSE event stream'}
+          >{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'}</button>
+        {/if}
         <button class="btn-sec btn-danger" onclick={() => showDeleteConfirm = true}>Delete</button>
       </div>
     </div>
@@ -163,7 +165,7 @@
       {/if}
     </div>
 
-    {#if showRestartConfirm}
+    {#if showRestartConfirm && (ep.transport === 'stdio' || ep.transport === 'sse')}
       <ConfirmModal
         title="{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'} Endpoint"
         message="Are you sure you want to {ep.transport === 'stdio' ? 'restart' : 'reconnect'} '{ep.name}'? This will temporarily disconnect the endpoint."
