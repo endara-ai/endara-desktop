@@ -3,6 +3,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing release version to (re)publish to the Homebrew tap (e.g. v0.1.1). Skips build; reuses DMGs already attached to that GitHub Release.'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -15,6 +20,7 @@ env:
 
 jobs:
   preflight:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       relay_version: ${{ steps.check.outputs.relay_version }}
@@ -44,6 +50,7 @@ jobs:
 
   publish:
     needs: [preflight]
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -166,7 +173,7 @@ jobs:
   publish-update-manifest:
     runs-on: ubuntu-latest
     needs: [publish]
-    if: always() && !cancelled()
+    if: github.event_name == 'push' && always() && !cancelled() && needs.publish.result == 'success'
     steps:
       - uses: actions/checkout@v4
 
@@ -188,3 +195,93 @@ jobs:
           publish_dir: ./gh-pages-deploy
           # Keep existing files on gh-pages (in case we add more assets later)
           keep_files: true
+
+  update-homebrew-tap:
+    needs: [publish]
+    # Only run on stable tag pushes (skip -rc.* prereleases) or manual workflow_dispatch.
+    if: |
+      always() &&
+      (
+        (github.event_name == 'push' && needs.publish.result == 'success' && !contains(github.ref_name, '-rc.')) ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${INPUT_VERSION}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          if [[ -z "$tag" ]]; then
+            echo "Could not resolve a version/tag." >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Download DMGs from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dmgs
+          for arch in aarch64 x64; do
+            asset="Endara.Desktop_${VERSION}_${arch}.dmg"
+            echo "Downloading ${asset} from release ${TAG}..."
+            gh release download "${TAG}" \
+              --repo "${{ github.repository }}" \
+              --pattern "${asset}" \
+              --dir dmgs
+          done
+      - name: Compute SHA256 sums
+        id: sha
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          sha_arm64=$(shasum -a 256 "dmgs/Endara.Desktop_${v}_aarch64.dmg" | awk '{print $1}')
+          sha_x64=$(shasum -a 256 "dmgs/Endara.Desktop_${v}_x64.dmg" | awk '{print $1}')
+          {
+            echo "arm64=${sha_arm64}"
+            echo "x64=${sha_x64}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Checkout endara-desktop (for update-cask.py)
+        uses: actions/checkout@v4
+        with:
+          path: desktop
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: endara-ai/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Update cask
+        run: |
+          mkdir -p homebrew-tap/Casks
+          python3 desktop/scripts/update-cask.py \
+            --version "${{ steps.version.outputs.version }}" \
+            --sha256-arm64 "${{ steps.sha.outputs.arm64 }}" \
+            --sha256-x64 "${{ steps.sha.outputs.x64 }}" \
+            --cask-path homebrew-tap/Casks/endara.rb
+      - name: Commit and push to homebrew-tap
+        working-directory: homebrew-tap
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "endara-bot"
+          git config user.email "endara-bot@users.noreply.github.com"
+          git add Casks/endara.rb
+          if git diff --cached --quiet; then
+            echo "No cask changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: bump endara to ${VERSION}"
+          git push origin HEAD:main
