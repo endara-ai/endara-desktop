@@ -19,7 +19,17 @@ The app provides a visual interface for everything the relay exposes: endpoint h
 
 ## Download
 
-Download the latest release from [GitHub Releases](https://github.com/endara-ai/endara-desktop/releases).
+### macOS — Homebrew (recommended)
+
+```bash
+brew install --cask endara-ai/tap/endara
+```
+
+This installs the latest signed & notarized DMG from the [`endara-ai/homebrew-tap`](https://github.com/endara-ai/homebrew-tap) tap and registers the app for `brew upgrade`. Tauri's built-in updater also continues to work, so you'll get new versions whichever way you prefer.
+
+### Direct downloads
+
+Or grab an installer directly from [GitHub Releases](https://github.com/endara-ai/endara-desktop/releases) — useful on Windows / Linux, or if you don't use Homebrew.
 
 | Platform | Format | File |
 |----------|--------|------|
