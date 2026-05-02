@@ -88,6 +88,42 @@ Endara Desktop is a [Tauri 2](https://v2.tauri.app) application with two layers:
 
 **Frontend (SvelteKit):** Talks to the relay's management API to fetch endpoint status, tools, logs, and configuration. The UI is composed of 12 Svelte components organized around a sidebar + detail panel layout.
 
+## Process model
+
+In the standard desktop install, **the desktop owns the relay**. There is no separate background service — the relay's lifetime is bounded by the desktop's lifetime.
+
+```
+Endara Desktop (parent)
+└── endara-relay (Tauri sidecar child)
+    └── listens on 127.0.0.1:9400 (prod) / 9500 (dev)
+```
+
+- **Spawn.** On startup the desktop spawns the bundled `endara-relay` binary as a [Tauri sidecar](https://v2.tauri.app/plugin/shell/#spawning-a-sidecar) child process. The desktop passes `--port` (and the data dir / config path) on the command line; in dev it uses `9500`, in production it uses `9400` by default.
+- **Listen.** The relay binds to `127.0.0.1` only and accepts MCP traffic on the configured port. Other applications on the machine connect to it over loopback at that port.
+- **Shutdown.** The relay dies with the desktop. On a clean quit the desktop sends `SIGTERM` to the sidecar; on a hard exit (force-quit, crash, logout) the OS reaps it with `SIGKILL`. There is no graceful-shutdown line emitted by the relay in the latter case — the last log entry is whatever it was doing when the parent died.
+- **Auto-start.** If you enable "Launch at login" in Settings, the desktop registers a macOS LaunchAgent that re-launches *the desktop* (which then spawns the relay as its child). The LaunchAgent does **not** run the relay directly.
+
+### Bundled vs. brew-installed relay (do not mix)
+
+There are two ways to get a relay on your machine, and they are mutually exclusive on the same port:
+
+| Install path | What it gives you | Relay lifecycle |
+|---|---|---|
+| `brew install --cask endara-ai/tap/endara` (or the DMG / `.msi` / `.deb` / `.AppImage`) | Full desktop GUI **with** the relay bundled inside the app bundle | Relay is a **child of the desktop**. Quitting the desktop kills the relay. |
+| `brew install endara-ai/tap/endara-relay` | Headless CLI relay, **no GUI** | Standalone process you run yourself (or via your own launchd/systemd unit). |
+
+Pick one. If both are installed and both try to bind `127.0.0.1:9400`, the second one to start will fail with `EADDRINUSE`. The desktop's bundled relay does not read or coordinate with a brew-installed `endara-relay` — they are separate binaries with separate config paths.
+
+### File locations (macOS)
+
+- **Bundled relay binary:** `/Applications/Endara Desktop.app/Contents/MacOS/endara-relay`
+- **Auto-start LaunchAgent:** `~/Library/LaunchAgents/Endara Desktop.plist` (only present if "Launch at login" is enabled)
+- **Desktop log:** `~/Library/Logs/ai.endara.desktop/Endara Desktop.log`
+- **Relay log:** `~/.endara/logs/relay.log.<YYYY-MM-DD>` (rotated daily)
+- **Relay config:** `~/.endara/config.toml`
+
+On Linux and Windows the same parent/child model applies; only the file paths differ (Tauri's standard log/config dirs for the `ai.endara.desktop` identifier, and no LaunchAgent — autostart uses the platform's native mechanism).
+
 ## Development
 
 ### Prerequisites
