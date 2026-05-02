@@ -1217,7 +1217,9 @@ pub fn run() {
                 Menu::with_items(app, &[&status_item, &open_item, &update_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tauri::image::Image::from_bytes(include_bytes!(
+                    "../icons/tray-icon-template.png"
+                ))?)
                 .icon_as_template(true)
                 .menu(&menu)
                 .show_menu_on_left_click(true)
