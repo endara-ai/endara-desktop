@@ -413,15 +413,21 @@ pub fn detect_health_transition(
 
 /// Issue a single `/healthz` probe against `127.0.0.1:port` and classify the
 /// result. Logs the failure reason with a sanitized body excerpt (mirroring
-/// the updater's pattern) so transient bad responses are debuggable.
-async fn probe_healthz(client: &reqwest::Client, port: u16) -> HealthState {
+/// the updater's pattern) so transient bad responses are debuggable. On a
+/// successful probe the wall-clock round-trip is returned alongside the
+/// `Healthy` state so the watchdog can surface it on the healthy transition.
+async fn probe_healthz(client: &reqwest::Client, port: u16) -> (HealthState, Option<u64>) {
     let url = format!("http://127.0.0.1:{port}/healthz");
+    let start = std::time::Instant::now();
     let response = match client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
-            return HealthState::Unhealthy {
-                reason: format!("transport error: {e}"),
-            };
+            return (
+                HealthState::Unhealthy {
+                    reason: format!("transport error: {e}"),
+                },
+                None,
+            );
         }
     };
 
@@ -435,14 +441,20 @@ async fn probe_healthz(client: &reqwest::Client, port: u16) -> HealthState {
             status.as_u16(),
             body_excerpt
         );
-        return HealthState::Unhealthy {
-            reason: format!("non-2xx: {}", status.as_u16()),
-        };
+        return (
+            HealthState::Unhealthy {
+                reason: format!("non-2xx: {}", status.as_u16()),
+            },
+            None,
+        );
     }
 
     let body = response.text().await.unwrap_or_default();
     match serde_json::from_str::<HealthzResponse>(&body) {
-        Ok(h) if h.status == "ok" => HealthState::Healthy,
+        Ok(h) if h.status == "ok" => {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            (HealthState::Healthy, Some(latency_ms))
+        }
         Ok(h) => {
             let body_excerpt = sanitize_body_excerpt(&body);
             log::warn!(
@@ -451,9 +463,12 @@ async fn probe_healthz(client: &reqwest::Client, port: u16) -> HealthState {
                 h.status,
                 body_excerpt
             );
-            HealthState::Unhealthy {
-                reason: format!("status={}", h.status),
-            }
+            (
+                HealthState::Unhealthy {
+                    reason: format!("status={}", h.status),
+                },
+                None,
+            )
         }
         Err(e) => {
             let body_excerpt = sanitize_body_excerpt(&body);
@@ -463,9 +478,12 @@ async fn probe_healthz(client: &reqwest::Client, port: u16) -> HealthState {
                 e,
                 body_excerpt
             );
-            HealthState::Unhealthy {
-                reason: format!("parse error: {e}"),
-            }
+            (
+                HealthState::Unhealthy {
+                    reason: format!("parse error: {e}"),
+                },
+                None,
+            )
         }
     }
 }
@@ -495,11 +513,17 @@ async fn run_watchdog(app: AppHandle, port: u16) {
 
     let mut prev = HealthState::Unknown;
     loop {
-        let current = probe_healthz(&client, port).await;
+        let (current, latency_ms) = probe_healthz(&client, port).await;
         if let Some(event) = detect_health_transition(&prev, &current) {
             match &event {
                 HealthTransition::BecameHealthy => {
-                    log::info!("[relay-watchdog] healthy transition port={}", port);
+                    // DoD: literal "relay healthcheck ok" with port + latency_ms
+                    // fields, fired once per healthy transition (not per probe).
+                    log::info!(
+                        "[relay-watchdog] relay healthcheck ok port={} latency_ms={}",
+                        port,
+                        latency_ms.unwrap_or(0)
+                    );
                     emit_sidecar_status(&app, "running", None).await;
                 }
                 HealthTransition::BecameUnhealthy { reason } => {
