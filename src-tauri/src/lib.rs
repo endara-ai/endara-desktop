@@ -35,6 +35,17 @@ const UPDATER_BACKOFF_BASE_SECS: u64 = 60;
 /// Cap for the exponential updater backoff (30 minutes).
 const UPDATER_BACKOFF_MAX_SECS: u64 = 30 * 60;
 
+/// Initial grace period after a relay sidecar spawn before the first /healthz
+/// probe, so the watchdog does not race the relay's HTTP server bind.
+const RELAY_WATCHDOG_INITIAL_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Interval between successive /healthz probes once the watchdog is running.
+const RELAY_WATCHDOG_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Per-probe HTTP timeout for /healthz so a stalled relay does not block the
+/// watchdog loop or queue probes.
+const RELAY_WATCHDOG_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Workaround: In Tauri v2, `set_activation_policy` is only available on `App`,
 /// not on `AppHandle`, so it cannot be called from event handlers.
 /// See: https://github.com/tauri-apps/tauri/issues/9244
@@ -206,6 +217,10 @@ pub struct RelayState {
     last_sidecar_status: Arc<Mutex<String>>,
     last_sidecar_error: Arc<Mutex<Option<String>>>,
     log_buffer: Arc<Mutex<Vec<RelayLogPayload>>>,
+    /// Handle for the post-spawn /healthz watchdog task. Stored behind a
+    /// `std::sync::Mutex` so it can be aborted from synchronous contexts
+    /// (`RunEvent::Exit`, tray quit). `None` when no relay is running.
+    watchdog: Arc<std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -341,6 +356,202 @@ async fn emit_sidecar_status(app: &AppHandle, status: &str, error: Option<String
     }
 
     let _ = app.emit("relay-sidecar-status", payload);
+}
+
+/// JSON shape returned by relay's `/healthz` endpoint (see endara-relay PR #36).
+#[derive(Deserialize)]
+struct HealthzResponse {
+    status: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    version: Option<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    uptime_secs: Option<u64>,
+}
+
+/// Health snapshot derived from a single `/healthz` probe attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HealthState {
+    /// No probe has produced a definitive result yet (initial state only).
+    Unknown,
+    /// `/healthz` returned 200 with a JSON body where `status == "ok"`.
+    Healthy,
+    /// Probe failed (transport error, non-2xx, parse error, or `status != "ok"`).
+    Unhealthy { reason: String },
+}
+
+/// Event surfaced by the pure transition detector when health flips.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HealthTransition {
+    BecameHealthy,
+    BecameUnhealthy { reason: String },
+}
+
+/// Pure transition detector: emits `Some` only when the latest probe flips
+/// the health state (including the first definitive observation from
+/// `Unknown`). Subsequent probes that confirm the same state return `None`,
+/// so callers do not spam events on every successful or failing probe.
+pub fn detect_health_transition(
+    prev: &HealthState,
+    current: &HealthState,
+) -> Option<HealthTransition> {
+    match (prev, current) {
+        // Same definitive state — silent.
+        (HealthState::Healthy, HealthState::Healthy) => None,
+        (HealthState::Unhealthy { .. }, HealthState::Unhealthy { .. }) => None,
+        // Defensive: a fresh probe should never return Unknown, but if it
+        // does we treat it as "no information" rather than a transition.
+        (_, HealthState::Unknown) => None,
+        // First definitive observation or a real flip.
+        (_, HealthState::Healthy) => Some(HealthTransition::BecameHealthy),
+        (_, HealthState::Unhealthy { reason }) => Some(HealthTransition::BecameUnhealthy {
+            reason: reason.clone(),
+        }),
+    }
+}
+
+/// Issue a single `/healthz` probe against `127.0.0.1:port` and classify the
+/// result. Logs the failure reason with a sanitized body excerpt (mirroring
+/// the updater's pattern) so transient bad responses are debuggable. On a
+/// successful probe the wall-clock round-trip is returned alongside the
+/// `Healthy` state so the watchdog can surface it on the healthy transition.
+async fn probe_healthz(client: &reqwest::Client, port: u16) -> (HealthState, Option<u64>) {
+    let url = format!("http://127.0.0.1:{port}/healthz");
+    let start = std::time::Instant::now();
+    let response = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                HealthState::Unhealthy {
+                    reason: format!("transport error: {e}"),
+                },
+                None,
+            );
+        }
+    };
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        let body_excerpt = sanitize_body_excerpt(&body);
+        log::warn!(
+            "[relay-watchdog] non-2xx probe port={} status={} body_excerpt={:?}",
+            port,
+            status.as_u16(),
+            body_excerpt
+        );
+        return (
+            HealthState::Unhealthy {
+                reason: format!("non-2xx: {}", status.as_u16()),
+            },
+            None,
+        );
+    }
+
+    let body = response.text().await.unwrap_or_default();
+    match serde_json::from_str::<HealthzResponse>(&body) {
+        Ok(h) if h.status == "ok" => {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            (HealthState::Healthy, Some(latency_ms))
+        }
+        Ok(h) => {
+            let body_excerpt = sanitize_body_excerpt(&body);
+            log::warn!(
+                "[relay-watchdog] unexpected status field port={} status={:?} body_excerpt={:?}",
+                port,
+                h.status,
+                body_excerpt
+            );
+            (
+                HealthState::Unhealthy {
+                    reason: format!("status={}", h.status),
+                },
+                None,
+            )
+        }
+        Err(e) => {
+            let body_excerpt = sanitize_body_excerpt(&body);
+            log::warn!(
+                "[relay-watchdog] failed to parse JSON port={} error={} body_excerpt={:?}",
+                port,
+                e,
+                body_excerpt
+            );
+            (
+                HealthState::Unhealthy {
+                    reason: format!("parse error: {e}"),
+                },
+                None,
+            )
+        }
+    }
+}
+
+/// Watchdog loop: probe `/healthz` periodically and emit `relay-sidecar-status`
+/// events on healthy↔unhealthy transitions. Runs until aborted via
+/// [`stop_watchdog`].
+async fn run_watchdog(app: AppHandle, port: u16) {
+    let client = match reqwest::Client::builder()
+        .timeout(RELAY_WATCHDOG_PROBE_TIMEOUT)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[relay-watchdog] failed to build HTTP client error={e}");
+            return;
+        }
+    };
+
+    tokio::time::sleep(RELAY_WATCHDOG_INITIAL_DELAY).await;
+    log::info!(
+        "[relay-watchdog] starting probes port={} interval_secs={} timeout_secs={}",
+        port,
+        RELAY_WATCHDOG_PROBE_INTERVAL.as_secs(),
+        RELAY_WATCHDOG_PROBE_TIMEOUT.as_secs()
+    );
+
+    let mut prev = HealthState::Unknown;
+    loop {
+        let (current, latency_ms) = probe_healthz(&client, port).await;
+        if let Some(event) = detect_health_transition(&prev, &current) {
+            match &event {
+                HealthTransition::BecameHealthy => {
+                    // DoD: literal "relay healthcheck ok" message with port +
+                    // latency_ms fields, fired once per healthy transition
+                    // (not per probe). Uses `target` so the watchdog tag is
+                    // preserved without polluting the message text.
+                    log::info!(
+                        target: "relay-watchdog",
+                        "relay healthcheck ok port={} latency_ms={}",
+                        port,
+                        latency_ms.unwrap_or(0)
+                    );
+                    emit_sidecar_status(&app, "running", None).await;
+                }
+                HealthTransition::BecameUnhealthy { reason } => {
+                    log::warn!(
+                        "[relay-watchdog] unhealthy transition port={} reason={}",
+                        port,
+                        reason
+                    );
+                    emit_sidecar_status(&app, "unhealthy", Some(reason.clone())).await;
+                }
+            }
+        }
+        prev = current;
+        tokio::time::sleep(RELAY_WATCHDOG_PROBE_INTERVAL).await;
+    }
+}
+
+/// Abort and clear any running relay watchdog task. Safe to call from sync
+/// contexts (uses `std::sync::Mutex`, no await).
+fn stop_watchdog(state: &RelayState) {
+    if let Ok(mut guard) = state.watchdog.lock() {
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -511,13 +722,15 @@ async fn spawn_relay(
                         code,
                         signal
                     );
-                    // Update running state
+                    // Update running state and stop the watchdog so it does
+                    // not keep probing a port no one is listening on.
                     if let Some(state) = app_handle.try_state::<RelayState>() {
                         if let Ok(mut pid_guard) = state.pid.lock() {
                             pid_guard.take();
                         }
                         *state.running.lock().await = false;
                         *state.child.lock().await = None;
+                        stop_watchdog(&state);
                     }
                     // Emit relay-health event for termination
                     let _ = app_handle.emit(
@@ -556,6 +769,20 @@ async fn spawn_relay(
         }
     });
 
+    // Spawn the post-spawn /healthz watchdog. Abort any prior handle first
+    // (defensive — there should not be one because spawn_relay is only called
+    // when no relay is running, but we never want two probe loops racing).
+    if let Some(state) = app.try_state::<RelayState>() {
+        stop_watchdog(&state);
+        let watchdog_app = app.clone();
+        let handle = tauri::async_runtime::spawn(async move {
+            run_watchdog(watchdog_app, port).await;
+        });
+        if let Ok(mut guard) = state.watchdog.lock() {
+            *guard = Some(handle);
+        }
+    }
+
     Ok(child)
 }
 
@@ -580,6 +807,7 @@ async fn start_relay(
 
 #[tauri::command]
 async fn stop_relay(state: State<'_, RelayState>) -> Result<RelayStatusInfo, String> {
+    stop_watchdog(&state);
     if let Ok(mut pid_guard) = state.pid.lock() {
         pid_guard.take();
     }
@@ -598,6 +826,7 @@ async fn restart_relay(
     app: AppHandle,
     state: State<'_, RelayState>,
 ) -> Result<RelayStatusInfo, String> {
+    stop_watchdog(&state);
     {
         if let Ok(mut pid_guard) = state.pid.lock() {
             pid_guard.take();
@@ -1343,10 +1572,12 @@ pub fn run() {
         last_sidecar_status: Arc::new(Mutex::new("unknown".to_string())),
         last_sidecar_error: Arc::new(Mutex::new(None)),
         log_buffer: Arc::new(Mutex::new(Vec::new())),
+        watchdog: Arc::new(std::sync::Mutex::new(None)),
     };
 
     let child_handle = relay_state.child.clone();
     let pid_handle = relay_state.pid.clone();
+    let watchdog_handle = relay_state.watchdog.clone();
 
     let pending_update = PendingUpdate(std::sync::Mutex::new(None));
 
@@ -1463,6 +1694,8 @@ pub fn run() {
                         log::info!("tray menu action=quit");
                         // Kill relay sidecar before exiting
                         if let Some(state) = app.try_state::<RelayState>() {
+                            // Stop the watchdog so it does not race shutdown.
+                            stop_watchdog(&state);
                             // Kill by PID first (synchronous, reliable)
                             if let Ok(mut pid_guard) = state.pid.lock() {
                                 if let Some(pid) = pid_guard.take() {
@@ -1572,6 +1805,13 @@ pub fn run() {
         .run(move |_app, event| {
             if let RunEvent::Exit = event {
                 log::info!("app exit");
+                // Abort the watchdog before tearing down the relay so it does
+                // not log spurious "unhealthy" transitions while we shut down.
+                if let Ok(mut guard) = watchdog_handle.lock() {
+                    if let Some(handle) = guard.take() {
+                        handle.abort();
+                    }
+                }
                 // Kill relay by PID — no async runtime needed, avoids block_on deadlock
                 if let Ok(mut guard) = pid_handle.try_lock() {
                     if let Some(pid) = guard.take() {
@@ -1804,5 +2044,75 @@ mod reqwest_tls_provider_tests {
             .expect("reqwest client builds without panicking on TLS provider setup");
         // Touch the client so the optimizer cannot drop the build call.
         let _ = format!("{client:?}");
+    }
+}
+
+#[cfg(test)]
+mod relay_watchdog_tests {
+    use super::*;
+
+    fn unhealthy(reason: &str) -> HealthState {
+        HealthState::Unhealthy {
+            reason: reason.to_string(),
+        }
+    }
+
+    #[test]
+    fn first_healthy_observation_emits_became_healthy() {
+        let event = detect_health_transition(&HealthState::Unknown, &HealthState::Healthy);
+        assert_eq!(event, Some(HealthTransition::BecameHealthy));
+    }
+
+    #[test]
+    fn first_unhealthy_observation_emits_became_unhealthy_with_reason() {
+        let event =
+            detect_health_transition(&HealthState::Unknown, &unhealthy("transport error: x"));
+        assert_eq!(
+            event,
+            Some(HealthTransition::BecameUnhealthy {
+                reason: "transport error: x".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn healthy_to_healthy_is_silent() {
+        // The whole point: every successful probe must NOT spam events.
+        let event = detect_health_transition(&HealthState::Healthy, &HealthState::Healthy);
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn unhealthy_to_unhealthy_is_silent_even_with_changed_reason() {
+        // Stay-unhealthy is silent so a flapping reason string does not generate noise.
+        let event = detect_health_transition(&unhealthy("non-2xx: 503"), &unhealthy("parse error"));
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn healthy_to_unhealthy_emits_with_reason() {
+        let event = detect_health_transition(&HealthState::Healthy, &unhealthy("non-2xx: 500"));
+        assert_eq!(
+            event,
+            Some(HealthTransition::BecameUnhealthy {
+                reason: "non-2xx: 500".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn unhealthy_to_healthy_emits_recovered() {
+        let event =
+            detect_health_transition(&unhealthy("transport error: x"), &HealthState::Healthy);
+        assert_eq!(event, Some(HealthTransition::BecameHealthy));
+    }
+
+    #[test]
+    fn current_unknown_never_emits() {
+        // Defensive: a probe should never return Unknown, but if it did we
+        // must not invent a transition for it in either direction.
+        assert!(detect_health_transition(&HealthState::Unknown, &HealthState::Unknown).is_none());
+        assert!(detect_health_transition(&HealthState::Healthy, &HealthState::Unknown).is_none());
+        assert!(detect_health_transition(&unhealthy("x"), &HealthState::Unknown).is_none());
     }
 }
