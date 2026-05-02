@@ -517,10 +517,13 @@ async fn run_watchdog(app: AppHandle, port: u16) {
         if let Some(event) = detect_health_transition(&prev, &current) {
             match &event {
                 HealthTransition::BecameHealthy => {
-                    // DoD: literal "relay healthcheck ok" with port + latency_ms
-                    // fields, fired once per healthy transition (not per probe).
+                    // DoD: literal "relay healthcheck ok" message with port +
+                    // latency_ms fields, fired once per healthy transition
+                    // (not per probe). Uses `target` so the watchdog tag is
+                    // preserved without polluting the message text.
                     log::info!(
-                        "[relay-watchdog] relay healthcheck ok port={} latency_ms={}",
+                        target: "relay-watchdog",
+                        "relay healthcheck ok port={} latency_ms={}",
                         port,
                         latency_ms.unwrap_or(0)
                     );
