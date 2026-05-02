@@ -52,7 +52,7 @@ define_class!(
     unsafe impl NSObjectProtocol for WebviewRecoveryDelegate {}
 
     unsafe impl WKNavigationDelegate for WebviewRecoveryDelegate {
-        #[unsafe(method(webView:webContentProcessDidTerminate:))]
+        #[unsafe(method(webViewWebContentProcessDidTerminate:))]
         fn web_content_process_did_terminate(&self, webview: &WKWebView) {
             self.handle_termination(webview);
         }
@@ -198,4 +198,20 @@ pub fn install(window: &tauri::WebviewWindow, app_handle: AppHandle) -> Result<(
         })
         .map_err(|e| format!("with_webview failed: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod selector_tests {
+    use super::WebviewRecoveryDelegate;
+    use objc2::runtime::AnyClass;
+    use objc2::ClassType;
+
+    #[test]
+    fn protocol_selector_matches_wknavigationdelegate() {
+        // Forces objc2 define_class! to register the class with the Obj-C
+        // runtime, which validates that every #[method(...)] selector exists
+        // on the declared protocols. Before the fix this panicked at
+        // "failed overriding protocol method ... method not found".
+        let _: &AnyClass = WebviewRecoveryDelegate::class();
+    }
 }
