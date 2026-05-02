@@ -104,7 +104,7 @@ impl WebviewRecoveryDelegate {
         let window_secs = RECOVERY_WINDOW.as_secs();
         match decision {
             RecoveryDecision::Reload { attempt } => {
-                log::warn!(
+                log::error!(
                     "[webview] web content process terminated label={} attempt={}/{} action=reload",
                     label,
                     attempt,
