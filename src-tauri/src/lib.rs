@@ -1,3 +1,5 @@
+mod webview_recovery;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -1516,6 +1518,20 @@ pub fn run() {
                     }
                 }
             });
+
+            // Install the WKWebView crash-recovery hook on the main window so
+            // a killed web-content process triggers an automatic reload
+            // instead of leaving the window blank. No-op on non-macOS.
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(e) = webview_recovery::install(&window, app.handle().clone()) {
+                    log::warn!(
+                        "[webview] failed to install crash-recovery hook error={}",
+                        e
+                    );
+                }
+            } else {
+                log::warn!("[webview] main window missing at setup; crash-recovery not installed");
+            }
 
             // Handle autostarted launch: hide window and set accessory mode
             if is_autostarted() {
