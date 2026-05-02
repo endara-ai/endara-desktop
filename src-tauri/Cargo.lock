@@ -1051,6 +1051,7 @@ dependencies = [
  "log",
  "objc2",
  "objc2-app-kit",
+ "reqwest",
  "serde",
  "serde_json",
  "serial_test",
