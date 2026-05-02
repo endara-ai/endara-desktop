@@ -7,6 +7,7 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, RunEvent, State,
 };
+use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use tauri_plugin_updater::UpdaterExt;
@@ -283,15 +284,21 @@ async fn spawn_relay(
     let _ = std::fs::create_dir_all(&log_dir);
 
     let dev = is_dev_mode();
-    eprintln!(
-        "[relay] attempting to spawn sidecar (dev={}) with config: {:?}, port: {}",
-        dev, config_file, port
+    log::info!(
+        "[relay] attempting to spawn sidecar dev={} port={} config={:?}",
+        dev,
+        port,
+        config_file
     );
 
     // Pre-flight port conflict check
     if is_port_in_use(port) {
         let err_msg = format!("Port {} is already in use by another process. Close the other process or change the relay port in Settings.", port);
-        eprintln!("[relay] pre-flight check failed: {}", err_msg);
+        log::warn!(
+            "[relay] pre-flight check failed port={} error={}",
+            port,
+            err_msg
+        );
         emit_sidecar_status(app, "failed", Some(err_msg.clone())).await;
         return Err(err_msg);
     }
@@ -313,17 +320,17 @@ async fn spawn_relay(
         .shell()
         .sidecar("endara-relay")
         .map_err(|e| {
-            eprintln!("[relay] FAILED to create sidecar command: {e}");
+            log::error!("[relay] failed to create sidecar command error={e}");
             format!("Failed to create sidecar command: {e}")
         })?
         .args(&sidecar_args)
         .spawn()
         .map_err(|e| {
-            eprintln!("[relay] FAILED to spawn relay sidecar: {e}");
+            log::error!("[relay] failed to spawn relay sidecar error={e}");
             format!("Failed to spawn relay sidecar: {e}")
         })?;
 
-    eprintln!("[relay] sidecar process spawned successfully");
+    log::info!("[relay] sidecar spawned pid={} port={}", child.pid(), port);
 
     // Spawn a background task to monitor stdout/stderr
     let app_handle = app.clone();
@@ -406,7 +413,11 @@ async fn spawn_relay(
                 CommandEvent::Terminated(payload) => {
                     let code = payload.code;
                     let signal = payload.signal;
-                    eprintln!("[relay] process terminated, code: {code:?}, signal: {signal:?}");
+                    log::warn!(
+                        "[relay] process terminated code={:?} signal={:?}",
+                        code,
+                        signal
+                    );
                     // Update running state
                     if let Some(state) = app_handle.try_state::<RelayState>() {
                         if let Ok(mut pid_guard) = state.pid.lock() {
@@ -445,7 +456,7 @@ async fn spawn_relay(
                     break;
                 }
                 CommandEvent::Error(err) => {
-                    eprintln!("[relay] command error: {err}");
+                    log::error!("[relay] command error error={err}");
                 }
                 _ => {}
             }
@@ -1159,10 +1170,25 @@ pub fn run() {
 
     let pending_update = PendingUpdate(std::sync::Mutex::new(None));
 
+    let version = option_env!("BUILD_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+    let commit = env!("DESKTOP_COMMIT").to_string();
+    let channel = read_update_channel();
+    let autostarted = is_autostarted();
+    let dev = is_dev_mode();
+
     tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                .targets([
+                    Target::new(TargetKind::LogDir { file_name: None }),
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::Webview),
+                ])
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                .max_file_size(5 * 1024 * 1024)
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
@@ -1204,7 +1230,16 @@ pub fn run() {
             get_autostart,
             set_autostart,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            log::info!(
+                "desktop starting version={} commit={} channel={} autostarted={} is_dev={}",
+                version,
+                commit,
+                channel,
+                autostarted,
+                dev
+            );
+
             // Build tray menu
             let status_item =
                 MenuItem::with_id(app, "status", "Endara — Running", false, None::<&str>)?;
@@ -1223,6 +1258,7 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
+                        log::info!("tray menu action=open");
                         // Show in Cmd-Tab and Dock
                         #[cfg(target_os = "macos")]
                         set_macos_activation_policy(true);
@@ -1232,6 +1268,7 @@ pub fn run() {
                         }
                     }
                     "check_update" => {
+                        log::info!("tray menu action=check_update");
                         let _ = app.emit("check-for-update", ());
                         // Show in Cmd-Tab and Dock
                         #[cfg(target_os = "macos")]
@@ -1242,12 +1279,16 @@ pub fn run() {
                         }
                     }
                     "quit" => {
+                        log::info!("tray menu action=quit");
                         // Kill relay sidecar before exiting
                         if let Some(state) = app.try_state::<RelayState>() {
                             // Kill by PID first (synchronous, reliable)
                             if let Ok(mut pid_guard) = state.pid.lock() {
                                 if let Some(pid) = pid_guard.take() {
-                                    eprintln!("[relay] killing sidecar pid {} on tray quit", pid);
+                                    log::info!(
+                                        "[relay] killing sidecar pid={} reason=tray_quit",
+                                        pid
+                                    );
                                     #[cfg(unix)]
                                     unsafe {
                                         libc::kill(pid as i32, libc::SIGTERM);
@@ -1281,23 +1322,25 @@ pub fn run() {
                 };
                 match spawn_relay(&app_handle, port).await {
                     Ok(child) => {
+                        let pid = child.pid();
                         if let Some(state) = app_handle.try_state::<RelayState>() {
                             if let Ok(mut pid_guard) = state.pid.lock() {
-                                *pid_guard = Some(child.pid());
+                                *pid_guard = Some(pid);
                             }
                             *state.child.lock().await = Some(child);
                             *state.running.lock().await = true;
                         }
-                        eprintln!("[relay] sidecar started successfully");
+                        log::info!("[relay] sidecar started pid={} port={}", pid, port);
                     }
                     Err(e) => {
-                        eprintln!("[relay] FAILED to start sidecar on launch: {e}");
+                        log::error!("[relay] failed to start sidecar on launch error={e}");
                     }
                 }
             });
 
             // Handle autostarted launch: hide window and set accessory mode
             if is_autostarted() {
+                log::info!("autostart hide window=main accessory_mode=true");
                 // Hide the window when auto-launched
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
@@ -1311,10 +1354,16 @@ pub fn run() {
                 set_macos_activation_policy(true);
             }
 
+            log::info!("setup complete");
+
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                log::info!(
+                    "window close requested label={} action=prevented_and_hidden",
+                    window.label()
+                );
                 // Prevent the window from being destroyed — hide it instead
                 api.prevent_close();
                 let _ = window.hide();
@@ -1326,34 +1375,32 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |_app, event| {
-            match event {
-                RunEvent::Exit => {
-                    // Kill relay by PID — no async runtime needed, avoids block_on deadlock
-                    if let Ok(mut guard) = pid_handle.try_lock() {
-                        if let Some(pid) = guard.take() {
-                            eprintln!("[relay] killing sidecar pid {} on app exit", pid);
-                            #[cfg(unix)]
-                            unsafe {
-                                libc::kill(pid as i32, libc::SIGTERM);
-                            }
+            if let RunEvent::Exit = event {
+                log::info!("app exit");
+                // Kill relay by PID — no async runtime needed, avoids block_on deadlock
+                if let Ok(mut guard) = pid_handle.try_lock() {
+                    if let Some(pid) = guard.take() {
+                        log::info!("[relay] killing sidecar pid={} reason=app_exit", pid);
+                        #[cfg(unix)]
+                        unsafe {
+                            libc::kill(pid as i32, libc::SIGTERM);
                         }
                     }
-                    // Also try the async child.kill() as fallback, in a separate thread
-                    // to avoid deadlocking on the tokio runtime during shutdown.
-                    let child_handle = child_handle.clone();
-                    let _ = std::thread::spawn(move || {
-                        if let Ok(rt) = tokio::runtime::Runtime::new() {
-                            rt.block_on(async {
-                                let mut guard = child_handle.lock().await;
-                                if let Some(child) = guard.take() {
-                                    let _ = child.kill();
-                                }
-                            });
-                        }
-                    })
-                    .join();
                 }
-                _ => {}
+                // Also try the async child.kill() as fallback, in a separate thread
+                // to avoid deadlocking on the tokio runtime during shutdown.
+                let child_handle = child_handle.clone();
+                let _ = std::thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Runtime::new() {
+                        rt.block_on(async {
+                            let mut guard = child_handle.lock().await;
+                            if let Some(child) = guard.take() {
+                                let _ = child.kill();
+                            }
+                        });
+                    }
+                })
+                .join();
             }
         });
 }
