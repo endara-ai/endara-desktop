@@ -1764,3 +1764,29 @@ mod updater_backoff_tests {
         assert_eq!(cleaned_long.len(), UPDATER_BODY_EXCERPT_BYTES);
     }
 }
+
+#[cfg(test)]
+mod reqwest_tls_provider_tests {
+    /// Regression: the desktop's `reqwest` dependency must be configured with a
+    /// rustls feature that installs a default crypto provider. A previous attempt
+    /// used `rustls-no-provider`, which caused a panic at
+    /// `reqwest::async_impl::client::default_rustls_crypto_provider` ("No provider
+    /// set") the first time `reqwest::Client::builder().build()` was called —
+    /// triggered transitively by `tauri-plugin-updater` during macOS
+    /// `did_finish_launching`, before any window painted.
+    ///
+    /// Building a default client exercises the same TLS connector setup path
+    /// that panicked. With a provider installed (e.g. `rustls` or
+    /// `rustls-tls` feature) this completes without panic; with
+    /// `rustls-no-provider` and no caller-installed provider it would panic
+    /// inside `Client::builder().build()`.
+    #[test]
+    fn reqwest_client_has_tls_provider_installed() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(50))
+            .build()
+            .expect("reqwest client builds without panicking on TLS provider setup");
+        // Touch the client so the optimizer cannot drop the build call.
+        let _ = format!("{client:?}");
+    }
+}
