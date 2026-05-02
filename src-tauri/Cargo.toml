@@ -29,6 +29,7 @@ tauri-plugin-log = "2.8.0"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"

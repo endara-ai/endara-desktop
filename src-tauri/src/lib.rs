@@ -18,6 +18,21 @@ const STABLE_UPDATE_URL: &str =
     "https://github.com/endara-ai/endara-desktop/releases/latest/download/latest.json";
 const BETA_UPDATE_URL: &str = "https://endara-ai.github.io/endara-desktop/latest.json";
 
+/// Timeout for the pre-flight JSON manifest fetch performed before delegating
+/// to `tauri-plugin-updater`. Chosen to be larger than typical CDN latency yet
+/// short enough that a hung endpoint does not block the UI.
+const UPDATER_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Number of bytes of the response body we keep when logging a non-2xx
+/// updater response. Newlines/control chars are stripped before logging.
+const UPDATER_BODY_EXCERPT_BYTES: usize = 512;
+
+/// Base backoff for the updater check after a single failure (1 minute).
+const UPDATER_BACKOFF_BASE_SECS: u64 = 60;
+
+/// Cap for the exponential updater backoff (30 minutes).
+const UPDATER_BACKOFF_MAX_SECS: u64 = 30 * 60;
+
 /// Workaround: In Tauri v2, `set_activation_policy` is only available on `App`,
 /// not on `AppHandle`, so it cannot be called from event handlers.
 /// See: https://github.com/tauri-apps/tauri/issues/9244
@@ -217,6 +232,82 @@ pub struct RelaySidecarStatusPayload {
 
 /// Holds a pending update that has been checked but not yet installed.
 pub struct PendingUpdate(std::sync::Mutex<Option<tauri_plugin_updater::Update>>);
+
+/// Tauri-managed wrapper around [`UpdaterBackoff`].
+#[derive(Default)]
+pub struct UpdaterBackoffState(std::sync::Mutex<UpdaterBackoff>);
+
+/// Pure state machine that tracks consecutive `check_for_update` failures and
+/// returns a remaining backoff window when callers should skip a check.
+#[derive(Default, Debug, Clone)]
+pub struct UpdaterBackoff {
+    consecutive_failures: u32,
+    last_failure: Option<std::time::Instant>,
+}
+
+impl UpdaterBackoff {
+    /// If a check should currently be skipped, returns `Some(retry_after_secs)`
+    /// for the remaining backoff window. Returns `None` when the caller is
+    /// free to attempt a check.
+    fn next_retry_after_secs(&self, now: std::time::Instant) -> Option<u64> {
+        let last = self.last_failure?;
+        if self.consecutive_failures == 0 {
+            return None;
+        }
+        let backoff_secs = backoff_window_secs(self.consecutive_failures);
+        let elapsed = now.saturating_duration_since(last).as_secs();
+        if elapsed >= backoff_secs {
+            None
+        } else {
+            Some(backoff_secs - elapsed)
+        }
+    }
+
+    fn record_failure(&mut self, now: std::time::Instant) {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.last_failure = Some(now);
+    }
+
+    fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.last_failure = None;
+    }
+}
+
+/// Compute the backoff window in seconds for a given count of consecutive
+/// failures: `min(2^(n-1) * BASE, MAX)`. Returns `0` for `n == 0`.
+fn backoff_window_secs(consecutive_failures: u32) -> u64 {
+    if consecutive_failures == 0 {
+        return 0;
+    }
+    // Clamp the exponent so `1u64 << exp` never overflows.
+    let exp = (consecutive_failures - 1).min(20);
+    let secs = UPDATER_BACKOFF_BASE_SECS.saturating_mul(1u64 << exp);
+    secs.min(UPDATER_BACKOFF_MAX_SECS)
+}
+
+/// Truncate `body` to at most [`UPDATER_BODY_EXCERPT_BYTES`] bytes and replace
+/// CR/LF/tab characters with spaces so the excerpt fits cleanly on a single
+/// log line.
+fn sanitize_body_excerpt(body: &str) -> String {
+    let truncated = if body.len() > UPDATER_BODY_EXCERPT_BYTES {
+        // Slice on a char boundary at-or-before the byte limit.
+        let mut end = UPDATER_BODY_EXCERPT_BYTES;
+        while end > 0 && !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        &body[..end]
+    } else {
+        body
+    };
+    truncated
+        .chars()
+        .map(|c| match c {
+            '\n' | '\r' | '\t' => ' ',
+            _ => c,
+        })
+        .collect()
+}
 
 /// Metadata about an available update.
 #[derive(Serialize, Clone)]
@@ -631,10 +722,18 @@ async fn set_update_channel(channel: String) -> Result<(), String> {
 
 /// Check for an available update using the channel-specific endpoint.
 /// Stores the update in PendingUpdate state if found.
+///
+/// Performs a pre-flight `reqwest` GET on the manifest URL so a 4xx/5xx
+/// response is logged with `url`, `status`, `body_excerpt`, and `channel`
+/// before delegating to `tauri-plugin-updater` (which would otherwise
+/// surface only an opaque "did not respond with a successful status code"
+/// error). Consecutive failures trigger an exponential in-process backoff
+/// to stop hammering a misconfigured endpoint.
 #[tauri::command]
 async fn check_for_update(
     app: AppHandle,
     pending: State<'_, PendingUpdate>,
+    backoff: State<'_, UpdaterBackoffState>,
 ) -> Result<Option<UpdateMetadata>, String> {
     let channel = read_update_channel();
     let url = if channel == "beta" {
@@ -652,6 +751,85 @@ async fn check_for_update(
             url: url.to_string(),
         },
     );
+
+    // Backoff gate: skip the check entirely if a recent failure put us in the
+    // backoff window.
+    {
+        let guard = backoff
+            .0
+            .lock()
+            .map_err(|e| format!("Failed to lock updater backoff state: {e}"))?;
+        if let Some(retry_after_secs) = guard.next_retry_after_secs(std::time::Instant::now()) {
+            log::info!(
+                "updater check skipped: in backoff window channel={} retry_after_secs={}",
+                channel,
+                retry_after_secs
+            );
+            return Err(format!(
+                "updater check skipped: in backoff window (retry_after_secs={})",
+                retry_after_secs
+            ));
+        }
+    }
+
+    // Pre-flight fetch so we own the error path and can log url + status + body
+    // excerpt before handing the URL to the plugin.
+    let client = reqwest::Client::builder()
+        .timeout(UPDATER_FETCH_TIMEOUT)
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let response = match client.get(url).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            log::error!(
+                "updater check transport error channel={} url={} error={}",
+                channel,
+                url,
+                e
+            );
+            let mut guard = backoff
+                .0
+                .lock()
+                .map_err(|e| format!("Failed to lock updater backoff state: {e}"))?;
+            guard.record_failure(std::time::Instant::now());
+            return Err(format!("Failed to fetch update manifest: {e}"));
+        }
+    };
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        let body_excerpt = sanitize_body_excerpt(&body);
+        log::warn!(
+            "updater check non-2xx channel={} url={} status={} body_excerpt={:?}",
+            channel,
+            url,
+            status.as_u16(),
+            body_excerpt
+        );
+        let mut guard = backoff
+            .0
+            .lock()
+            .map_err(|e| format!("Failed to lock updater backoff state: {e}"))?;
+        guard.record_failure(std::time::Instant::now());
+        return Err(format!(
+            "Update endpoint returned status {} for {} channel",
+            status.as_u16(),
+            channel
+        ));
+    }
+
+    // 2xx: reset backoff. The plugin will refetch + parse + verify the
+    // manifest below; that is the install path of record.
+    {
+        let mut guard = backoff
+            .0
+            .lock()
+            .map_err(|e| format!("Failed to lock updater backoff state: {e}"))?;
+        guard.record_success();
+    }
+    drop(response);
 
     let update = app
         .updater_builder()
@@ -1206,6 +1384,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(relay_state)
         .manage(pending_update)
+        .manage(UpdaterBackoffState::default())
         .invoke_handler(tauri::generate_handler![
             start_relay,
             stop_relay,
@@ -1495,5 +1674,119 @@ mod dev_mode_tests {
                 "9400"
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod updater_backoff_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn updater_backoff_window_grows_then_caps() {
+        // Exponential schedule: 1m, 2m, 4m, 8m, 16m, then capped at 30m.
+        assert_eq!(backoff_window_secs(0), 0);
+        assert_eq!(backoff_window_secs(1), 60);
+        assert_eq!(backoff_window_secs(2), 120);
+        assert_eq!(backoff_window_secs(3), 240);
+        assert_eq!(backoff_window_secs(4), 480);
+        assert_eq!(backoff_window_secs(5), 960);
+        assert_eq!(backoff_window_secs(6), UPDATER_BACKOFF_MAX_SECS);
+        // Saturates rather than overflowing for absurdly large counts.
+        assert_eq!(backoff_window_secs(100), UPDATER_BACKOFF_MAX_SECS);
+        assert_eq!(backoff_window_secs(u32::MAX), UPDATER_BACKOFF_MAX_SECS);
+    }
+
+    #[test]
+    fn updater_backoff_no_failures_allows_check() {
+        let b = UpdaterBackoff::default();
+        assert!(b.next_retry_after_secs(Instant::now()).is_none());
+    }
+
+    #[test]
+    fn updater_backoff_record_failure_advances_retry() {
+        let mut b = UpdaterBackoff::default();
+        let now = Instant::now();
+
+        b.record_failure(now);
+        let first = b
+            .next_retry_after_secs(now)
+            .expect("first failure should produce a backoff window");
+        assert!(first > 0 && first <= 60, "first window should be <= 60s");
+
+        // A second failure should produce a strictly larger window than the first.
+        b.record_failure(now);
+        let second = b
+            .next_retry_after_secs(now)
+            .expect("second failure should still be in backoff");
+        assert!(
+            second > first,
+            "second window ({second}s) must exceed first ({first}s)"
+        );
+    }
+
+    #[test]
+    fn updater_backoff_clears_after_window_passes() {
+        let mut b = UpdaterBackoff::default();
+        let now = Instant::now();
+        b.record_failure(now);
+
+        // Once the configured window elapses, the gate opens again.
+        let later = now + Duration::from_secs(UPDATER_BACKOFF_BASE_SECS + 1);
+        assert!(b.next_retry_after_secs(later).is_none());
+    }
+
+    #[test]
+    fn updater_backoff_record_success_resets() {
+        let mut b = UpdaterBackoff::default();
+        let now = Instant::now();
+        b.record_failure(now);
+        b.record_failure(now);
+        assert!(b.next_retry_after_secs(now).is_some());
+
+        b.record_success();
+        assert_eq!(b.consecutive_failures, 0);
+        assert!(b.last_failure.is_none());
+        assert!(b.next_retry_after_secs(now).is_none());
+    }
+
+    #[test]
+    fn updater_backoff_sanitize_strips_newlines_and_truncates() {
+        let body = "line1\nline2\r\nline3\twith\ttabs";
+        let cleaned = sanitize_body_excerpt(body);
+        assert!(!cleaned.contains('\n'));
+        assert!(!cleaned.contains('\r'));
+        assert!(!cleaned.contains('\t'));
+        assert_eq!(cleaned, "line1 line2  line3 with tabs");
+
+        let long = "x".repeat(UPDATER_BODY_EXCERPT_BYTES + 100);
+        let cleaned_long = sanitize_body_excerpt(&long);
+        assert_eq!(cleaned_long.len(), UPDATER_BODY_EXCERPT_BYTES);
+    }
+}
+
+#[cfg(test)]
+mod reqwest_tls_provider_tests {
+    /// Regression: the desktop's `reqwest` dependency must be configured with a
+    /// rustls feature that installs a default crypto provider. A previous attempt
+    /// used `rustls-no-provider`, which caused a panic at
+    /// `reqwest::async_impl::client::default_rustls_crypto_provider` ("No provider
+    /// set") the first time `reqwest::Client::builder().build()` was called —
+    /// triggered transitively by `tauri-plugin-updater` during macOS
+    /// `did_finish_launching`, before any window painted.
+    ///
+    /// Building a default client exercises the same TLS connector setup path
+    /// that panicked. With a provider installed (e.g. `rustls` or
+    /// `rustls-tls` feature) this completes without panic; with
+    /// `rustls-no-provider` and no caller-installed provider it would panic
+    /// inside `Client::builder().build()`.
+    #[test]
+    fn reqwest_client_has_tls_provider_installed() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(50))
+            .build()
+            .expect("reqwest client builds without panicking on TLS provider setup");
+        // Touch the client so the optimizer cannot drop the build call.
+        let _ = format!("{client:?}");
     }
 }
