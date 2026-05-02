@@ -34,6 +34,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSRunningApplication"] }
+objc2-web-kit = { version = "0.3.2", features = ["WKNavigationDelegate", "WKNavigation", "WKWebView"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.184"
