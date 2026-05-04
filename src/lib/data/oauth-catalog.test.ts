@@ -36,7 +36,7 @@ describe('oauthCatalog', () => {
   it('should have the correct Linear URL', () => {
     const linear = oauthCatalog.find((entry) => entry.id === 'linear');
     expect(linear).toBeDefined();
-    expect(linear!.url).toBe('https://mcp.linear.app/sse');
+    expect(linear!.url).toBe('https://mcp.linear.app/mcp');
     expect(linear!.supportsDiscovery).toBe(true);
     expect(linear!.supportsDcr).toBe(true);
   });

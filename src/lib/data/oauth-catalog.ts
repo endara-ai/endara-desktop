@@ -20,7 +20,7 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     description: 'Issue tracking and project management',
     icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 16.5l2.8-2.8a7 7 0 0 1-.8-3.2A7 7 0 0 1 12.5 3.5l.5.5a7 7 0 0 1-7 7 7 7 0 0 1-3.2-.8L3.5 16.5z" fill="currentColor" stroke="none"/></svg>',
     category: 'developer',
-    url: 'https://mcp.linear.app/sse',
+    url: 'https://mcp.linear.app/mcp',
     defaultScopes: ['read', 'write'],
     supportsDiscovery: true,
     supportsDcr: true,
