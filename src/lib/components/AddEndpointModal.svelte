@@ -706,7 +706,7 @@
         {:else if transport === 'oauth'}
           <div>
             <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">Server URL</label>
-            <input id="modal-ep-url" type="text" bind:value={url} placeholder="https://mcp.linear.app/sse"
+            <input id="modal-ep-url" type="text" bind:value={url} placeholder="https://mcp.linear.app/mcp"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
 
