@@ -1,13 +1,29 @@
 # Endara Desktop
 
-**A native tray application for managing the [Endara Relay](https://github.com/endara-ai/endara-relay).** Lives in your menu bar, keeps the relay running, and gives you a clean UI to monitor endpoints, browse tools, and view logs.
+**One endpoint for all your MCP servers.** [endara.ai](https://endara.ai)
+
+Add MCP servers, manage OAuth, browse tools — without ever opening a terminal.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Built with Tauri](https://img.shields.io/badge/Built_with-Tauri_2-FFC131?logo=tauri&logoColor=white)](https://v2.tauri.app)
 [![Svelte](https://img.shields.io/badge/Svelte_5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/endara-ai/endara-desktop/releases)
 
-<!-- TODO: Add screenshot showing the main UI — sidebar with endpoints on the left, detail panel with tools/logs/config tabs on the right -->
+<!-- TODO(website): once these images are hosted on endara.ai, uncomment.
+![Endara Desktop — endpoint dashboard](https://endara.ai/images/desktop-hero.png)
+![Endara Desktop — dark mode](https://endara.ai/images/desktop-dark.png)
+![OAuth flow and tool catalog](https://endara.ai/images/oauth-catalog.png)
+-->
+
+> Works with Claude Desktop, ChatGPT, Cursor, Windsurf, VS Code, Zed, Continue, and any MCP-compatible client.
+
+## What can you do?
+
+- **Visual endpoint dashboard** — see every MCP server you've added with live health indicators, all in one place.
+- **Search tools** across every connected server from a single ⌘K palette.
+- **Watch real-time logs** stream from each endpoint as requests flow through.
+- **Manage OAuth flows** end-to-end inside the app — no copy-pasting tokens between terminals.
+- **Single-click add server** for STDIO, SSE, or HTTP MCP servers — paste a command or URL and you're done.
 
 ## What is this?
 
@@ -40,6 +56,13 @@ Or grab an installer directly from [GitHub Releases](https://github.com/endara-a
 | 🐧 Linux | AppImage | `Endara_x.x.x_amd64.AppImage` |
 
 Or [build from source](#development) if you prefer.
+
+## Quick Start
+
+1. **Install** Endara Desktop using one of the options in [Download](#download) above.
+2. **Launch the app** — the tray icon appears in your menu bar and the bundled relay starts automatically on `127.0.0.1:9400`.
+3. **Add a server** — click the tray icon, choose **Add server**, and paste a STDIO command or an SSE / HTTP MCP server URL.
+4. **Connect your client** — point Claude Desktop, Cursor, or any other MCP-compatible client at `http://localhost:9400/mcp` and your tools show up.
 
 ## Features
 
@@ -249,13 +272,15 @@ Please make sure `npm run check` passes before submitting.
 ## Related Projects
 
 - **[Endara Relay](https://github.com/endara-ai/endara-relay)** — The MCP relay server that Endara Desktop manages
+- **[Endara](https://endara.ai)** — Project website
+- **[endara-ai/homebrew-tap](https://github.com/endara-ai/homebrew-tap)** — Homebrew tap that ships the signed DMG and the headless relay CLI
 
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
 ```
-Copyright 2025 Endara
+Copyright 2025–2026 Endara AI
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
