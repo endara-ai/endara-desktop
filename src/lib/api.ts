@@ -118,6 +118,11 @@ export interface AddEndpointParams {
   headers?: Record<string, string>;
   oauth_server_url?: string;
   client_id?: string;
+  /**
+   * Write-only OAuth client secret. Sent to the relay's
+   * `/api/endpoints/{name}/credentials` endpoint and stored in the DCR file
+   * (chmod 0600); never persisted in `config.toml`. Empty/absent = no secret.
+   */
   client_secret?: string;
   scopes?: string;
   token_endpoint?: string;
@@ -173,7 +178,13 @@ export interface EndpointConfig {
   headers?: Record<string, string>;
   oauth_server_url?: string;
   client_id?: string;
-  client_secret?: string;
+  /**
+   * `true` when an OAuth client secret is stored for this endpoint (in the
+   * DCR file or, for legacy entries, in `config.toml`). The secret value
+   * itself is never returned by the backend; the UI renders a masked,
+   * write-only field.
+   */
+  client_secret_set?: boolean;
   scopes?: string;
   token_endpoint?: string;
 }
@@ -195,6 +206,12 @@ export interface UpdateEndpointParams {
   headers?: Record<string, string>;
   oauth_server_url?: string;
   client_id?: string;
+  /**
+   * Write-only OAuth client secret. Empty/absent means "do not change the
+   * stored secret". When non-empty, the new value is sent to the relay's
+   * credentials endpoint (DCR file, chmod 0600) and never written to
+   * `config.toml`.
+   */
   client_secret?: string;
   scopes?: string;
   token_endpoint?: string;

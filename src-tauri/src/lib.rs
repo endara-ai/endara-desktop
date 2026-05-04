@@ -1159,9 +1159,84 @@ struct EndpointConfig {
     headers: Option<HashMap<String, String>>,
     oauth_server_url: Option<String>,
     client_id: Option<String>,
-    client_secret: Option<String>,
+    /// True iff a client secret is stored for this endpoint (in the DCR file
+    /// or — for legacy entries — in `config.toml`). The secret value itself is
+    /// never returned to the UI; the field is masked write-only.
+    client_secret_set: bool,
     scopes: Option<String>,
     token_endpoint: Option<String>,
+}
+
+/// Path to the DCR credentials file for an endpoint, e.g.
+/// `~/.endara/tokens/{name}.dcr.json`. Mirrors the relay's `TokenManager`
+/// layout so we can answer "is a client secret stored?" without a relay
+/// round-trip.
+fn dcr_file_path(name: &str) -> Result<std::path::PathBuf, String> {
+    Ok(data_dir()?.join("tokens").join(format!("{name}.dcr.json")))
+}
+
+/// POST credentials (client_id / client_secret / oauth_server_url) to the
+/// relay's `/api/endpoints/{name}/credentials` endpoint so they are persisted
+/// via `TokenManager::save_dcr` instead of as plaintext fields in
+/// `config.toml`. Empty/None fields are omitted from the body.
+async fn post_relay_credentials(
+    name: &str,
+    client_id: Option<&str>,
+    client_secret: Option<&str>,
+    oauth_server_url: Option<&str>,
+) -> Result<(), String> {
+    let port = read_port_from_config().unwrap_or(if is_dev_mode() {
+        DEV_RELAY_PORT
+    } else {
+        DEFAULT_RELAY_PORT
+    });
+    let url = format!(
+        "http://127.0.0.1:{port}/api/endpoints/{}/credentials",
+        urlencoding::encode(name)
+    );
+
+    let mut body = serde_json::Map::new();
+    if let Some(v) = client_id.filter(|s| !s.is_empty()) {
+        body.insert(
+            "client_id".to_string(),
+            serde_json::Value::String(v.to_string()),
+        );
+    }
+    if let Some(v) = client_secret.filter(|s| !s.is_empty()) {
+        body.insert(
+            "client_secret".to_string(),
+            serde_json::Value::String(v.to_string()),
+        );
+    }
+    if let Some(v) = oauth_server_url.filter(|s| !s.is_empty()) {
+        body.insert(
+            "oauth_server_url".to_string(),
+            serde_json::Value::String(v.to_string()),
+        );
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let res = client
+        .post(&url)
+        .json(&serde_json::Value::Object(body))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach relay at {url}: {e}"))?;
+
+    if !res.status().is_success() {
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!(
+            "Relay rejected credentials write (status {}): {}",
+            status.as_u16(),
+            body
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1215,10 +1290,17 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     .get("client_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                let client_secret = ep
+                // The secret value is never returned to the UI. We only
+                // expose whether one is stored — true if a DCR file exists
+                // for this endpoint or, for legacy entries, if `config.toml`
+                // still has a `client_secret` field.
+                let legacy_toml_secret = ep
                     .get("client_secret")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty());
+                let dcr_exists = dcr_file_path(&name).map(|p| p.exists()).unwrap_or(false);
+                let client_secret_set = dcr_exists || legacy_toml_secret.is_some();
                 let scopes = ep.get("scopes").and_then(|v| v.as_array()).map(|arr| {
                     arr.iter()
                         .filter_map(|v| v.as_str())
@@ -1242,7 +1324,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     headers,
                     oauth_server_url,
                     client_id,
-                    client_secret,
+                    client_secret_set,
                     scopes,
                     token_endpoint,
                 });
@@ -1287,12 +1369,23 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
         }
     }
 
+    // Snapshot any legacy `client_secret` from TOML before we clear the
+    // table; we never write it back to TOML, but we still need it so a
+    // user save without typing a new secret does not lose authentication
+    // for endpoints that were created before Wave 3.
+    let mut legacy_toml_secret: Option<String> = None;
     let mut found = false;
     if let Some(toml::Value::Array(endpoints)) = parsed.get_mut("endpoints") {
         for ep in endpoints.iter_mut() {
             if ep.get("name").and_then(|v| v.as_str()) == Some(&args.original_name) {
                 found = true;
                 let table = ep.as_table_mut().ok_or("Endpoint is not a table")?;
+
+                legacy_toml_secret = table
+                    .get("client_secret")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty());
 
                 // Clear old fields and set new ones
                 table.clear();
@@ -1357,12 +1450,9 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                         toml::Value::String(client_id.clone()),
                     );
                 }
-                if let Some(client_secret) = &args.client_secret {
-                    table.insert(
-                        "client_secret".to_string(),
-                        toml::Value::String(client_secret.clone()),
-                    );
-                }
+                // `client_secret` is intentionally NOT written to TOML —
+                // it is persisted via the relay's credentials endpoint
+                // (`TokenManager::save_dcr`) below.
                 if let Some(scopes) = &args.scopes {
                     let arr: Vec<toml::Value> = scopes
                         .split_whitespace()
@@ -1387,7 +1477,27 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
         return Err(format!("Endpoint '{}' not found", args.original_name));
     }
 
-    write_config(&parsed)
+    write_config(&parsed)?;
+
+    // Persist the client secret via the relay so it lands in the DCR file
+    // (chmod 0600) instead of `config.toml`. Prefer the user-supplied value;
+    // fall back to a legacy TOML secret to migrate it to the DCR store.
+    let user_supplied = args
+        .client_secret
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let secret_to_persist = user_supplied.or(legacy_toml_secret);
+    if secret_to_persist.is_some() {
+        post_relay_credentials(
+            &args.name,
+            args.client_id.as_deref(),
+            secret_to_persist.as_deref(),
+            args.oauth_server_url.as_deref(),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1427,7 +1537,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
     }
 
     let mut endpoint = toml::map::Map::new();
-    endpoint.insert("name".to_string(), toml::Value::String(args.name));
+    endpoint.insert("name".to_string(), toml::Value::String(args.name.clone()));
     endpoint.insert("transport".to_string(), toml::Value::String(args.transport));
     if let Some(tool_prefix) = args.tool_prefix {
         endpoint.insert("tool_prefix".to_string(), toml::Value::String(tool_prefix));
@@ -1464,21 +1574,20 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
             endpoint.insert("headers".to_string(), toml::Value::Table(headers_table));
         }
     }
-    if let Some(oauth_server_url) = args.oauth_server_url {
+    if let Some(oauth_server_url) = &args.oauth_server_url {
         endpoint.insert(
             "oauth_server_url".to_string(),
-            toml::Value::String(oauth_server_url),
+            toml::Value::String(oauth_server_url.clone()),
         );
     }
-    if let Some(client_id) = args.client_id {
-        endpoint.insert("client_id".to_string(), toml::Value::String(client_id));
-    }
-    if let Some(client_secret) = args.client_secret {
+    if let Some(client_id) = &args.client_id {
         endpoint.insert(
-            "client_secret".to_string(),
-            toml::Value::String(client_secret),
+            "client_id".to_string(),
+            toml::Value::String(client_id.clone()),
         );
     }
+    // `client_secret` is intentionally NOT written to TOML — it is persisted
+    // via the relay's credentials endpoint (`TokenManager::save_dcr`) below.
     if let Some(scopes) = args.scopes {
         let arr: Vec<toml::Value> = scopes
             .split_whitespace()
@@ -1502,7 +1611,32 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
         .ok_or_else(|| "Invalid endpoints section in config".to_string())?;
     endpoints.push(toml::Value::Table(endpoint));
 
-    write_config(&parsed)
+    write_config(&parsed)?;
+
+    // Persist credentials via the relay so the secret lands in the DCR file
+    // (chmod 0600) instead of `config.toml`. We POST whenever any of
+    // {client_id, client_secret} is supplied so `TokenManager::save_dcr`
+    // captures the manually-entered identifiers up front.
+    let has_client_id = args
+        .client_id
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let has_client_secret = args
+        .client_secret
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    if has_client_id || has_client_secret {
+        post_relay_credentials(
+            &args.name,
+            args.client_id.as_deref(),
+            args.client_secret.as_deref(),
+            args.oauth_server_url.as_deref(),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
