@@ -44,6 +44,7 @@
   let dcrClientId = $state('');
   let dcrClientSecret = $state('');
   let pendingSetupSessionId: string | null = $state(null);
+  let setupAuthCancelled = $state(false);
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
@@ -351,6 +352,7 @@
   }
 
   async function handleOAuthSubmit() {
+    setupAuthCancelled = false;
     error = '';
     if (!name.trim()) { error = 'Name is required'; return; }
     if (!url.trim()) { error = 'Server URL is required'; return; }
@@ -409,8 +411,10 @@
     const maxAttempts = 120;
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise((r) => setTimeout(r, 1000));
+      if (setupAuthCancelled) return;
       try {
         const statusResult = await oauthSetupStatus(sessionId);
+        if (setupAuthCancelled) return;
         if (statusResult.status === 'authorized') {
           // Authorization complete — commit the endpoint to config.toml
           try {
@@ -439,12 +443,23 @@
         // Polling error, continue
       }
     }
+    if (setupAuthCancelled) return;
     error = 'OAuth authorization timed out. Please try again.';
     // Clean up on timeout — no config was ever written
     if (pendingSetupSessionId) {
       try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
       pendingSetupSessionId = null;
     }
+  }
+
+  async function handleCancelAuth() {
+    setupAuthCancelled = true;
+    if (pendingSetupSessionId) {
+      try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
+      pendingSetupSessionId = null;
+    }
+    submitting = false;
+    error = 'OAuth attempt cancelled. Edit the fields and try again.';
   }
 
   async function handleDcrFallbackSubmit() {
@@ -938,6 +953,18 @@
         {/if}
 
         {#if !showingDcrFallback}
+          {#if submitting && pendingSetupSessionId}
+            <div class="flex items-center justify-between gap-2 pt-1">
+              <p class="text-[11px] text-(--fg2)">Waiting for browser authorization…</p>
+              <button
+                type="button"
+                class="text-xs text-(--accent) hover:text-(--accent-hover) underline"
+                onclick={handleCancelAuth}
+              >
+                Cancel auth attempt
+              </button>
+            </div>
+          {/if}
           <div class="flex justify-end gap-2 pt-2">
             <button
               class="px-3 py-1.5 text-sm rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
