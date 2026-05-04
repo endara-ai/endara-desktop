@@ -370,6 +370,15 @@
     if (scopes.trim()) {
       setupParams.scopes = scopes.trim().split(/\s+/);
     }
+    if (oauthServerUrl.trim()) {
+      setupParams.oauth_server_url = oauthServerUrl.trim();
+    }
+    if (clientId.trim()) {
+      setupParams.client_id = clientId.trim();
+    }
+    if (clientSecret.trim()) {
+      setupParams.client_secret = clientSecret.trim();
+    }
 
     submitting = true;
     try {
@@ -377,13 +386,14 @@
       pendingSetupSessionId = result.session_id;
 
       if (result.status === 'awaiting_credentials' && result.dcr_error) {
-        // DCR failed — show manual credentials form
+        // DCR failed — show manual credentials form, prefilled from any
+        // advanced-section values the user already typed
         showingDcrFallback = true;
         dcrFallbackData = {
           authorization_endpoint: result.discovery?.auth_server,
         };
-        dcrClientId = '';
-        dcrClientSecret = '';
+        dcrClientId = clientId.trim();
+        dcrClientSecret = clientSecret.trim();
         submitting = false;
         return;
       }
