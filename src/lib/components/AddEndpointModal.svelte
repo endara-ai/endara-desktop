@@ -45,6 +45,7 @@
   let dcrClientSecret = $state('');
   let pendingSetupSessionId: string | null = $state(null);
   let setupAuthCancelled = $state(false);
+  let cancelHint = $state('');
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
@@ -258,6 +259,7 @@
 
   async function handleSubmit() {
     error = '';
+    cancelHint = '';
     if (!name.trim()) { error = 'Name is required'; return; }
     const trimmedName = name.trim();
     const defaultPrefix = sanitizeName(trimmedName);
@@ -354,6 +356,7 @@
   async function handleOAuthSubmit() {
     setupAuthCancelled = false;
     error = '';
+    cancelHint = '';
     if (!name.trim()) { error = 'Name is required'; return; }
     if (!url.trim()) { error = 'Server URL is required'; return; }
 
@@ -517,8 +520,26 @@
     onclose();
   }
 
+  async function handleDcrCancel() {
+    // Cancel only the inner DCR dialog: cancel the in-flight relay setup session
+    // but keep the outer Add Endpoint modal open with all form values intact.
+    setupAuthCancelled = true;
+    if (pendingSetupSessionId) {
+      try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
+      pendingSetupSessionId = null;
+    }
+    showingDcrFallback = false;
+    dcrFallbackData = {};
+    submitting = false;
+    error = '';
+    cancelHint = 'OAuth setup cancelled — adjust your settings and try again.';
+  }
+
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') handleCancel();
+    if (e.key === 'Escape') {
+      if (showingDcrFallback) handleDcrCancel();
+      else handleCancel();
+    }
   }
 </script>
 
@@ -644,6 +665,11 @@
       </div>
 
       <div class="space-y-3">
+        {#if cancelHint}
+          <p class="text-xs text-(--fg2) bg-(--surface-hover) border border-(--border) rounded-lg px-3 py-2">
+            {cancelHint}
+          </p>
+        {/if}
         {#if !selectedCatalog && !selectedOAuthEntry}
           <!-- Custom: transport selector -->
           <fieldset class="border-none p-0 m-0 mb-1">
@@ -913,94 +939,135 @@
           </div>
         {/if}
 
-        <!-- DCR Fallback Form -->
-        {#if showingDcrFallback}
-          <div class="border rounded-lg p-4 space-y-3" style="border-color: color-mix(in oklab, var(--trans-oauth-fg) 30%, transparent); background: color-mix(in oklab, var(--trans-oauth-fg) 6%, transparent);">
-            <div>
-              <p class="text-sm text-(--fg1)">
-                <strong>{name}</strong> requires manual client registration.
-                Register an OAuth app with the service, then enter your credentials below.
-              </p>
-              {#if dcrFallbackData.authorization_endpoint}
-                <p class="text-[11px] text-(--fg2) mt-1">
-                  Auth server: <code class="bg-(--surface-hover) px-1 py-0.5 rounded text-[11px]">{dcrFallbackData.authorization_endpoint}</code>
-                </p>
-              {/if}
-            </div>
+        {#if error}
+          <p class="text-xs text-(--offline)">{error}</p>
+        {/if}
 
-            <div>
-              <label for="modal-dcr-client-id" class="block text-xs font-medium mb-1 text-(--fg2)">
-                Client ID <span class="text-(--offline)">*</span>
-              </label>
-              <input id="modal-dcr-client-id" type="text" bind:value={dcrClientId} placeholder="Your registered client ID"
-                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
-            </div>
-
-            <div>
-              <label for="modal-dcr-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">
-                Client Secret <span class="text-(--fg2)/50">(optional for public clients)</span>
-              </label>
-              <input id="modal-dcr-client-secret" type="password" bind:value={dcrClientSecret} placeholder="Optional"
-                class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
-            </div>
-
+        {#if submitting && pendingSetupSessionId}
+          <div class="flex items-center justify-between gap-2 pt-1">
+            <p class="text-[11px] text-(--fg2)">Waiting for browser authorization…</p>
             <button
-              class="w-full px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
-              onclick={handleDcrFallbackSubmit}
-              disabled={submitting}
+              type="button"
+              class="text-xs text-(--accent) hover:text-(--accent-hover) underline"
+              onclick={handleCancelAuth}
             >
-              {#if submitting}
-                Connecting…
-              {:else}
-                Save Credentials & Connect
-              {/if}
+              Cancel auth attempt
             </button>
           </div>
         {/if}
+        <div class="flex justify-end gap-2 pt-2">
+          <button
+            class="px-3 py-1.5 text-sm rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
+            onclick={handleCancel}
+          >
+            Cancel
+          </button>
+          <button
+            class="px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
+            onclick={transport === 'oauth' ? handleOAuthSubmit : handleSubmit}
+            disabled={submitting}
+          >
+            {#if submitting}
+              {transport === 'oauth' ? 'Connecting…' : 'Adding…'}
+            {:else if selectedOAuthEntry}
+              Connect with {selectedOAuthEntry.name}
+            {:else if transport === 'oauth'}
+              Save & Connect
+            {:else}
+              Add Server
+            {/if}
+          </button>
+        </div>
+      </div>
+    {/if}
+  </div>
+</div>
+
+{#if showingDcrFallback}
+  <div
+    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
+    role="presentation"
+    onclick={handleDcrCancel}
+    onkeydown={handleKeydown}
+  >
+    <div
+      class="bg-(--surface) rounded-xl shadow-xl border border-(--border) p-6 w-[28rem] max-w-[90vw] max-h-[90vh] overflow-y-auto"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Manual OAuth client registration required"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <h3 class="text-base font-semibold mb-3 text-(--fg1)">
+        Manual OAuth client registration required
+      </h3>
+
+      <div class="space-y-3">
+        <p class="text-sm text-(--fg1)">
+          <strong>{name}</strong>'s server doesn't support Dynamic Client Registration.
+          Register an OAuth app with the provider, then paste your credentials below.
+        </p>
+        {#if dcrFallbackData.authorization_endpoint}
+          <p class="text-[11px] text-(--fg2)">
+            Authorization endpoint:
+            <code class="bg-(--surface-hover) px-1 py-0.5 rounded text-[11px]">{dcrFallbackData.authorization_endpoint}</code>
+          </p>
+        {/if}
+
+        <div>
+          <label for="modal-dcr-client-id" class="block text-xs font-medium mb-1 text-(--fg2)">
+            Client ID <span class="text-(--offline)">*</span>
+          </label>
+          <input
+            id="modal-dcr-client-id"
+            type="text"
+            bind:value={dcrClientId}
+            placeholder="Your registered client ID"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)"
+          />
+        </div>
+
+        <div>
+          <label for="modal-dcr-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">
+            Client Secret <span class="text-(--fg2)/50">(optional)</span>
+          </label>
+          <input
+            id="modal-dcr-client-secret"
+            type="password"
+            bind:value={dcrClientSecret}
+            placeholder="Optional"
+            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)"
+          />
+        </div>
 
         {#if error}
           <p class="text-xs text-(--offline)">{error}</p>
         {/if}
 
-        {#if !showingDcrFallback}
-          {#if submitting && pendingSetupSessionId}
-            <div class="flex items-center justify-between gap-2 pt-1">
-              <p class="text-[11px] text-(--fg2)">Waiting for browser authorization…</p>
-              <button
-                type="button"
-                class="text-xs text-(--accent) hover:text-(--accent-hover) underline"
-                onclick={handleCancelAuth}
-              >
-                Cancel auth attempt
-              </button>
-            </div>
-          {/if}
-          <div class="flex justify-end gap-2 pt-2">
-            <button
-              class="px-3 py-1.5 text-sm rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
-              onclick={handleCancel}
-            >
-              Cancel
-            </button>
-            <button
-              class="px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
-              onclick={transport === 'oauth' ? handleOAuthSubmit : handleSubmit}
-              disabled={submitting}
-            >
-              {#if submitting}
-                {transport === 'oauth' ? 'Connecting…' : 'Adding…'}
-              {:else if selectedOAuthEntry}
-                Connect with {selectedOAuthEntry.name}
-              {:else if transport === 'oauth'}
-                Save & Connect
-              {:else}
-                Add Server
-              {/if}
-            </button>
-          </div>
-        {/if}
+        <div class="flex justify-between gap-2 pt-2">
+          <button
+            type="button"
+            class="px-3 py-1.5 text-sm rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
+            onclick={handleDcrCancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
+            onclick={handleDcrFallbackSubmit}
+            disabled={submitting}
+          >
+            {#if submitting}
+              Connecting…
+            {:else}
+              Save & Connect
+            {/if}
+          </button>
+        </div>
       </div>
-    {/if}
+    </div>
   </div>
-</div>
+{/if}
 

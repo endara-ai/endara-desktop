@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { sanitizeName } from '$lib/utils';
 import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
 import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
@@ -170,6 +170,141 @@ describe('AddEndpointModal unified browse list', () => {
       const list = buildUnifiedList({ showOAuth: true, showLocal: true, search: 'issue tracking' });
       expect(list.length).toBeGreaterThanOrEqual(1);
       expect(list.some((e) => e.entry.id === 'linear')).toBe(true);
+    });
+  });
+
+  describe('DCR fallback dialog cancel logic', () => {
+    // Mirror of handleDcrCancel in AddEndpointModal.svelte. Cancels the in-flight
+    // relay setup session, dismisses only the inner DCR dialog, preserves all
+    // outer form state, and surfaces a neutral hint above the form fields.
+    interface ModalState {
+      // Outer form (must be preserved across DCR cancel)
+      name: string;
+      url: string;
+      prefix: string;
+      scopes: string;
+      clientId: string;
+      clientSecret: string;
+      oauthServerUrl: string;
+      // DCR dialog + in-flight session (reset on cancel)
+      showingDcrFallback: boolean;
+      dcrFallbackData: { authorization_endpoint?: string };
+      dcrClientId: string;
+      dcrClientSecret: string;
+      pendingSetupSessionId: string | null;
+      submitting: boolean;
+      setupAuthCancelled: boolean;
+      error: string;
+      cancelHint: string;
+    }
+
+    async function applyDcrCancel(
+      state: ModalState,
+      cancelApi: (sessionId: string) => Promise<void>,
+    ): Promise<void> {
+      state.setupAuthCancelled = true;
+      if (state.pendingSetupSessionId) {
+        try { await cancelApi(state.pendingSetupSessionId); } catch { /* best effort */ }
+        state.pendingSetupSessionId = null;
+      }
+      state.showingDcrFallback = false;
+      state.dcrFallbackData = {};
+      state.submitting = false;
+      state.error = '';
+      state.cancelHint = 'OAuth setup cancelled — adjust your settings and try again.';
+    }
+
+    function makeState(overrides: Partial<ModalState> = {}): ModalState {
+      return {
+        name: 'Linear',
+        url: 'https://mcp.linear.app/sse',
+        prefix: 'linear',
+        scopes: 'read write',
+        clientId: 'preserved-client-id',
+        clientSecret: 'preserved-client-secret',
+        oauthServerUrl: 'https://linear.app/oauth',
+        showingDcrFallback: true,
+        dcrFallbackData: { authorization_endpoint: 'https://linear.app/oauth/authorize' },
+        dcrClientId: 'typed-client-id',
+        dcrClientSecret: 'typed-client-secret',
+        pendingSetupSessionId: 'session-abc-123',
+        submitting: true,
+        setupAuthCancelled: false,
+        error: '',
+        cancelHint: '',
+        ...overrides,
+      };
+    }
+
+    it('cancel calls oauthSetupCancel with the active session id and clears it', async () => {
+      const cancelApi = vi.fn(async (_sessionId: string) => {});
+      const state = makeState();
+      await applyDcrCancel(state, cancelApi);
+      expect(cancelApi).toHaveBeenCalledTimes(1);
+      expect(cancelApi).toHaveBeenCalledWith('session-abc-123');
+      expect(state.pendingSetupSessionId).toBeNull();
+    });
+
+    it('cancel resets DCR dialog state and shows the neutral hint', async () => {
+      const state = makeState();
+      await applyDcrCancel(state, async () => {});
+      expect(state.showingDcrFallback).toBe(false);
+      expect(state.dcrFallbackData).toEqual({});
+      expect(state.submitting).toBe(false);
+      expect(state.setupAuthCancelled).toBe(true);
+      expect(state.error).toBe('');
+      expect(state.cancelHint).toBe('OAuth setup cancelled — adjust your settings and try again.');
+    });
+
+    it('cancel preserves all outer form state', async () => {
+      const state = makeState();
+      const before = {
+        name: state.name, url: state.url, prefix: state.prefix, scopes: state.scopes,
+        clientId: state.clientId, clientSecret: state.clientSecret, oauthServerUrl: state.oauthServerUrl,
+      };
+      await applyDcrCancel(state, async () => {});
+      expect(state.name).toBe(before.name);
+      expect(state.url).toBe(before.url);
+      expect(state.prefix).toBe(before.prefix);
+      expect(state.scopes).toBe(before.scopes);
+      expect(state.clientId).toBe(before.clientId);
+      expect(state.clientSecret).toBe(before.clientSecret);
+      expect(state.oauthServerUrl).toBe(before.oauthServerUrl);
+    });
+
+    it('cancel is a best-effort call: API rejection still resets state', async () => {
+      const cancelApi = vi.fn(async () => { throw new Error('relay unreachable'); });
+      const state = makeState();
+      await applyDcrCancel(state, cancelApi);
+      expect(cancelApi).toHaveBeenCalledTimes(1);
+      expect(state.pendingSetupSessionId).toBeNull();
+      expect(state.showingDcrFallback).toBe(false);
+      expect(state.cancelHint).toContain('OAuth setup cancelled');
+    });
+
+    it('cancel without an active session id skips the API call', async () => {
+      const cancelApi = vi.fn(async () => {});
+      const state = makeState({ pendingSetupSessionId: null });
+      await applyDcrCancel(state, cancelApi);
+      expect(cancelApi).not.toHaveBeenCalled();
+      expect(state.showingDcrFallback).toBe(false);
+    });
+  });
+
+  describe('DCR fallback dialog ESC routing', () => {
+    // Mirror of handleKeydown in AddEndpointModal.svelte: ESC routes to the inner
+    // dialog cancel when the DCR dialog is open, otherwise falls through to the
+    // outer modal cancel.
+    function routeEscape(opts: { showingDcrFallback: boolean }): 'dcr-cancel' | 'outer-cancel' {
+      return opts.showingDcrFallback ? 'dcr-cancel' : 'outer-cancel';
+    }
+
+    it('routes ESC to the inner cancel handler when DCR dialog is open', () => {
+      expect(routeEscape({ showingDcrFallback: true })).toBe('dcr-cancel');
+    });
+
+    it('routes ESC to the outer cancel handler when DCR dialog is closed', () => {
+      expect(routeEscape({ showingDcrFallback: false })).toBe('outer-cancel');
     });
   });
 
