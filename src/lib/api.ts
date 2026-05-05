@@ -269,6 +269,9 @@ export interface OAuthSetupParams {
   url: string;
   scopes?: string[];
   tool_prefix?: string;
+  oauth_server_url?: string;
+  client_id?: string;
+  client_secret?: string;
 }
 
 export async function oauthSetup(params: OAuthSetupParams): Promise<OAuthSetupResponse> {
