@@ -24,7 +24,11 @@
   let headerVars: { key: string; value: string }[] = $state([]);
   let oauthServerUrl = $state('');
   let clientId = $state('');
+  // Write-only secret input. Empty by default; the user types a value to
+  // replace any stored secret. The actual stored secret is never read into
+  // this state — the backend exposes only `client_secret_set: boolean`.
   let clientSecret = $state('');
+  let clientSecretSet = $state(false);
   let scopes = $state('');
 
   // Original value snapshots for dirty-state tracking
@@ -39,7 +43,6 @@
   let originalHeaderVars = $state('[]');
   let originalOauthServerUrl = $state('');
   let originalClientId = $state('');
-  let originalClientSecret = $state('');
   let originalScopes = $state('');
 
   function snapshotOriginals() {
@@ -54,11 +57,14 @@
     originalHeaderVars = JSON.stringify(headerVars);
     originalOauthServerUrl = oauthServerUrl;
     originalClientId = clientId;
-    originalClientSecret = clientSecret;
     originalScopes = scopes;
   }
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
+
+  // The secret field is dirty only when the user has actually typed
+  // something — the displayed placeholder/mask never counts as a change.
+  let clientSecretDirty = $derived(clientSecret.trim().length > 0);
 
   let isDirty = $derived(
     name !== originalName ||
@@ -73,7 +79,7 @@
     JSON.stringify(headerVars) !== originalHeaderVars ||
     oauthServerUrl !== originalOauthServerUrl ||
     clientId !== originalClientId ||
-    clientSecret !== originalClientSecret ||
+    clientSecretDirty ||
     scopes !== originalScopes
   );
 
@@ -120,7 +126,11 @@
           : [];
         oauthServerUrl = config.oauth_server_url ?? '';
         clientId = config.client_id ?? '';
-        clientSecret = config.client_secret ?? '';
+        // The secret value is intentionally never returned by the backend.
+        // We track only whether one is stored, and clear the input field so
+        // the user is never able to read or accidentally re-submit it.
+        clientSecret = '';
+        clientSecretSet = config.client_secret_set ?? false;
         scopes = config.scopes ?? '';
         snapshotOriginals();
       })
@@ -172,7 +182,9 @@
       params.url = url.trim();
       if (oauthServerUrl.trim()) params.oauth_server_url = oauthServerUrl.trim();
       if (clientId.trim()) params.client_id = clientId.trim();
-      if (clientSecret.trim()) params.client_secret = clientSecret.trim();
+      // Only send a new client_secret when the user actually typed one;
+      // an empty input means "leave the stored secret unchanged".
+      if (clientSecretDirty) params.client_secret = clientSecret.trim();
       if (scopes.trim()) params.scopes = scopes.trim();
     } else {
       if (!url.trim()) { error = 'URL is required'; return; }
@@ -216,6 +228,12 @@
       if (params.name !== $selectedEndpoint) {
         selectedEndpoint.set(params.name);
       }
+      // If the user supplied a new secret, the relay now has one stored.
+      // Clear the input so the field returns to the masked placeholder.
+      if (params.client_secret) {
+        clientSecretSet = true;
+      }
+      clientSecret = '';
       snapshotOriginals();
       success = 'Configuration saved';
       setTimeout(() => { success = ''; }, 3000);
@@ -332,7 +350,8 @@
               </div>
               <div>
                 <label for="config-ep-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">Client Secret <span class="text-(--fg2)/50">(optional)</span></label>
-                <input id="config-ep-client-secret" type="text" bind:value={clientSecret} placeholder=""
+                <input id="config-ep-client-secret" type="password" autocomplete="new-password" bind:value={clientSecret}
+                  placeholder={clientSecretSet ? '•••••••• (stored — type to replace)' : ''}
                   class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
               </div>
               <div>
