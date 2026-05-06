@@ -10,23 +10,24 @@
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
   import AuthTab from './AuthTab.svelte';
-  import { shouldShowRestartButton } from './detail-panel-helpers';
+  import { shouldShowRestartButton, shouldShowRefreshButton, visibleTabs } from './detail-panel-helpers';
 
   let showRestartConfirm = $state(false);
   let showDeleteConfirm = $state(false);
   let toggling = $state(false);
 
-  const baseTabs = [
-    { id: 'tools' as const, label: 'Tools' },
-    { id: 'logs' as const, label: 'Logs' },
-    { id: 'config' as const, label: 'Config' },
-  ];
-
   let tabs = $derived(
-    $selectedEndpointData?.transport === 'oauth'
-      ? [...baseTabs, { id: 'auth' as const, label: 'Auth' }]
-      : baseTabs
+    $selectedEndpointData
+      ? visibleTabs($selectedEndpointData.transport, !!$selectedEndpointData.disabled)
+      : []
   );
+
+  $effect(() => {
+    const ep = $selectedEndpointData;
+    if (ep?.disabled && ($activeTab === 'tools' || $activeTab === 'logs')) {
+      activeTab.set('config');
+    }
+  });
 
   async function handleRestart() {
     const name = $selectedEndpoint;
@@ -121,8 +122,10 @@
           title={ep.disabled ? 'Enable server' : 'Disable server'}
           aria-label={ep.disabled ? 'Enable server' : 'Disable server'}
         ><span></span></button>
-        <button class="btn-sec" onclick={handleRefresh}>Refresh</button>
-        {#if shouldShowRestartButton(ep.transport)}
+        {#if shouldShowRefreshButton(!!ep.disabled)}
+          <button class="btn-sec" onclick={handleRefresh}>Refresh</button>
+        {/if}
+        {#if shouldShowRestartButton(ep.transport, !!ep.disabled)}
           <button
             class="btn-sec btn-danger"
             onclick={() => showRestartConfirm = true}
@@ -155,9 +158,9 @@
     </div>
 
     <div class="flex-1 overflow-hidden">
-      {#if $activeTab === 'tools'}
+      {#if $activeTab === 'tools' && !ep.disabled}
         <ToolsTab />
-      {:else if $activeTab === 'logs'}
+      {:else if $activeTab === 'logs' && !ep.disabled}
         <LogsTab />
       {:else if $activeTab === 'auth' && ep.transport === 'oauth'}
         <AuthTab />
@@ -166,7 +169,7 @@
       {/if}
     </div>
 
-    {#if showRestartConfirm && shouldShowRestartButton(ep.transport)}
+    {#if showRestartConfirm && shouldShowRestartButton(ep.transport, !!ep.disabled)}
       <ConfirmModal
         title="{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'} Endpoint"
         message="Are you sure you want to {ep.transport === 'stdio' ? 'restart' : 'reconnect'} '{ep.name}'? This will temporarily disconnect the endpoint."

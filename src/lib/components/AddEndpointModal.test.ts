@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { sanitizeName } from '$lib/utils';
 import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
 import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
+import { buildScopesPayload, shouldShowManualOAuthStar } from './add-endpoint-helpers';
 
 describe('sanitizeName', () => {
   it('handles basic lowercase name', () => {
@@ -329,6 +330,114 @@ describe('AddEndpointModal unified browse list', () => {
       expect(oauthServerUrl).toBe('https://github.com/login/oauth');
       expect(scopeStr).toBe('repo read:user');
     });
+  });
+});
+
+describe('Scope handling', () => {
+  describe('buildScopesPayload — free-text mode', () => {
+    it('collapses internal whitespace and trims for the string form', () => {
+      const out = buildScopesPayload('free', '  read   write  ');
+      expect(out.string).toBe('read write');
+    });
+
+    it('splits on whitespace for the array form', () => {
+      const out = buildScopesPayload('free', '  read   write  ');
+      expect(out.array).toEqual(['read', 'write']);
+    });
+
+    it('returns undefined for empty input', () => {
+      expect(buildScopesPayload('free', '')).toEqual({ string: undefined, array: undefined });
+    });
+
+    it('returns undefined for whitespace-only input', () => {
+      expect(buildScopesPayload('free', '   \t  ')).toEqual({ string: undefined, array: undefined });
+    });
+
+    it('handles a single token', () => {
+      expect(buildScopesPayload('free', 'read')).toEqual({ string: 'read', array: ['read'] });
+    });
+  });
+
+  describe('buildScopesPayload — checkbox mode', () => {
+    it('joins Set members with single spaces in insertion order', () => {
+      // Order rule: the array follows Set insertion order; the modal seeds
+      // the Set from defaultScopes so the on-the-wire order matches the
+      // catalog entry.
+      const out = buildScopesPayload('checkbox', new Set(['a', 'b']));
+      expect(out.string).toBe('a b');
+      expect(out.array).toEqual(['a', 'b']);
+    });
+
+    it('preserves insertion order for arbitrary scope strings', () => {
+      const out = buildScopesPayload(
+        'checkbox',
+        new Set([
+          'https://www.googleapis.com/auth/gmail.readonly',
+          'https://www.googleapis.com/auth/gmail.compose',
+        ]),
+      );
+      expect(out.array).toEqual([
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.compose',
+      ]);
+      expect(out.string).toBe(
+        'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose',
+      );
+    });
+
+    it('returns undefined for an empty Set', () => {
+      expect(buildScopesPayload('checkbox', new Set())).toEqual({
+        string: undefined,
+        array: undefined,
+      });
+    });
+  });
+});
+
+describe('OAuth manual-registration flag', () => {
+  it('shouldShowManualOAuthStar returns true exactly for entries with supportsDcr === false', () => {
+    for (const entry of oauthCatalog) {
+      expect(shouldShowManualOAuthStar(entry)).toBe(entry.supportsDcr === false);
+    }
+  });
+
+  it('flags every catalog entry that lacks DCR support', () => {
+    const flagged = oauthCatalog.filter(shouldShowManualOAuthStar).map((e) => e.id);
+    const expected = oauthCatalog.filter((e) => e.supportsDcr === false).map((e) => e.id);
+    expect(flagged).toEqual(expected);
+  });
+
+  it('does not flag DCR-supporting entries', () => {
+    for (const entry of oauthCatalog) {
+      if (entry.supportsDcr === true) {
+        expect(shouldShowManualOAuthStar(entry)).toBe(false);
+      }
+    }
+  });
+});
+
+describe('Scope option shape', () => {
+  it('every availableScopes option appears in defaultScopes for the same entry', () => {
+    const entriesWithScopes = oauthCatalog.filter(
+      (e) => e.availableScopes && e.availableScopes.length > 0,
+    );
+    expect(entriesWithScopes.length).toBeGreaterThan(0);
+    for (const entry of entriesWithScopes) {
+      for (const opt of entry.availableScopes!) {
+        expect(entry.defaultScopes).toContain(opt.scope);
+      }
+    }
+  });
+
+  it('every availableScopes option has non-empty name and description', () => {
+    for (const entry of oauthCatalog) {
+      if (!entry.availableScopes) continue;
+      for (const opt of entry.availableScopes) {
+        expect(opt.scope.trim().length).toBeGreaterThan(0);
+        expect(opt.name.trim().length).toBeGreaterThan(0);
+        expect(opt.description.trim().length).toBeGreaterThan(0);
+      }
+    }
   });
 });
 

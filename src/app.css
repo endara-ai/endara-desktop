@@ -158,6 +158,11 @@
   --degraded: var(--status-degraded);
   --offline:  var(--status-offline);
 
+  /* Needs-your-attention / manual-setup signal. NOT a live status —
+     used for things like "this OAuth provider needs manual client
+     registration". Distinct from --offline (runtime health). */
+  --attention: #DC2626;
+
   /* Desktop kit — chrome + window tokens (light) */
   --win-bg:        var(--paper-0);
   --win-border:    var(--paper-200);
@@ -211,6 +216,10 @@
   --healthy:  var(--status-healthy-dark);
   --degraded: var(--status-degraded-dark);
   --offline:  var(--status-offline-dark);
+
+  /* Needs-your-attention / manual-setup signal — lighter red so it
+     stays legible on dark surfaces. See light-mode comment above. */
+  --attention: #F87171;
 
   --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.02);
   --shadow-2: 0 4px 12px rgb(0 0 0 / 0.4);

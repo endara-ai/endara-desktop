@@ -1,3 +1,12 @@
+export interface OAuthScopeOption {
+  /** Exact OAuth scope value sent on the wire. */
+  scope: string;
+  /** Short human-readable label shown next to the checkbox. */
+  name: string;
+  /** Longer description shown in the info tooltip alongside the exact scope. */
+  description: string;
+}
+
 export interface OAuthCatalogEntry {
   id: string;
   name: string;
@@ -7,6 +16,7 @@ export interface OAuthCatalogEntry {
   url: string;
   oauthServerUrl?: string;
   defaultScopes: string[];
+  availableScopes?: OAuthScopeOption[];
   supportsDiscovery: boolean;
   supportsDcr: boolean;
   tokenEndpoint?: string;
@@ -87,6 +97,94 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     supportsDiscovery: true,
     supportsDcr: true,
     notes: 'Docs and notes from your Craft workspace',
+  },
+  {
+    id: 'gmail',
+    name: 'Gmail',
+    description: 'Read mail and manage drafts',
+    icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5.5h14v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9zm0 0l7 5 7-5"/></svg>',
+    category: 'productivity',
+    url: 'https://gmailmcp.googleapis.com/mcp/v1',
+    defaultScopes: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.compose',
+    ],
+    availableScopes: [
+      {
+        scope: 'https://www.googleapis.com/auth/gmail.readonly',
+        name: 'Read mail',
+        description: 'Read all messages and threads in your mailbox.',
+      },
+      {
+        scope: 'https://www.googleapis.com/auth/gmail.compose',
+        name: 'Compose drafts',
+        description:
+          'Create, read, update, and send drafts (does not include sending sent mail beyond drafts).',
+      },
+    ],
+    supportsDiscovery: true,
+    supportsDcr: false,
+    notes: 'Requires a Google Cloud OAuth client — Client ID and Secret needed',
+  },
+  {
+    id: 'google-calendar',
+    name: 'Google Calendar',
+    description: 'Calendars, events, and free/busy',
+    icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4.5" width="14" height="12" rx="1.5"/><path d="M3 8.5h14M7 3v3M13 3v3"/></svg>',
+    category: 'productivity',
+    url: 'https://calendarmcp.googleapis.com/mcp/v1',
+    defaultScopes: [
+      'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      'https://www.googleapis.com/auth/calendar.events.freebusy',
+      'https://www.googleapis.com/auth/calendar.events.readonly',
+    ],
+    availableScopes: [
+      {
+        scope: 'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+        name: 'List calendars',
+        description: 'View the list of calendars on your account.',
+      },
+      {
+        scope: 'https://www.googleapis.com/auth/calendar.events.freebusy',
+        name: 'Free/busy',
+        description: 'View free/busy information for events on your calendars.',
+      },
+      {
+        scope: 'https://www.googleapis.com/auth/calendar.events.readonly',
+        name: 'Read events',
+        description: 'View events on your calendars.',
+      },
+    ],
+    supportsDiscovery: true,
+    supportsDcr: false,
+    notes: 'Requires a Google Cloud OAuth client — Client ID and Secret needed',
+  },
+  {
+    id: 'google-drive',
+    name: 'Google Drive',
+    description: 'Files and folders in your Drive',
+    icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M7.5 3h5l5 8.5-2.5 4.5H5L2.5 11.5 7.5 3zM7.5 3l5 8.5h5M5 16l2.5-4.5h10"/></svg>',
+    category: 'productivity',
+    url: 'https://drivemcp.googleapis.com/mcp/v1',
+    defaultScopes: [
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.file',
+    ],
+    availableScopes: [
+      {
+        scope: 'https://www.googleapis.com/auth/drive.readonly',
+        name: 'Read files',
+        description: 'View metadata and content of files in your Drive.',
+      },
+      {
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        name: 'Per-file access',
+        description: 'Per-file access to files created or opened with this app.',
+      },
+    ],
+    supportsDiscovery: true,
+    supportsDcr: false,
+    notes: 'Requires a Google Cloud OAuth client — Client ID and Secret needed',
   },
 ];
 

@@ -4,6 +4,7 @@
   import { toast } from 'svelte-sonner';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
   import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
+  import { buildScopesPayload, shouldShowManualOAuthStar } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
@@ -38,6 +39,7 @@
   let clientId = $state('');
   let clientSecret = $state('');
   let scopes = $state('');
+  let selectedScopes: Set<string> = $state(new Set());
   let selectedOAuthEntry: OAuthCatalogEntry | null = $state(null);
   let showingDcrFallback = $state(false);
   let dcrFallbackData: { authorization_endpoint?: string } = $state({});
@@ -48,6 +50,11 @@
   let cancelHint = $state('');
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
+
+  let scopeMode: 'free' | 'checkbox' = $derived.by(() => {
+    const opts = selectedOAuthEntry?.availableScopes;
+    return opts && opts.length > 0 ? 'checkbox' : 'free';
+  });
 
   $effect(() => {
     if (!prefixCustom) {
@@ -111,7 +118,13 @@
     oauthServerUrl = service.oauthServerUrl || '';
     clientId = '';
     clientSecret = '';
-    scopes = service.defaultScopes.join(' ');
+    if (service.availableScopes && service.availableScopes.length > 0) {
+      scopes = '';
+      selectedScopes = new Set(service.defaultScopes);
+    } else {
+      scopes = service.defaultScopes.join(' ');
+      selectedScopes = new Set();
+    }
     envVars = [];
     headerVars = [];
     catalogEnvValues = {};
@@ -141,6 +154,7 @@
     clientId = '';
     clientSecret = '';
     scopes = '';
+    selectedScopes = new Set();
     showingDcrFallback = false;
     error = '';
     step = 'configure';
@@ -165,6 +179,7 @@
     clientId = '';
     clientSecret = '';
     scopes = '';
+    selectedScopes = new Set();
     showingDcrFallback = false;
     error = '';
     step = 'configure';
@@ -300,7 +315,11 @@
       if (oauthServerUrl.trim()) params.oauth_server_url = oauthServerUrl.trim();
       if (clientId.trim()) params.client_id = clientId.trim();
       if (clientSecret.trim()) params.client_secret = clientSecret.trim();
-      if (scopes.trim()) params.scopes = scopes.trim();
+      const scopesPayload = buildScopesPayload(
+        scopeMode,
+        scopeMode === 'checkbox' ? selectedScopes : scopes,
+      );
+      if (scopesPayload.string) params.scopes = scopesPayload.string;
     } else {
       if (!url.trim()) { error = 'URL is required'; return; }
       params.url = url.trim();
@@ -370,8 +389,12 @@
     if (prefixCustom && prefix !== defaultPrefix) {
       setupParams.tool_prefix = prefix;
     }
-    if (scopes.trim()) {
-      setupParams.scopes = scopes.trim().split(/\s+/);
+    const scopesPayload = buildScopesPayload(
+      scopeMode,
+      scopeMode === 'checkbox' ? selectedScopes : scopes,
+    );
+    if (scopesPayload.array) {
+      setupParams.scopes = scopesPayload.array;
     }
     if (oauthServerUrl.trim()) {
       setupParams.oauth_server_url = oauthServerUrl.trim();
@@ -567,7 +590,7 @@
       />
 
       <!-- Filter toggles -->
-      <div class="flex gap-2 mb-4">
+      <div class="flex gap-2 mb-2">
         <button
           class="px-3 py-1 text-xs rounded-full border transition-colors {showOAuth
             ? 'border-(--accent) bg-(--accent)/10 text-(--accent)'
@@ -585,6 +608,15 @@
           Local
         </button>
       </div>
+      {#if showOAuth}
+        <p class="text-[11px] text-(--fg2) mb-3 flex items-center gap-1">
+          <span
+            class="text-base text-(--attention) font-bold inline-flex items-center justify-center leading-none translate-y-[0.15em]"
+            aria-hidden="true"
+          >*</span>
+          <span>Requires OAuth Client ID and Secret</span>
+        </p>
+      {/if}
 
       <!-- Unified server list -->
       <div class="flex flex-col gap-2 mb-3">
@@ -597,6 +629,13 @@
             >
               <span class="w-5 h-5 flex-shrink-0 text-(--fg2)">{@html service.icon}</span>
               <span class="text-sm font-medium text-(--fg1) flex-shrink-0">{service.name}</span>
+              {#if shouldShowManualOAuthStar(service)}
+                <span
+                  class="text-base font-bold leading-none text-(--attention) flex-shrink-0 inline-flex items-center justify-center translate-y-[0.15em]"
+                  aria-label="Manual OAuth client registration required"
+                  title="Requires manual OAuth client registration — you'll need to create an OAuth client and provide Client ID/Secret"
+                >*</span>
+              {/if}
               <p class="text-xs text-(--fg2) line-clamp-1 flex-1 min-w-0">{service.description}</p>
               <div class="flex items-center gap-1.5 flex-shrink-0">
                 <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--accent)/10 text-(--accent) font-medium">
@@ -746,18 +785,58 @@
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
 
+          <!-- Curated scope checkbox list (only when the catalog entry exposes availableScopes) -->
+          {#if scopeMode === 'checkbox' && selectedOAuthEntry?.availableScopes}
+            <div>
+              <span class="block text-xs font-medium mb-1 text-(--fg2)">Scopes</span>
+              <div class="space-y-1.5">
+                {#each selectedOAuthEntry.availableScopes as opt (opt.scope)}
+                  <label class="flex items-start gap-2 text-sm text-(--fg1) cursor-pointer">
+                    <input
+                      type="checkbox"
+                      class="mt-0.5 accent-(--accent)"
+                      checked={selectedScopes.has(opt.scope)}
+                      onchange={(e) => {
+                        const next = new Set(selectedScopes);
+                        if ((e.currentTarget as HTMLInputElement).checked) next.add(opt.scope);
+                        else next.delete(opt.scope);
+                        selectedScopes = next;
+                      }}
+                    />
+                    <span class="flex-1">{opt.name}</span>
+                    <span
+                      class="text-(--fg2) cursor-help select-none flex-shrink-0"
+                      aria-label={`${opt.name}: ${opt.description} (scope: ${opt.scope})`}
+                      title={`${opt.description}\n${opt.scope}`}
+                    >ⓘ</span>
+                  </label>
+                {/each}
+              </div>
+              <p class="text-[11px] text-(--fg2) mt-1">Uncheck any scope you don't want to grant. Clearing all is equivalent to leaving scopes blank.</p>
+            </div>
+          {/if}
+
+          <!-- Manual-registration hint for OAuth providers that don't support DCR -->
+          {#if selectedOAuthEntry && selectedOAuthEntry.supportsDcr === false}
+            <p class="text-[11px] text-(--attention)">
+              * Requires an OAuth client created in your provider's console — paste the Client ID and Secret in Advanced below.
+            </p>
+          {/if}
+
           <!-- Collapsible Advanced section — collapsed by default for all OAuth flows -->
           <details class="border border-(--border) rounded-lg">
             <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">
               Advanced
             </summary>
             <div class="px-3 pb-3 space-y-3">
-              <div>
-                <label for="modal-ep-scopes" class="block text-xs font-medium mb-1 text-(--fg2)">Scopes <span class="text-(--fg2)/50">(optional, space-separated)</span></label>
-                <input id="modal-ep-scopes" type="text" bind:value={scopes} placeholder="read write"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
-                <p class="text-[11px] text-(--fg2) mt-0.5">Space-separated. Leave blank for server defaults.</p>
-              </div>
+              {#if scopeMode === 'free'}
+                <div>
+                  <label for="modal-ep-scopes" class="block text-xs font-medium mb-1 text-(--fg2)">Scopes <span class="text-(--fg2)/50">(optional, space-separated)</span></label>
+                  <input id="modal-ep-scopes" type="text" bind:value={scopes} placeholder="read write"
+                    class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Space-separated. Leave blank for server defaults.</p>
+                </div>
+              {/if}
               <div>
                 <label for="modal-ep-oauth-url" class="block text-xs font-medium mb-1 text-(--fg2)">OAuth Server URL</label>
                 <input id="modal-ep-oauth-url" type="text" bind:value={oauthServerUrl} placeholder="Auto-discovered"
