@@ -1,3 +1,4 @@
+mod api_proxy;
 mod webview_recovery;
 
 use std::collections::HashMap;
@@ -894,6 +895,34 @@ async fn get_relay_port(state: State<'_, RelayState>) -> Result<u16, String> {
     Ok(*state.port.lock().await)
 }
 
+/// Proxy a management-API request from the WebView to the relay's local
+/// Unix-domain socket / Windows named pipe. The relay no longer accepts
+/// `/api/*` requests over TCP, so the SvelteKit UI must round-trip through the
+/// Tauri backend (which can dial the socket and is bound to the same UID as
+/// the listener).
+#[tauri::command]
+async fn mgmt_api_request(
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Result<api_proxy::ApiResponse, String> {
+    let socket = api_proxy::resolve_api_socket_path(&data_dir()?);
+    let body_bytes = match body {
+        Some(v) => Some(serde_json::to_vec(&v).map_err(|e| format!("serialize body: {e}"))?),
+        None => None,
+    };
+    api_proxy::send_request(&socket, &method, &path, body_bytes, &[]).await
+}
+
+/// Return the resolved management-API socket / pipe path for diagnostics. The
+/// UI does not normally need this — it goes through `mgmt_api_request` — but
+/// surfacing it helps with support / log redaction.
+#[tauri::command]
+async fn get_mgmt_api_socket_path() -> Result<String, String> {
+    let socket = api_proxy::resolve_api_socket_path(&data_dir()?);
+    Ok(socket.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 async fn set_relay_port(port: u16, state: State<'_, RelayState>) -> Result<(), String> {
     *state.port.lock().await = port;
@@ -1185,15 +1214,7 @@ async fn post_relay_credentials(
     client_secret: Option<&str>,
     oauth_server_url: Option<&str>,
 ) -> Result<(), String> {
-    let port = read_port_from_config().unwrap_or(if is_dev_mode() {
-        DEV_RELAY_PORT
-    } else {
-        DEFAULT_RELAY_PORT
-    });
-    let url = format!(
-        "http://127.0.0.1:{port}/api/endpoints/{}/credentials",
-        urlencoding::encode(name)
-    );
+    let path = format!("/api/endpoints/{}/credentials", urlencoding::encode(name));
 
     let mut body = serde_json::Map::new();
     if let Some(v) = client_id.filter(|s| !s.is_empty()) {
@@ -1215,25 +1236,17 @@ async fn post_relay_credentials(
         );
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
-    let res = client
-        .post(&url)
-        .json(&serde_json::Value::Object(body))
-        .send()
+    let socket = api_proxy::resolve_api_socket_path(&data_dir()?);
+    let body_bytes = serde_json::to_vec(&serde_json::Value::Object(body))
+        .map_err(|e| format!("serialize credentials body: {e}"))?;
+    let resp = api_proxy::send_request(&socket, "POST", &path, Some(body_bytes), &[])
         .await
-        .map_err(|e| format!("Failed to reach relay at {url}: {e}"))?;
+        .map_err(|e| format!("Failed to reach relay management socket: {e}"))?;
 
-    if !res.status().is_success() {
-        let status = res.status();
-        let body = res.text().await.unwrap_or_default();
+    if !(200..300).contains(&resp.status) {
         return Err(format!(
             "Relay rejected credentials write (status {}): {}",
-            status.as_u16(),
-            body
+            resp.status, resp.body
         ));
     }
     Ok(())
@@ -1765,6 +1778,8 @@ pub fn run() {
             update_endpoint,
             get_relay_port,
             set_relay_port,
+            mgmt_api_request,
+            get_mgmt_api_socket_path,
             set_js_execution_mode,
             get_config_path_display,
             get_buffered_relay_logs,
