@@ -107,9 +107,16 @@ Endara Desktop is a [Tauri 2](https://v2.tauri.app) application with two layers:
 └─────────────────────────────────┘
 ```
 
-**Backend (Rust):** Manages the relay as a sidecar process — spawning, monitoring stdout/stderr, handling crashes with auto-restart, and clean shutdown on exit. Exposes four Tauri commands: `start_relay`, `stop_relay`, `restart_relay`, and `relay_status`.
+**Backend (Rust):** Manages the relay as a sidecar process — spawning, monitoring stdout/stderr, handling crashes with auto-restart, and clean shutdown on exit. Exposes a set of Tauri commands grouped roughly into:
 
-**Frontend (SvelteKit):** Talks to the relay's management API to fetch endpoint status, tools, logs, and configuration. The UI is composed of 12 Svelte components organized around a sidebar + detail panel layout.
+- **Relay lifecycle** — `start_relay`, `stop_relay`, `restart_relay`, `relay_status`, `get_sidecar_status`, `get_buffered_relay_logs`, `get_relay_port`, `set_relay_port`.
+- **Management-API proxy** — `mgmt_api_request` proxies HTTP-shaped `/api/*` calls from the SvelteKit frontend over the relay's per-user Unix socket / Named Pipe; `get_mgmt_api_socket_path` exposes the socket path for diagnostics.
+- **Config & endpoints** — `get_endpoint_config`, `add_endpoint`, `update_endpoint`, `remove_endpoint`, `get_config_path_display`, `set_js_execution_mode`.
+- **Updates & autostart** — `get_update_channel`, `set_update_channel`, `check_for_update`, `download_and_install_update`, `show_update_notification`, `get_autostart`, `set_autostart`, `get_build_info`.
+
+**Frontend (SvelteKit):** Talks to the relay's management API to fetch endpoint status, tools, logs, and configuration. The UI is organized around a sidebar (endpoint list) + detail panel (per-endpoint tabs for tools, logs, config, auth) layout. Auxiliary components include onboarding, search palette, settings, an add-endpoint modal, and a unified tool catalog.
+
+The Tauri webview runs under an explicit Content Security Policy (`src-tauri/tauri.conf.json` → `app.security.csp`) that restricts script, style, and connect sources to the app origin, IPC, and localhost endpoints. Management traffic from the SvelteKit frontend reaches the relay's `/api/*` through the `mgmt_api_request` Tauri command, which proxies HTTP semantics over the relay's per-user Unix-domain socket (Linux/macOS) or Named Pipe (Windows). MCP traffic flows over loopback TCP at the configured relay port.
 
 ## Process model
 
@@ -200,19 +207,7 @@ packages/desktop/
 │   │   ├── +layout.svelte         # Root layout
 │   │   └── +page.svelte           # Main page
 │   ├── lib/
-│   │   ├── components/            # 12 Svelte UI components
-│   │   │   ├── Sidebar.svelte     # Left panel — endpoint list + status
-│   │   │   ├── DetailPanel.svelte # Right panel — tabbed endpoint details
-│   │   │   ├── ToolsTab.svelte    # Tool browser with search
-│   │   │   ├── LogsTab.svelte     # Real-time log viewer
-│   │   │   ├── ConfigTab.svelte   # Configuration viewer
-│   │   │   ├── SearchBar.svelte   # Global search (⌘K)
-│   │   │   ├── Settings.svelte    # App settings panel
-│   │   │   ├── EndpointRow.svelte # Individual endpoint in sidebar
-│   │   │   ├── HealthDot.svelte   # Health status indicator
-│   │   │   ├── TransportBadge.svelte # Transport type badge (STDIO/SSE/HTTP)
-│   │   │   ├── ConfirmModal.svelte   # Confirmation dialogs
-│   │   │   └── MiniPlayer.svelte     # Compact endpoint status view
+│   │   ├── components/            # Svelte UI components (sidebar, detail panel, tabs, dialogs, modals, etc.)
 │   │   ├── api.ts                 # API client for relay management
 │   │   ├── stores.ts              # Svelte stores for app state
 │   │   ├── types.ts               # TypeScript type definitions
@@ -221,8 +216,10 @@ packages/desktop/
 │   └── app.html                   # HTML shell
 ├── src-tauri/
 │   ├── src/
-│   │   ├── lib.rs                 # Tauri backend — sidecar lifecycle + commands
-│   │   └── main.rs                # Entry point
+│   │   ├── lib.rs                 # Tauri commands + relay sidecar lifecycle
+│   │   ├── main.rs                # Entry point
+│   │   ├── api_proxy.rs           # HTTP-over-UDS / Named-Pipe client for the relay's /api
+│   │   └── webview_recovery.rs    # Webview crash detection + recovery
 │   ├── tauri.conf.json            # Tauri config (bundling, updater, sidecar)
 │   ├── capabilities/default.json  # Permissions (shell, updater)
 │   ├── binaries/                  # Relay sidecar binary (not committed)
