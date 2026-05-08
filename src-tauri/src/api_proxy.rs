@@ -58,10 +58,10 @@ pub fn resolve_api_socket_path(#[allow(unused_variables)] data_dir: &Path) -> Pa
         return PathBuf::from(format!(r"\\.\pipe\endara-relay-{session_id}"));
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    {
-        data_dir.join("api.sock")
-    }
+    // Final fallback — reached on Linux when XDG_RUNTIME_DIR is unset, and on
+    // any platform not covered by the cfg branches above. macOS / Windows
+    // branches above always early-return, so they never fall through here.
+    data_dir.join("api.sock")
 }
 
 #[cfg(unix)]
