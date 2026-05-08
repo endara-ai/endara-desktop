@@ -1,44 +1,36 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 
-// Mock fetch globally
-const mockFetch = vi.fn();
-globalThis.fetch = mockFetch;
-
 describe('api', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetch.mockReset();
   });
 
-  function mockFetchSuccess(data: unknown) {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(data),
+  function mockOk(data: unknown) {
+    vi.mocked(invoke).mockResolvedValue({
       status: 200,
-      statusText: 'OK',
+      body: JSON.stringify(data),
     });
   }
 
-  function mockFetchError(status: number, statusText: string) {
-    mockFetch.mockResolvedValue({
-      ok: false,
+  function mockHttpError(status: number, body: string = '') {
+    vi.mocked(invoke).mockResolvedValue({
       status,
-      statusText,
+      body,
     });
   }
 
   describe('getStatus', () => {
-    it('fetches relay status', async () => {
+    it('fetches relay status via mgmt_api_request', async () => {
       const { getStatus } = await import('./api');
       const mockStatus = { status: 'ok', uptime_seconds: 100, endpoint_count: 2, healthy_count: 2 };
-      mockFetchSuccess(mockStatus);
+      mockOk(mockStatus);
 
       const result = await getStatus();
       expect(result).toEqual(mockStatus);
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/status'),
-        expect.objectContaining({ headers: expect.objectContaining({ 'Content-Type': 'application/json' }) }),
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({ method: 'GET', path: '/api/status' }),
       );
     });
   });
@@ -47,7 +39,7 @@ describe('api', () => {
     it('fetches endpoints list', async () => {
       const { getEndpoints } = await import('./api');
       const mockEndpoints = [{ name: 'ep1', transport: 'stdio', health: 'healthy', tool_count: 3, last_activity: null }];
-      mockFetchSuccess(mockEndpoints);
+      mockOk(mockEndpoints);
 
       const result = await getEndpoints();
       expect(result).toEqual(mockEndpoints);
@@ -56,7 +48,7 @@ describe('api', () => {
     it('passes starting health through unchanged', async () => {
       const { getEndpoints } = await import('./api');
       const mockEndpoints = [{ name: 'ep1', transport: 'stdio', health: 'starting', tool_count: 0, last_activity: null }];
-      mockFetchSuccess(mockEndpoints);
+      mockOk(mockEndpoints);
 
       const result = await getEndpoints();
       expect(result[0].health).toBe('starting');
@@ -72,7 +64,7 @@ describe('api', () => {
         last_activity: null,
         lifecycle: { state: 'Failed', error: { kind: 'Transport', detail: 'Connection refused' } },
       }];
-      mockFetchSuccess(mockEndpoints);
+      mockOk(mockEndpoints);
 
       const result = await getEndpoints();
       expect(result[0].health).toBe('error');
@@ -90,7 +82,7 @@ describe('api', () => {
         last_activity: null,
         lifecycle: { state: 'Ready', server_name: 'my-server' },
       }];
-      mockFetchSuccess(mockEndpoints);
+      mockOk(mockEndpoints);
 
       const result = await getEndpoints();
       expect(result[0].health).toBe('healthy');
@@ -108,7 +100,7 @@ describe('api', () => {
         last_activity: null,
         lifecycle: { state: 'Initializing' },
       }];
-      mockFetchSuccess(mockEndpoints);
+      mockOk(mockEndpoints);
 
       const result = await getEndpoints();
       expect(result[0].health).toBe('starting');
@@ -120,13 +112,13 @@ describe('api', () => {
     it('fetches tools for endpoint', async () => {
       const { getEndpointTools } = await import('./api');
       const mockTools = [{ name: 'tool1', description: 'A tool' }];
-      mockFetchSuccess(mockTools);
+      mockOk(mockTools);
 
       const result = await getEndpointTools('my-ep');
       expect(result).toEqual(mockTools);
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/endpoints/my-ep/tools'),
-        expect.any(Object),
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({ path: '/api/endpoints/my-ep/tools' }),
       );
     });
   });
@@ -134,24 +126,24 @@ describe('api', () => {
   describe('addEndpoint', () => {
     it('calls invoke with correct command and params', async () => {
       const { addEndpoint } = await import('./api');
-      const mockInvoke = vi.mocked(invoke);
-      mockInvoke.mockResolvedValue(undefined);
-      // Mock reloadConfig fetch (best-effort, may fail)
-      mockFetch.mockRejectedValue(new Error('relay not running'));
+      // First call: add_endpoint succeeds; second call: reloadConfig (mgmt_api_request) fails best-effort.
+      vi.mocked(invoke)
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('relay not running'));
 
       const params = { name: 'new-ep', transport: 'stdio' as const, command: '/usr/bin/my-mcp' };
       await addEndpoint(params);
 
-      expect(mockInvoke).toHaveBeenCalledWith('add_endpoint', { args: params });
+      expect(invoke).toHaveBeenCalledWith('add_endpoint', { args: params });
     });
   });
 
   describe('addEndpoint with env vars', () => {
     it('passes env vars through to invoke', async () => {
       const { addEndpoint } = await import('./api');
-      const mockInvoke = vi.mocked(invoke);
-      mockInvoke.mockResolvedValue(undefined);
-      mockFetch.mockRejectedValue(new Error('relay not running'));
+      vi.mocked(invoke)
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('relay not running'));
 
       const params = {
         name: 'github-server',
@@ -162,9 +154,8 @@ describe('api', () => {
       };
       await addEndpoint(params);
 
-      expect(mockInvoke).toHaveBeenCalledWith('add_endpoint', { args: params });
-      // Verify the env field is passed as-is (relay handles resolution)
-      const passedArgs = mockInvoke.mock.calls[0][1] as { args: typeof params };
+      expect(invoke).toHaveBeenCalledWith('add_endpoint', { args: params });
+      const passedArgs = vi.mocked(invoke).mock.calls[0][1] as { args: typeof params };
       expect(passedArgs.args.env).toEqual({ GITHUB_TOKEN: '$GITHUB_TOKEN', PLAIN_VAL: 'hello' });
     });
   });
@@ -172,13 +163,13 @@ describe('api', () => {
   describe('removeEndpoint', () => {
     it('calls invoke with correct command and name', async () => {
       const { removeEndpoint } = await import('./api');
-      const mockInvoke = vi.mocked(invoke);
-      mockInvoke.mockResolvedValue(undefined);
-      mockFetch.mockRejectedValue(new Error('relay not running'));
+      vi.mocked(invoke)
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('relay not running'));
 
       await removeEndpoint('old-ep');
 
-      expect(mockInvoke).toHaveBeenCalledWith('remove_endpoint', { name: 'old-ep' });
+      expect(invoke).toHaveBeenCalledWith('remove_endpoint', { name: 'old-ep' });
     });
   });
 
@@ -189,13 +180,13 @@ describe('api', () => {
         { name: 'm__ep1__tool1', description: 'A tool', inputSchema: { type: 'object' }, endpoint: 'ep1', available: true },
         { name: 'm__ep2__tool2', description: 'Another', inputSchema: { type: 'object' }, endpoint: 'ep2', available: false },
       ];
-      mockFetchSuccess(mockCatalog);
+      mockOk(mockCatalog);
 
       const result = await getCatalog();
       expect(result).toEqual(mockCatalog);
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/catalog'),
-        expect.any(Object),
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({ path: '/api/catalog' }),
       );
     });
   });
@@ -204,7 +195,7 @@ describe('api', () => {
     it('sends POST with connection params and returns success', async () => {
       const { testConnection } = await import('./api');
       const mockResult = { success: true, tool_count: 3, tools: ['a', 'b', 'c'] };
-      mockFetchSuccess(mockResult);
+      mockOk(mockResult);
 
       const result = await testConnection({
         transport: 'stdio',
@@ -212,19 +203,16 @@ describe('api', () => {
         args: ['-y', '@modelcontextprotocol/server-filesystem'],
       });
       expect(result).toEqual(mockResult);
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/test-connection'),
-        expect.objectContaining({
-          method: 'POST',
-          body: expect.any(String),
-        }),
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({ method: 'POST', path: '/api/test-connection' }),
       );
     });
 
     it('returns error result on connection failure', async () => {
       const { testConnection } = await import('./api');
       const mockResult = { success: false, error: 'Connection failed: spawn error' };
-      mockFetchSuccess(mockResult);
+      mockOk(mockResult);
 
       const result = await testConnection({ transport: 'stdio', command: '/bad/cmd' });
       expect(result.success).toBe(false);
@@ -233,7 +221,7 @@ describe('api', () => {
 
     it('throws on HTTP error', async () => {
       const { testConnection } = await import('./api');
-      mockFetchError(500, 'Internal Server Error');
+      mockHttpError(500, 'Internal Server Error');
 
       await expect(testConnection({ transport: 'stdio', command: 'test' })).rejects.toThrow('HTTP 500');
     });
@@ -245,7 +233,7 @@ describe('api', () => {
         tool_count: 5,
         tools: ['read_file', 'write_file', 'list_dir', 'delete_file', 'move_file'],
       };
-      mockFetchSuccess(mockResult);
+      mockOk(mockResult);
 
       const result = await testConnection({
         transport: 'stdio',
@@ -258,30 +246,29 @@ describe('api', () => {
       expect(result.tools).toHaveLength(5);
       expect(result.tools).toContain('read_file');
       expect(result.tools).toContain('move_file');
-      // Verify the request body included all params
-      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(callBody.transport).toBe('stdio');
-      expect(callBody.command).toBe('npx');
-      expect(callBody.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem']);
-      expect(callBody.env).toEqual({ HOME: '/tmp' });
+      const callBody = vi.mocked(invoke).mock.calls[0][1] as { body: { transport: string; command: string; args: string[]; env: Record<string, string> } };
+      expect(callBody.body.transport).toBe('stdio');
+      expect(callBody.body.command).toBe('npx');
+      expect(callBody.body.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem']);
+      expect(callBody.body.env).toEqual({ HOME: '/tmp' });
     });
   });
 
   describe('error handling', () => {
-    it('retries on fetch failure and eventually throws', async () => {
+    it('retries on transport failure and eventually throws', async () => {
       const { getStatus } = await import('./api');
-      mockFetch.mockRejectedValue(new Error('Network error'));
+      vi.mocked(invoke).mockRejectedValue(new Error('socket connect failed'));
 
-      await expect(getStatus()).rejects.toThrow('Network error');
+      await expect(getStatus()).rejects.toThrow('socket connect failed');
       // Should have retried: 1 initial + 2 retries = 3 calls
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(invoke).toHaveBeenCalledTimes(3);
     });
 
     it('throws on HTTP error status after retries', async () => {
       const { getConfig } = await import('./api');
-      mockFetchError(500, 'Internal Server Error');
+      mockHttpError(500, 'Internal Server Error');
 
-      await expect(getConfig()).rejects.toThrow('HTTP 500: Internal Server Error');
+      await expect(getConfig()).rejects.toThrow('HTTP 500');
     });
   });
 });

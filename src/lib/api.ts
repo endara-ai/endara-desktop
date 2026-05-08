@@ -1,27 +1,41 @@
 import { invoke } from '@tauri-apps/api/core';
-import { get } from 'svelte/store';
 import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse } from './types';
-import { relayPort } from './stores';
-
-function getBaseUrl() {
-  return `http://localhost:${get(relayPort)}/api`;
-}
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY = 1000;
 
-async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
+interface ApiResponse {
+  status: number;
+  body: string;
+}
+
+/**
+ * Proxy an HTTP request to the relay's management API via the Tauri backend.
+ * The relay listens on a per-user Unix-domain socket / Windows named pipe; the
+ * WebView cannot dial those directly, so every `/api/*` call is forwarded
+ * through `mgmt_api_request`.
+ */
+async function mgmtRequest(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<ApiResponse> {
+  return await invoke<ApiResponse>('mgmt_api_request', {
+    method,
+    path: `/api${path}`,
+    body: body === undefined ? null : body,
+  });
+}
+
+async function fetchJson<T>(path: string, options?: { method?: string; body?: unknown }): Promise<T> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const res = await fetch(`${getBaseUrl()}${path}`, {
-        ...options,
-        headers: { 'Content-Type': 'application/json', ...options?.headers },
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const res = await mgmtRequest(options?.method ?? 'GET', path, options?.body);
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error(`HTTP ${res.status}: ${res.body}`);
       }
-      return await res.json() as T;
+      return (res.body ? JSON.parse(res.body) : null) as T;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (attempt < MAX_RETRIES) {
@@ -38,12 +52,9 @@ export async function getStatus(): Promise<RelayStatus> {
 
 export async function getEndpoints(): Promise<Endpoint[]> {
   const data = await fetchJson<Endpoint[]>('/endpoints');
-  // Map relay's health states to UI-friendly values
   for (const ep of data) {
-    // Handle lifecycle.state === "Failed" from the management API
     if (ep.lifecycle?.state === 'Failed') {
       ep.health = 'error';
-      // Extract error detail from lifecycle
       ep.error = ep.lifecycle.error.detail;
     }
   }
@@ -95,15 +106,11 @@ export interface TestConnectionResult {
 }
 
 export async function testConnection(params: TestConnectionParams): Promise<TestConnectionResult> {
-  const res = await fetch(`${getBaseUrl()}/test-connection`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  const res = await mgmtRequest('POST', '/test-connection', params);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`HTTP ${res.status}: ${res.body}`);
   }
-  return await res.json() as TestConnectionResult;
+  return JSON.parse(res.body) as TestConnectionResult;
 }
 
 export interface AddEndpointParams {
@@ -218,20 +225,17 @@ export interface UpdateEndpointParams {
 }
 
 export async function startOAuth(name: string): Promise<OAuthStartResult> {
-  const res = await fetch(`${getBaseUrl()}/endpoints/${encodeURIComponent(name)}/oauth/start`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  const data = await res.json();
-  // If the server returns dcr_unsupported, return it as a typed result instead of throwing
-  if (!res.ok && data?.error === 'dcr_unsupported') {
+  const res = await mgmtRequest('POST', `/endpoints/${encodeURIComponent(name)}/oauth/start`);
+  const data = res.body ? JSON.parse(res.body) : {};
+  // dcr_unsupported / discovery_failed are returned as typed responses, not thrown
+  if ((res.status < 200 || res.status >= 300) && data?.error === 'dcr_unsupported') {
     return data as OAuthStartResult;
   }
-  if (!res.ok && data?.error === 'discovery_failed') {
+  if ((res.status < 200 || res.status >= 300) && data?.error === 'discovery_failed') {
     return data as OAuthStartResult;
   }
-  if (!res.ok) {
-    throw new Error(data?.detail || data?.error || `HTTP ${res.status}: ${res.statusText}`);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
   }
   return data as OAuthStartResult;
 }
@@ -243,14 +247,16 @@ export async function setOAuthCredentials(
 ): Promise<void> {
   const body: Record<string, string> = { client_id: clientId };
   if (clientSecret) body.client_secret = clientSecret;
-  const res = await fetch(`${getBaseUrl()}/endpoints/${encodeURIComponent(name)}/oauth/credentials`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    throw new Error(data?.message || data?.error || `HTTP ${res.status}: ${res.statusText}`);
+  const res = await mgmtRequest('POST', `/endpoints/${encodeURIComponent(name)}/oauth/credentials`, body);
+  if (res.status < 200 || res.status >= 300) {
+    let detail: string | undefined;
+    try {
+      const data = JSON.parse(res.body);
+      detail = data?.message || data?.error;
+    } catch {
+      // body not JSON
+    }
+    throw new Error(detail || `HTTP ${res.status}: ${res.body}`);
   }
 }
 
@@ -292,18 +298,14 @@ export interface OAuthSetupParams {
 }
 
 export async function oauthSetup(params: OAuthSetupParams): Promise<OAuthSetupResponse> {
-  const res = await fetch(`${getBaseUrl()}/oauth/setup`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  const data = await res.json();
+  const res = await mgmtRequest('POST', '/oauth/setup', params);
+  const data = res.body ? JSON.parse(res.body) : {};
   // 422 with dcr_error is an expected flow — return typed response
-  if (!res.ok && res.status === 422 && data?.dcr_error) {
+  if (res.status === 422 && data?.dcr_error) {
     return data as OAuthSetupResponse;
   }
-  if (!res.ok) {
-    throw new Error(data?.detail || data?.error || `HTTP ${res.status}: ${res.statusText}`);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
   }
   return data as OAuthSetupResponse;
 }
@@ -315,16 +317,22 @@ export async function oauthSetupCredentials(
 ): Promise<{ status: string; authorize_url: string }> {
   const body: Record<string, string> = { client_id: clientId };
   if (clientSecret) body.client_secret = clientSecret;
-  const res = await fetch(`${getBaseUrl()}/oauth/setup/${encodeURIComponent(sessionId)}/credentials`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
+  const res = await mgmtRequest(
+    'POST',
+    `/oauth/setup/${encodeURIComponent(sessionId)}/credentials`,
+    body,
+  );
+  if (res.status < 200 || res.status >= 300) {
+    let detail: string | undefined;
+    try {
+      const data = JSON.parse(res.body);
+      detail = data?.detail || data?.error;
+    } catch {
+      // body not JSON
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
   }
-  return res.json();
+  return JSON.parse(res.body);
 }
 
 export async function oauthSetupStatus(sessionId: string): Promise<OAuthSetupStatusResponse> {
@@ -332,23 +340,31 @@ export async function oauthSetupStatus(sessionId: string): Promise<OAuthSetupSta
 }
 
 export async function oauthSetupCommit(sessionId: string): Promise<{ status: string; name: string }> {
-  const res = await fetch(`${getBaseUrl()}/oauth/setup/${encodeURIComponent(sessionId)}/commit`, {
-    method: 'POST',
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
+  const res = await mgmtRequest('POST', `/oauth/setup/${encodeURIComponent(sessionId)}/commit`);
+  if (res.status < 200 || res.status >= 300) {
+    let detail: string | undefined;
+    try {
+      const data = JSON.parse(res.body);
+      detail = data?.detail || data?.error;
+    } catch {
+      // body not JSON
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
   }
-  return res.json();
+  return JSON.parse(res.body);
 }
 
 export async function oauthSetupCancel(sessionId: string): Promise<void> {
-  const res = await fetch(`${getBaseUrl()}/oauth/setup/${encodeURIComponent(sessionId)}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
+  const res = await mgmtRequest('DELETE', `/oauth/setup/${encodeURIComponent(sessionId)}`);
+  if (res.status < 200 || res.status >= 300) {
+    let detail: string | undefined;
+    try {
+      const data = JSON.parse(res.body);
+      detail = data?.detail || data?.error;
+    } catch {
+      // body not JSON
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
   }
 }
 

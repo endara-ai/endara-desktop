@@ -1,18 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
+import { invoke } from '@tauri-apps/api/core';
 import type { CatalogEntry } from '$lib/types';
 
-// Mock fetch globally
-const mockFetch = vi.fn();
-globalThis.fetch = mockFetch;
-
-function mockFetchSuccess(data: unknown) {
-  mockFetch.mockResolvedValue({
-    ok: true,
-    json: () => Promise.resolve(data),
-    status: 200,
-    statusText: 'OK',
-  });
+function mockMgmtSuccess(data: unknown) {
+  vi.mocked(invoke).mockResolvedValue({ status: 200, body: JSON.stringify(data) });
 }
 
 const sampleCatalog: CatalogEntry[] = [
@@ -43,12 +35,11 @@ describe('UnifiedCatalog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockFetch.mockReset();
   });
 
   describe('getCatalog API integration', () => {
     it('returns catalog entries with endpoint and available fields', async () => {
-      mockFetchSuccess(sampleCatalog);
+      mockMgmtSuccess(sampleCatalog);
       const { getCatalog } = await import('$lib/api');
       const result = await getCatalog();
 
