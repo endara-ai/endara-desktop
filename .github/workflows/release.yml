@@ -28,9 +28,12 @@ jobs:
       - name: Validate relay release exists
         id: check
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "${{ github.ref_name }}" == v* ]]; then
-            RELAY_VERSION="${{ github.ref_name }}"
+          if [[ "$REF_NAME" == v* ]]; then
+            RELAY_VERSION="$REF_NAME"
           else
             RELAY_VERSION="latest"
           fi
@@ -45,8 +48,6 @@ jobs:
             echo "::error::Relay release '$RELAY_VERSION' not found in endara-ai/endara-relay. Release the relay first!"
             exit 1
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish:
     needs: [preflight]
@@ -71,11 +72,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-05-08
         with:
           targets: ${{ matrix.target }}
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
         with:
           workspaces: './src-tauri -> target'
 
@@ -89,17 +90,20 @@ jobs:
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        uses: awalsh128/cache-apt-pkgs-action@latest
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
         with:
           packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
           version: 1.0
 
       - name: Download relay binary
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELAY_TARGET: ${{ matrix.relay_target }}
         run: |
           mkdir -p src-tauri/binaries
-          RELAY_BINARY="endara-relay-${{ matrix.relay_target }}"
-          if [[ "${{ matrix.relay_target }}" == *"windows"* ]]; then
+          RELAY_BINARY="endara-relay-${RELAY_TARGET}"
+          if [[ "$RELAY_TARGET" == *"windows"* ]]; then
             RELAY_BINARY="${RELAY_BINARY}.exe"
           fi
           if [[ "$RELAY_VERSION" == "latest" ]]; then
@@ -108,8 +112,6 @@ jobs:
             gh release download "$RELAY_VERSION" --repo endara-ai/endara-relay --pattern "$RELAY_BINARY" --dir src-tauri/binaries
           fi
           chmod +x "src-tauri/binaries/$RELAY_BINARY" 2>/dev/null || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Patch tauri.conf.json version from git tag (e.g., v0.1.0-rc8 → 0.1.0-rc8)
       # This ensures the built app reports the correct version for the updater
@@ -135,14 +137,18 @@ jobs:
       - name: Set build args
         id: build-args
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          ARGS="--target ${{ matrix.target }}"
-          if [[ "${{ matrix.platform }}" == "windows-latest" ]] && [[ "${{ github.ref_name }}" == *"rc"* ]]; then
+          ARGS="--target ${TARGET}"
+          if [[ "$PLATFORM" == "windows-latest" ]] && [[ "$REF_NAME" == *"rc"* ]]; then
             ARGS="$ARGS --bundles nsis"
           fi
           echo "args=$ARGS" >> "$GITHUB_OUTPUT"
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # action-v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Build info for About section — picked up by build.rs
@@ -182,14 +188,15 @@ jobs:
         run: sleep 30
 
       - name: Download latest.json from release
-        run: |
-          mkdir -p gh-pages-deploy
-          gh release download "${{ github.ref_name }}" --pattern "latest.json" --dir gh-pages-deploy
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          mkdir -p gh-pages-deploy
+          gh release download "$REF_NAME" --pattern "latest.json" --dir gh-pages-deploy
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4.0.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./gh-pages-deploy
@@ -211,8 +218,9 @@ jobs:
         id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             tag="${INPUT_VERSION}"
           else
             tag="${GITHUB_REF_NAME}"
@@ -229,22 +237,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           mkdir -p dmgs
           for arch in aarch64 x64; do
             asset="Endara.Desktop_${VERSION}_${arch}.dmg"
             echo "Downloading ${asset} from release ${TAG}..."
             gh release download "${TAG}" \
-              --repo "${{ github.repository }}" \
+              --repo "${REPO}" \
               --pattern "${asset}" \
               --dir dmgs
           done
       - name: Compute SHA256 sums
         id: sha
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          v="${{ steps.version.outputs.version }}"
-          sha_arm64=$(shasum -a 256 "dmgs/Endara.Desktop_${v}_aarch64.dmg" | awk '{print $1}')
-          sha_x64=$(shasum -a 256 "dmgs/Endara.Desktop_${v}_x64.dmg" | awk '{print $1}')
+          sha_arm64=$(shasum -a 256 "dmgs/Endara.Desktop_${VERSION}_aarch64.dmg" | awk '{print $1}')
+          sha_x64=$(shasum -a 256 "dmgs/Endara.Desktop_${VERSION}_x64.dmg" | awk '{print $1}')
           {
             echo "arm64=${sha_arm64}"
             echo "x64=${sha_x64}"
@@ -264,12 +274,16 @@ jobs:
         with:
           python-version: '3.12'
       - name: Update cask
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA_ARM64: ${{ steps.sha.outputs.arm64 }}
+          SHA_X64: ${{ steps.sha.outputs.x64 }}
         run: |
           mkdir -p homebrew-tap/Casks
           python3 desktop/scripts/update-cask.py \
-            --version "${{ steps.version.outputs.version }}" \
-            --sha256-arm64 "${{ steps.sha.outputs.arm64 }}" \
-            --sha256-x64 "${{ steps.sha.outputs.x64 }}" \
+            --version "${VERSION}" \
+            --sha256-arm64 "${SHA_ARM64}" \
+            --sha256-x64 "${SHA_X64}" \
             --cask-path homebrew-tap/Casks/endara.rb
       - name: Commit and push to homebrew-tap
         working-directory: homebrew-tap
