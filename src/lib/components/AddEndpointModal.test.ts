@@ -4,17 +4,21 @@ import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
 import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
 import { buildScopesPayload, shouldShowManualOAuthStar } from './add-endpoint-helpers';
 
+// `sanitizeName` mirrors the relay's `sanitize_server_name`
+// (`packages/relay/src/adapter/server_name.rs`). The cases below stay in
+// lockstep with that Rust unit test table so the two ends agree on what a
+// freshly-typed override will produce.
 describe('sanitizeName', () => {
   it('handles basic lowercase name', () => {
     expect(sanitizeName('echo-mcp')).toBe('echo-mcp');
   });
 
-  it('converts spaces to underscores', () => {
-    expect(sanitizeName('My MCP Server')).toBe('my_mcp_server');
+  it('converts spaces to dashes (matching relay semantics)', () => {
+    expect(sanitizeName('My MCP Server')).toBe('my-mcp-server');
   });
 
-  it('strips special characters', () => {
-    expect(sanitizeName('server@v2.0!')).toBe('serverv20');
+  it('replaces special characters with collapsed dashes', () => {
+    expect(sanitizeName('server@v2.0!')).toBe('server-v2-0');
   });
 
   it('converts uppercase to lowercase', () => {
@@ -29,13 +33,13 @@ describe('sanitizeName', () => {
     expect(sanitizeName('@#$%^&*')).toBe('');
   });
 
-  it('strips unicode characters', () => {
+  it('replaces unicode with dashes (trimmed at edges)', () => {
     expect(sanitizeName('café')).toBe('caf');
     expect(sanitizeName('日本語')).toBe('');
   });
 
   it('handles mixed input', () => {
-    expect(sanitizeName('My Server - v2.0 (beta)')).toBe('my_server_-_v20_beta');
+    expect(sanitizeName('My Server - v2.0 (beta)')).toBe('my-server-v2-0-beta');
   });
 
   it('preserves hyphens and underscores', () => {
@@ -44,6 +48,44 @@ describe('sanitizeName', () => {
 
   it('preserves digits', () => {
     expect(sanitizeName('server123')).toBe('server123');
+  });
+
+  // ── Additional coverage for relay parity (Wave DT.3) ──
+
+  it('trims leading and trailing whitespace', () => {
+    expect(sanitizeName('  spaces  ')).toBe('spaces');
+  });
+
+  it('collapses internal whitespace runs to a single dash', () => {
+    expect(sanitizeName('Linear   MCP\tServer')).toBe('linear-mcp-server');
+  });
+
+  it('collapses runs of dots/slashes/colons to a single dash', () => {
+    expect(sanitizeName('a..b//c::d')).toBe('a-b-c-d');
+  });
+
+  it('trims leading and trailing dashes after replacement', () => {
+    expect(sanitizeName('---Gmail---')).toBe('gmail');
+  });
+
+  it('truncates to 64 characters', () => {
+    const input = 'a'.repeat(100);
+    const out = sanitizeName(input);
+    expect(out.length).toBe(64);
+    expect(out).toBe('a'.repeat(64));
+  });
+
+  it('passes already-canonical lowercase names through unchanged', () => {
+    expect(sanitizeName('gmail')).toBe('gmail');
+    expect(sanitizeName('google-drive')).toBe('google-drive');
+    expect(sanitizeName('google-calendar')).toBe('google-calendar');
+  });
+
+  it('is idempotent for canonical inputs', () => {
+    const cases = ['gmail', 'my-server-v2', 'a_b-c', 'server123'];
+    for (const c of cases) {
+      expect(sanitizeName(sanitizeName(c))).toBe(sanitizeName(c));
+    }
   });
 });
 

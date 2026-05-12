@@ -271,5 +271,44 @@ describe('api', () => {
       await expect(getConfig()).rejects.toThrow('HTTP 500');
     });
   });
+
+  describe('oauthSetup', () => {
+    // Regression coverage for the `server_type_override` field on
+    // `OAuthSetupParams`. It must round-trip through `mgmt_api_request`'s
+    // request body so the relay's `/oauth/setup` handler can persist it
+    // alongside the rest of the endpoint config on commit.
+    it('forwards server_type_override to invoke when set', async () => {
+      const { oauthSetup } = await import('./api');
+      mockOk({ session_id: 'sess-1', status: 'awaiting_callback' });
+
+      await oauthSetup({
+        name: 'Gmail',
+        url: 'https://example.com/mcp/',
+        server_type_override: 'gmail',
+      });
+
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({
+          method: 'POST',
+          path: '/api/oauth/setup',
+          body: expect.objectContaining({ server_type_override: 'gmail' }),
+        }),
+      );
+    });
+
+    it('omits server_type_override from invoke body when absent', async () => {
+      const { oauthSetup } = await import('./api');
+      mockOk({ session_id: 'sess-2', status: 'awaiting_callback' });
+
+      await oauthSetup({
+        name: 'Gmail',
+        url: 'https://example.com/mcp/',
+      });
+
+      const callBody = vi.mocked(invoke).mock.calls[0][1] as { body: Record<string, unknown> };
+      expect(callBody.body).not.toHaveProperty('server_type_override');
+    });
+  });
 });
 

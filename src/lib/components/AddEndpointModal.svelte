@@ -55,12 +55,27 @@
   // True iff the active catalog entry supplied a default override — drives the
   // Advanced section's auto-expand behaviour.
   let serverTypeOverrideHasDefault = $state(false);
-  // Inline-validation flag: true when the user has typed something that
-  // doesn't match the relay's `sanitize_server_name` rules (lowercase ASCII
-  // letters, digits, `-`, `_`). Empty input is considered valid (unset).
+  // Sanitized projection of the override input — what would actually get
+  // persisted, mirroring relay's `sanitize_server_name`. Used to drive both
+  // the inline preview and the validation state.
+  let serverTypeOverrideSanitized = $derived(sanitizeName(serverTypeOverride));
+  // Inline-validation flag: true only when the user has typed something
+  // that would sanitize to an empty string (i.e. unusable). Inputs that
+  // sanitize cleanly are accepted — the preview hint shows the result.
   let serverTypeOverrideInvalid = $derived(
-    serverTypeOverride.trim() !== '' && !/^[a-z0-9_-]+$/.test(serverTypeOverride.trim())
+    serverTypeOverride.trim() !== '' && serverTypeOverrideSanitized === ''
   );
+  // True when the trimmed input differs from its sanitized form, so we can
+  // show a "Will be saved as: <sanitized>" preview without nagging the user
+  // when the input is already canonical.
+  let serverTypeOverridePreviewVisible = $derived(
+    serverTypeOverrideSanitized !== '' &&
+      serverTypeOverride.trim() !== serverTypeOverrideSanitized
+  );
+  // Defensive overflow flag — `maxlength={64}` on the input should keep the
+  // value at ≤64 chars, but pasted content can occasionally bypass that on
+  // some platforms. Surface a hint if it ever happens.
+  let serverTypeOverrideTooLong = $derived(serverTypeOverride.length > 64);
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
@@ -890,10 +905,17 @@
                   type="text"
                   bind:value={serverTypeOverride}
                   placeholder="e.g. gmail"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid ? 'border-(--offline)' : 'border-(--border)'}" />
-                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'.</p>
+                  maxlength={64}
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
+                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'. Max 64 characters.</p>
+                {#if serverTypeOverridePreviewVisible}
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Will be saved as: <code>{serverTypeOverrideSanitized}</code></p>
+                {/if}
                 {#if serverTypeOverrideInvalid}
-                  <p class="text-[11px] text-(--offline) mt-0.5">Only lowercase letters, digits, and <code>-</code>/<code>_</code> are allowed.</p>
+                  <p class="text-[11px] text-(--offline) mt-0.5">No usable characters — please include lowercase letters, digits, <code>-</code>, or <code>_</code>.</p>
+                {/if}
+                {#if serverTypeOverrideTooLong}
+                  <p class="text-[11px] text-(--offline) mt-0.5">Maximum 64 characters.</p>
                 {/if}
               </div>
             </div>
@@ -1039,10 +1061,17 @@
                   type="text"
                   bind:value={serverTypeOverride}
                   placeholder="e.g. my-server"
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid ? 'border-(--offline)' : 'border-(--border)'}" />
-                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'.</p>
+                  maxlength={64}
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
+                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'. Max 64 characters.</p>
+                {#if serverTypeOverridePreviewVisible}
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Will be saved as: <code>{serverTypeOverrideSanitized}</code></p>
+                {/if}
                 {#if serverTypeOverrideInvalid}
-                  <p class="text-[11px] text-(--offline) mt-0.5">Only lowercase letters, digits, and <code>-</code>/<code>_</code> are allowed.</p>
+                  <p class="text-[11px] text-(--offline) mt-0.5">No usable characters — please include lowercase letters, digits, <code>-</code>, or <code>_</code>.</p>
+                {/if}
+                {#if serverTypeOverrideTooLong}
+                  <p class="text-[11px] text-(--offline) mt-0.5">Maximum 64 characters.</p>
                 {/if}
               </div>
             </div>
