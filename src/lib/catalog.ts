@@ -17,6 +17,12 @@ export interface CatalogServer {
   args: string[];
   envVars: CatalogEnvVar[];
   userArgs?: { label: string; placeholder: string; type?: 'directory' | 'file' }[];
+  /**
+   * Optional default for the `server_type_override` field, used when the upstream
+   * MCP server returns a poor or placeholder `serverInfo.name`. Lowercase letters,
+   * digits, `-`, `_` only (mirrors the relay's `sanitize_server_name`).
+   */
+  serverTypeOverride?: string;
 }
 
 export const CATALOG_SERVERS: CatalogServer[] = [

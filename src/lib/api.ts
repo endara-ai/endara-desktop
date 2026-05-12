@@ -133,6 +133,13 @@ export interface AddEndpointParams {
   client_secret?: string;
   scopes?: string;
   token_endpoint?: string;
+  /**
+   * Optional override for the server type the relay advertises to MCP clients.
+   * When set, replaces the upstream `serverInfo.name` (useful when an upstream
+   * server returns a placeholder like `statelessserver`). Lowercase letters,
+   * digits, `-`, `_` only — empty/absent leaves the field unset.
+   */
+  server_type_override?: string;
 }
 
 export async function addEndpoint(params: AddEndpointParams): Promise<void> {
@@ -194,6 +201,12 @@ export interface EndpointConfig {
   client_secret_set?: boolean;
   scopes?: string;
   token_endpoint?: string;
+  /**
+   * Optional override that replaces the upstream-reported server name in the
+   * relay's connected-servers advertisement. Persisted to `config.toml` as
+   * `server_type_override`. Absent when no override is configured.
+   */
+  server_type_override?: string;
 }
 
 export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
@@ -222,6 +235,11 @@ export interface UpdateEndpointParams {
   client_secret?: string;
   scopes?: string;
   token_endpoint?: string;
+  /**
+   * Optional override for the server type advertised to MCP clients. Empty
+   * string clears the override; absent leaves the stored value unchanged.
+   */
+  server_type_override?: string;
 }
 
 export async function startOAuth(name: string): Promise<OAuthStartResult> {
@@ -295,6 +313,12 @@ export interface OAuthSetupParams {
   oauth_server_url?: string;
   client_id?: string;
   client_secret?: string;
+  /**
+   * Optional override for the upstream-reported server name; forwarded to the
+   * relay's `/oauth/setup` endpoint so it is persisted alongside the endpoint
+   * config on commit. Lowercase letters, digits, `-`, `_` only.
+   */
+  server_type_override?: string;
 }
 
 export async function oauthSetup(params: OAuthSetupParams): Promise<OAuthSetupResponse> {

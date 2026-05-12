@@ -21,6 +21,12 @@ export interface OAuthCatalogEntry {
   supportsDcr: boolean;
   tokenEndpoint?: string;
   notes?: string;
+  /**
+   * Optional default for the `server_type_override` field. Used to replace the
+   * upstream-reported server name when the MCP server returns a poor placeholder
+   * (e.g. Google's `statelessserver`). Lowercase letters, digits, `-`, `_` only.
+   */
+  serverTypeOverride?: string;
 }
 
 export const oauthCatalog: OAuthCatalogEntry[] = [
@@ -125,6 +131,7 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     supportsDiscovery: true,
     supportsDcr: false,
     notes: 'Requires a Google Cloud OAuth client — Client ID and Secret needed',
+    serverTypeOverride: 'gmail',
   },
   {
     id: 'google-calendar',
@@ -158,6 +165,7 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     supportsDiscovery: true,
     supportsDcr: false,
     notes: 'Requires a Google Cloud OAuth client — Client ID and Secret needed',
+    serverTypeOverride: 'google-calendar',
   },
   {
     id: 'google-drive',
@@ -185,6 +193,7 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     supportsDiscovery: true,
     supportsDcr: false,
     notes: 'Requires a Google Cloud OAuth client — Client ID and Secret needed',
+    serverTypeOverride: 'google-drive',
   },
 ];
 
