@@ -48,6 +48,19 @@
   let pendingSetupSessionId: string | null = $state(null);
   let setupAuthCancelled = $state(false);
   let cancelHint = $state('');
+  // Optional override that replaces the upstream-reported server name in the
+  // relay's connected-servers advertisement. Pre-populated from the catalog
+  // entry's `serverTypeOverride` default when one exists.
+  let serverTypeOverride = $state('');
+  // True iff the active catalog entry supplied a default override — drives the
+  // Advanced section's auto-expand behaviour.
+  let serverTypeOverrideHasDefault = $state(false);
+  // Inline-validation flag: true when the user has typed something that
+  // doesn't match the relay's `sanitize_server_name` rules (lowercase ASCII
+  // letters, digits, `-`, `_`). Empty input is considered valid (unset).
+  let serverTypeOverrideInvalid = $derived(
+    serverTypeOverride.trim() !== '' && !/^[a-z0-9_-]+$/.test(serverTypeOverride.trim())
+  );
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
@@ -132,6 +145,8 @@
     showingDcrFallback = false;
     dcrClientId = '';
     dcrClientSecret = '';
+    serverTypeOverride = service.serverTypeOverride ?? '';
+    serverTypeOverrideHasDefault = Boolean(service.serverTypeOverride);
     error = '';
     step = 'configure';
   }
@@ -156,6 +171,8 @@
     scopes = '';
     selectedScopes = new Set();
     showingDcrFallback = false;
+    serverTypeOverride = server.serverTypeOverride ?? '';
+    serverTypeOverrideHasDefault = Boolean(server.serverTypeOverride);
     error = '';
     step = 'configure';
   }
@@ -181,6 +198,8 @@
     scopes = '';
     selectedScopes = new Set();
     showingDcrFallback = false;
+    serverTypeOverride = '';
+    serverTypeOverrideHasDefault = false;
     error = '';
     step = 'configure';
   }
@@ -353,6 +372,11 @@
       }
     }
 
+    const overrideValue = sanitizeName(serverTypeOverride);
+    if (overrideValue) {
+      params.server_type_override = overrideValue;
+    }
+
     submitting = true;
     try {
       await addEndpoint(params);
@@ -404,6 +428,10 @@
     }
     if (clientSecret.trim()) {
       setupParams.client_secret = clientSecret.trim();
+    }
+    const overrideValue = sanitizeName(serverTypeOverride);
+    if (overrideValue) {
+      setupParams.server_type_override = overrideValue;
     }
 
     submitting = true;
@@ -823,8 +851,9 @@
             </p>
           {/if}
 
-          <!-- Collapsible Advanced section — collapsed by default for all OAuth flows -->
-          <details class="border border-(--border) rounded-lg">
+          <!-- Collapsible Advanced section — auto-expanded when the catalog
+               entry ships a default `serverTypeOverride`, otherwise collapsed. -->
+          <details class="border border-(--border) rounded-lg" open={serverTypeOverrideHasDefault}>
             <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">
               Advanced
             </summary>
@@ -853,6 +882,19 @@
                 <label for="modal-ep-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">Client Secret <span class="text-(--fg2)/50">(optional)</span></label>
                 <input id="modal-ep-client-secret" type="password" bind:value={clientSecret} placeholder="Optional"
                   class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+              </div>
+              <div>
+                <label for="modal-ep-server-type-override" class="block text-xs font-medium mb-1 text-(--fg2)">Server type override <span class="text-(--fg2)/50">(optional)</span></label>
+                <input
+                  id="modal-ep-server-type-override"
+                  type="text"
+                  bind:value={serverTypeOverride}
+                  placeholder="e.g. gmail"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid ? 'border-(--offline)' : 'border-(--border)'}" />
+                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'.</p>
+                {#if serverTypeOverrideInvalid}
+                  <p class="text-[11px] text-(--offline) mt-0.5">Only lowercase letters, digits, and <code>-</code>/<code>_</code> are allowed.</p>
+                {/if}
               </div>
             </div>
           </details>
@@ -980,6 +1022,31 @@
               </div>
             {/each}
           </div>
+        {/if}
+
+        <!-- Generic Advanced section for non-OAuth transports. Auto-expanded
+             when the catalog entry ships a default `serverTypeOverride`. -->
+        {#if transport !== 'oauth'}
+          <details class="border border-(--border) rounded-lg" open={serverTypeOverrideHasDefault}>
+            <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">
+              Advanced
+            </summary>
+            <div class="px-3 pb-3 space-y-3">
+              <div>
+                <label for="modal-ep-server-type-override-generic" class="block text-xs font-medium mb-1 text-(--fg2)">Server type override <span class="text-(--fg2)/50">(optional)</span></label>
+                <input
+                  id="modal-ep-server-type-override-generic"
+                  type="text"
+                  bind:value={serverTypeOverride}
+                  placeholder="e.g. my-server"
+                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid ? 'border-(--offline)' : 'border-(--border)'}" />
+                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'.</p>
+                {#if serverTypeOverrideInvalid}
+                  <p class="text-[11px] text-(--offline) mt-0.5">Only lowercase letters, digits, and <code>-</code>/<code>_</code> are allowed.</p>
+                {/if}
+              </div>
+            </div>
+          </details>
         {/if}
 
         <!-- Test Connection (not shown for OAuth) -->
