@@ -1173,6 +1173,10 @@ struct AddEndpointArgs {
     client_secret: Option<String>,
     scopes: Option<String>,
     token_endpoint: Option<String>,
+    /// Optional override for the upstream server name advertised to MCP
+    /// clients. Empty / absent leaves `server_type_override` out of the
+    /// `config.toml` entry.
+    server_type_override: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1194,6 +1198,9 @@ struct EndpointConfig {
     client_secret_set: bool,
     scopes: Option<String>,
     token_endpoint: Option<String>,
+    /// Mirrors `server_type_override` from `config.toml`; absent when no
+    /// override is configured for this endpoint.
+    server_type_override: Option<String>,
 }
 
 /// Path to the DCR credentials file for an endpoint, e.g.
@@ -1324,6 +1331,11 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     .get("token_endpoint")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+                let server_type_override = ep
+                    .get("server_type_override")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty());
 
                 return Ok(EndpointConfig {
                     name: name.clone(),
@@ -1340,6 +1352,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     client_secret_set,
                     scopes,
                     token_endpoint,
+                    server_type_override,
                 });
             }
         }
@@ -1365,6 +1378,10 @@ struct UpdateEndpointArgs {
     client_secret: Option<String>,
     scopes: Option<String>,
     token_endpoint: Option<String>,
+    /// Optional override for the upstream server name advertised to MCP
+    /// clients. Empty / absent removes any prior `server_type_override` from
+    /// the endpoint entry on save.
+    server_type_override: Option<String>,
 }
 
 #[tauri::command]
@@ -1479,6 +1496,20 @@ async fn update_endpoint(args: UpdateEndpointArgs) -> Result<(), String> {
                     table.insert(
                         "token_endpoint".to_string(),
                         toml::Value::String(token_endpoint.clone()),
+                    );
+                }
+                // Persist `server_type_override` only when a non-empty value
+                // is supplied; empty / absent omits the key so the relay
+                // falls back to the upstream-reported server name.
+                if let Some(server_type_override) = args
+                    .server_type_override
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    table.insert(
+                        "server_type_override".to_string(),
+                        toml::Value::String(server_type_override.to_string()),
                     );
                 }
                 break;
@@ -1614,6 +1645,19 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), String> {
         endpoint.insert(
             "token_endpoint".to_string(),
             toml::Value::String(token_endpoint),
+        );
+    }
+    // Only persist `server_type_override` when a non-empty value is supplied;
+    // otherwise the relay falls back to the upstream-reported server name.
+    if let Some(server_type_override) = args
+        .server_type_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        endpoint.insert(
+            "server_type_override".to_string(),
+            toml::Value::String(server_type_override.to_string()),
         );
     }
 
@@ -2265,5 +2309,196 @@ mod relay_watchdog_tests {
         assert!(detect_health_transition(&HealthState::Unknown, &HealthState::Unknown).is_none());
         assert!(detect_health_transition(&HealthState::Healthy, &HealthState::Unknown).is_none());
         assert!(detect_health_transition(&unhealthy("x"), &HealthState::Unknown).is_none());
+    }
+}
+
+#[cfg(test)]
+mod server_type_override_tests {
+    //! Round-trip coverage for the `server_type_override` field across
+    //! `add_endpoint` / `update_endpoint` / `get_endpoint_config`.
+    //!
+    //! Each test pins `$HOME` to a fresh `tempfile::TempDir` so the Tauri
+    //! commands write into an isolated `~/.endara-dev/config.toml`. Tests are
+    //! `serial` because env-var manipulation is process-global.
+    use super::*;
+    use serial_test::serial;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// Snapshots `$HOME` on construction and restores it on drop so tests
+    /// cannot leak the override into each other even on panic.
+    struct HomeGuard {
+        prior: Option<String>,
+        _tmp: TempDir,
+    }
+
+    impl HomeGuard {
+        fn new() -> Self {
+            let prior = std::env::var("HOME").ok();
+            let tmp = tempfile::tempdir().expect("create tempdir");
+            std::env::set_var("HOME", tmp.path());
+            Self { prior, _tmp: tmp }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime")
+    }
+
+    fn read_toml() -> String {
+        let path: PathBuf = config_path().expect("config_path");
+        std::fs::read_to_string(&path).expect("read config.toml")
+    }
+
+    fn base_add_args(name: &str, override_: Option<&str>) -> AddEndpointArgs {
+        AddEndpointArgs {
+            name: name.to_string(),
+            transport: "stdio".to_string(),
+            tool_prefix: Some(name.to_string()),
+            command: Some("echo".to_string()),
+            args: Some(vec!["hi".to_string()]),
+            url: None,
+            description: None,
+            env: None,
+            headers: None,
+            oauth_server_url: None,
+            client_id: None,
+            client_secret: None,
+            scopes: None,
+            token_endpoint: None,
+            server_type_override: override_.map(|s| s.to_string()),
+        }
+    }
+
+    fn base_update_args(original: &str, name: &str, override_: Option<&str>) -> UpdateEndpointArgs {
+        UpdateEndpointArgs {
+            original_name: original.to_string(),
+            name: name.to_string(),
+            transport: "stdio".to_string(),
+            tool_prefix: Some(name.to_string()),
+            command: Some("echo".to_string()),
+            args: Some(vec!["hi".to_string()]),
+            url: None,
+            description: None,
+            env: None,
+            headers: None,
+            oauth_server_url: None,
+            client_id: None,
+            client_secret: None,
+            scopes: None,
+            token_endpoint: None,
+            server_type_override: override_.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn add_endpoint_persists_server_type_override() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        rt.block_on(add_endpoint(base_add_args("gmail-acct", Some("gmail"))))
+            .expect("add_endpoint should succeed");
+
+        let toml = read_toml();
+        assert!(
+            toml.contains("server_type_override = \"gmail\""),
+            "config.toml should contain the override key, got:\n{toml}"
+        );
+
+        let cfg = rt
+            .block_on(get_endpoint_config("gmail-acct".to_string()))
+            .expect("get_endpoint_config");
+        assert_eq!(cfg.server_type_override.as_deref(), Some("gmail"));
+    }
+
+    #[test]
+    #[serial]
+    fn add_endpoint_skips_override_when_empty_or_absent() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        rt.block_on(add_endpoint_with_empty())
+            .expect("add_endpoint");
+
+        let toml = read_toml();
+        assert!(
+            !toml.contains("server_type_override"),
+            "empty / absent override should not be written, got:\n{toml}"
+        );
+
+        let cfg = rt
+            .block_on(get_endpoint_config("plain".to_string()))
+            .expect("get_endpoint_config");
+        assert!(cfg.server_type_override.is_none());
+    }
+
+    async fn add_endpoint_with_empty() -> Result<(), String> {
+        // Empty string and whitespace-only must both be stripped.
+        add_endpoint(base_add_args("plain", Some(""))).await?;
+        add_endpoint(base_add_args("blanks", Some("   "))).await?;
+        // And `None` should likewise omit the key.
+        add_endpoint(base_add_args("none", None)).await
+    }
+
+    #[test]
+    #[serial]
+    fn update_endpoint_round_trips_override_changes() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+
+        // Seed without an override, then set one via update.
+        rt.block_on(add_endpoint(base_add_args("drive", None)))
+            .expect("seed add_endpoint");
+        rt.block_on(update_endpoint(base_update_args(
+            "drive",
+            "drive",
+            Some("google-drive"),
+        )))
+        .expect("update_endpoint (set)");
+        assert!(read_toml().contains("server_type_override = \"google-drive\""));
+        let cfg = rt
+            .block_on(get_endpoint_config("drive".to_string()))
+            .expect("read after set");
+        assert_eq!(cfg.server_type_override.as_deref(), Some("google-drive"));
+
+        // Change the override.
+        rt.block_on(update_endpoint(base_update_args(
+            "drive",
+            "drive",
+            Some("gdrive"),
+        )))
+        .expect("update_endpoint (change)");
+        let cfg = rt
+            .block_on(get_endpoint_config("drive".to_string()))
+            .expect("read after change");
+        assert_eq!(cfg.server_type_override.as_deref(), Some("gdrive"));
+
+        // Clear via empty string — key must be removed from TOML.
+        rt.block_on(update_endpoint(base_update_args(
+            "drive",
+            "drive",
+            Some(""),
+        )))
+        .expect("update_endpoint (clear)");
+        let toml = read_toml();
+        assert!(
+            !toml.contains("server_type_override"),
+            "clearing should remove the key, got:\n{toml}"
+        );
+        let cfg = rt
+            .block_on(get_endpoint_config("drive".to_string()))
+            .expect("read after clear");
+        assert!(cfg.server_type_override.is_none());
     }
 }
