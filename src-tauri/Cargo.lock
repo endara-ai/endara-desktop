@@ -1108,6 +1108,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-shell",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "toml 0.8.2",
  "urlencoding",
