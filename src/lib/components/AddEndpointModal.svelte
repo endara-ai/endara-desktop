@@ -907,7 +907,7 @@
                   placeholder="e.g. gmail"
                   maxlength={64}
                   class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
-                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'. Max 64 characters.</p>
+                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Max 64 characters.</p>
                 {#if serverTypeOverridePreviewVisible}
                   <p class="text-[11px] text-(--fg2) mt-0.5">Will be saved as: <code>{serverTypeOverrideSanitized}</code></p>
                 {/if}
@@ -1063,7 +1063,7 @@
                   placeholder="e.g. my-server"
                   maxlength={64}
                   class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
-                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'. Max 64 characters.</p>
+                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Max 64 characters.</p>
                 {#if serverTypeOverridePreviewVisible}
                   <p class="text-[11px] text-(--fg2) mt-0.5">Will be saved as: <code>{serverTypeOverrideSanitized}</code></p>
                 {/if}
