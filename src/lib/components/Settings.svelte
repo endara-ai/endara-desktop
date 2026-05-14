@@ -2,8 +2,9 @@
   import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from '$lib/stores';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
-  import { getStatus, getConfig, reloadConfig } from '$lib/api';
+  import { getStatus } from '$lib/api';
   import { canRetryRelay, restartRelay } from '$lib/relaySidecarUi';
+  import { fetchJsExecutionMode, toggleJsExecutionMode } from '$lib/jsExecutionModeUi';
   import { checkAndAutoDownload, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
   import { toast } from 'svelte-sonner';
@@ -126,19 +127,6 @@
     return `${h}h ${m}m`;
   }
 
-  async function toggleJsExecutionMode() {
-    const newValue = !$jsExecutionMode;
-    jsExecutionMode.set(newValue);
-    try {
-      await invoke('set_js_execution_mode', { enabled: newValue });
-      await reloadConfig();
-    } catch (e) {
-      // Revert on failure
-      jsExecutionMode.set(!newValue);
-      console.error('Failed to set JS execution mode:', e);
-    }
-  }
-
   async function toggleAutoStart() {
     const newValue = !autoStartEnabled;
     autoStartEnabled = newValue;
@@ -155,18 +143,6 @@
       autoStartEnabled = await invoke<boolean>('get_autostart');
     } catch (e) {
       console.error('Failed to get autostart:', e);
-    }
-  }
-
-  async function fetchJsExecutionMode() {
-    try {
-      const config = await getConfig();
-      const relay = config.relay as Record<string, unknown> | undefined;
-      if (relay && typeof relay.local_js_execution === 'boolean') {
-        jsExecutionMode.set(relay.local_js_execution);
-      }
-    } catch {
-      // Relay may not be running yet; leave store at default
     }
   }
 
