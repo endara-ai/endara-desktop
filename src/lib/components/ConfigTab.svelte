@@ -79,6 +79,11 @@
   let originalScopes = $state('');
   let originalServerTypeOverride = $state('');
 
+  // Controls the Advanced <details> open state. Two-way bound so user toggles
+  // stick across reactive re-renders; re-seeded from the loaded config on each
+  // endpoint switch / form snapshot.
+  let advancedOpen = $state(false);
+
   function snapshotOriginals() {
     originalTransport = transport;
     originalPrefix = prefix;
@@ -93,6 +98,7 @@
     originalClientId = clientId;
     originalScopes = scopes;
     originalServerTypeOverride = serverTypeOverride;
+    advancedOpen = originalServerTypeOverride !== '';
   }
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
@@ -377,8 +383,8 @@
             <input id="config-ep-url" type="text" bind:value={url} placeholder="https://api.githubcopilot.com/mcp/"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
-          <!-- Auto-expanded when a `server_type_override` is currently stored. -->
-          <details class="border border-(--border) rounded-lg" open={originalServerTypeOverride !== ''}>
+          <!-- Auto-expanded on load when a `server_type_override` is currently stored; user can toggle freely after that. -->
+          <details class="border border-(--border) rounded-lg" bind:open={advancedOpen}>
             <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">Advanced</summary>
             <div class="px-3 pb-3 space-y-3">
               <div>
@@ -511,10 +517,10 @@
           </div>
         {/if}
 
-        <!-- Generic Advanced section for non-OAuth transports. Auto-expanded
-             when a `server_type_override` is currently stored. -->
+        <!-- Generic Advanced section for non-OAuth transports. Auto-expanded on load
+             when a `server_type_override` is currently stored; user can toggle freely after that. -->
         {#if transport !== 'oauth'}
-          <details class="border border-(--border) rounded-lg" open={originalServerTypeOverride !== ''}>
+          <details class="border border-(--border) rounded-lg" bind:open={advancedOpen}>
             <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">Advanced</summary>
             <div class="px-3 pb-3 space-y-3">
               <div>
