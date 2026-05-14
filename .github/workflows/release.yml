@@ -56,7 +56,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          - platform: macos-13
             target: x86_64-apple-darwin
             relay_target: x86_64-apple-darwin
           - platform: macos-latest
