@@ -56,7 +56,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          # pinned to macos-14 — macos-latest (macos-15) ships a rustup-init shim that breaks 'cargo build' in tauri-action's bundle path; companion to relay PR for the same fix. See burned tags v0.1.6-rc.{2,3,4}.
+          - platform: macos-14
             target: aarch64-apple-darwin
             relay_target: aarch64-apple-darwin
           - platform: windows-latest
