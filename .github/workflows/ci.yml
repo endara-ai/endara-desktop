@@ -17,7 +17,8 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: macos-latest
+          # pinned to macos-14 — macos-latest (macos-15) ships a rustup-init shim that breaks 'cargo' (companion to release.yml fix in #79).
+          - os: macos-14
             target: aarch64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
