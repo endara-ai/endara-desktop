@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getEndpointConfig, updateEndpoint, getEndpoints, type UpdateEndpointParams } from '$lib/api';
-  import { selectedEndpoint, endpoints } from '$lib/stores';
+  import { selectedEndpoint, endpoints, selectedEndpointData } from '$lib/stores';
   import { sanitizeName } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http' | 'oauth';
@@ -54,6 +54,15 @@
   // value at ≤64 chars, but pasted content can occasionally bypass that on
   // some platforms. Surface a hint if it ever happens.
   let serverTypeOverrideTooLong = $derived(serverTypeOverride.length > 64);
+
+  // The upstream-reported raw name from the relay's Lifecycle::Ready state,
+  // used to preview what the override would replace. Null when the endpoint
+  // isn't Ready or when the relay hasn't surfaced a raw name yet.
+  let upstreamDefaultName = $derived(
+    $selectedEndpointData?.lifecycle?.state === 'Ready'
+      ? ($selectedEndpointData.lifecycle.server_name_raw ?? null)
+      : null
+  );
 
   // Original value snapshots for dirty-state tracking
   let originalTransport: TransportType = $state('stdio');
@@ -396,14 +405,30 @@
               </div>
               <div>
                 <label for="config-ep-server-type-override" class="block text-xs font-medium mb-1 text-(--fg2)">Server type override <span class="text-(--fg2)/50">(optional)</span></label>
-                <input
-                  id="config-ep-server-type-override"
-                  type="text"
-                  bind:value={serverTypeOverride}
-                  placeholder="e.g. gmail"
-                  maxlength={64}
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
-                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'. Max 64 characters.</p>
+                {#if upstreamDefaultName}
+                  <p class="text-[11px] text-(--fg2) mb-1">Default (from server): <code>{upstreamDefaultName}</code></p>
+                {/if}
+                <div class="flex gap-2">
+                  <input
+                    id="config-ep-server-type-override"
+                    type="text"
+                    bind:value={serverTypeOverride}
+                    placeholder={upstreamDefaultName ?? ''}
+                    maxlength={64}
+                    class="flex-1 text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
+                  <button
+                    type="button"
+                    title="Clear override and use the server's default name"
+                    disabled={serverTypeOverride === ''}
+                    onclick={() => (serverTypeOverride = '')}
+                    class="px-2 py-1 text-xs rounded-lg border border-(--border) text-(--fg2) hover:bg-(--surface-hover) disabled:opacity-50 disabled:cursor-not-allowed"
+                  >Reset</button>
+                </div>
+                {#if upstreamDefaultName}
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Instead of returning the name '{upstreamDefaultName}' to MCP clients, use this name. Max 64 characters.</p>
+                {:else}
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Max 64 characters.</p>
+                {/if}
                 {#if serverTypeOverridePreviewVisible}
                   <p class="text-[11px] text-(--fg2) mt-0.5">Will be saved as: <code>{serverTypeOverrideSanitized}</code></p>
                 {/if}
@@ -494,14 +519,30 @@
             <div class="px-3 pb-3 space-y-3">
               <div>
                 <label for="config-ep-server-type-override-generic" class="block text-xs font-medium mb-1 text-(--fg2)">Server type override <span class="text-(--fg2)/50">(optional)</span></label>
-                <input
-                  id="config-ep-server-type-override-generic"
-                  type="text"
-                  bind:value={serverTypeOverride}
-                  placeholder="e.g. my-server"
-                  maxlength={64}
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
-                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Useful when an upstream MCP server returns a placeholder like 'statelessserver'. Max 64 characters.</p>
+                {#if upstreamDefaultName}
+                  <p class="text-[11px] text-(--fg2) mb-1">Default (from server): <code>{upstreamDefaultName}</code></p>
+                {/if}
+                <div class="flex gap-2">
+                  <input
+                    id="config-ep-server-type-override-generic"
+                    type="text"
+                    bind:value={serverTypeOverride}
+                    placeholder={upstreamDefaultName ?? ''}
+                    maxlength={64}
+                    class="flex-1 text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
+                  <button
+                    type="button"
+                    title="Clear override and use the server's default name"
+                    disabled={serverTypeOverride === ''}
+                    onclick={() => (serverTypeOverride = '')}
+                    class="px-2 py-1 text-xs rounded-lg border border-(--border) text-(--fg2) hover:bg-(--surface-hover) disabled:opacity-50 disabled:cursor-not-allowed"
+                  >Reset</button>
+                </div>
+                {#if upstreamDefaultName}
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Instead of returning the name '{upstreamDefaultName}' to MCP clients, use this name. Max 64 characters.</p>
+                {:else}
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Max 64 characters.</p>
+                {/if}
                 {#if serverTypeOverridePreviewVisible}
                   <p class="text-[11px] text-(--fg2) mt-0.5">Will be saved as: <code>{serverTypeOverrideSanitized}</code></p>
                 {/if}
