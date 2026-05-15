@@ -4,7 +4,7 @@
   import { toast } from 'svelte-sonner';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
   import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
-  import { buildScopesPayload, shouldShowManualOAuthStar } from './add-endpoint-helpers';
+  import { buildScopesPayload, shouldShowManualOAuthStar, nextPollOrTimeout } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
@@ -473,7 +473,7 @@
         // Open browser for authorization
         await openUrl(result.authorize_url);
 
-        // Poll for setup session completion (every 1s, up to 2 minutes)
+        // Poll for setup session completion (exponential backoff, ~120s budget)
         await pollForSetupAuth(result.session_id, trimmedName);
       }
     } catch (e) {
@@ -489,9 +489,16 @@
   }
 
   async function pollForSetupAuth(sessionId: string, endpointName: string) {
-    const maxAttempts = 120;
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
+    // Backoff schedule (1s → 2s → 4s → 5s cap) keyed to attempt index, with
+    // the cumulative-budget guard living in `nextPollOrTimeout`.
+    let attempt = 0;
+    let elapsedMs = 0;
+    while (true) {
+      const delayMs = nextPollOrTimeout(attempt, elapsedMs);
+      if (delayMs === null) break;
+      await new Promise((r) => setTimeout(r, delayMs));
+      elapsedMs += delayMs;
+      attempt += 1;
       if (setupAuthCancelled) return;
       try {
         const statusResult = await oauthSetupStatus(sessionId);
@@ -1124,7 +1131,10 @@
 
         {#if submitting && pendingSetupSessionId}
           <div class="flex items-center justify-between gap-2 pt-1">
-            <p class="text-[11px] text-(--fg2)">Waiting for browser authorization…</p>
+            <p class="text-[11px] text-(--fg2) flex items-center gap-2" aria-live="polite">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-(--accent) animate-pulse-dot" aria-hidden="true"></span>
+              Waiting for browser authorization…
+            </p>
             <button
               type="button"
               class="text-xs text-(--accent) hover:text-(--accent-hover) underline"

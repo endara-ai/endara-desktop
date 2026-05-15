@@ -53,3 +53,33 @@ export function shouldShowManualOAuthStar(entry: OAuthCatalogEntry): boolean {
   return entry.supportsDcr === false;
 }
 
+/** Total wall-clock budget for OAuth setup polling, in milliseconds. */
+export const OAUTH_SETUP_POLL_BUDGET_MS = 120_000;
+
+/**
+ * Schedule for `pollForSetupAuth` in `AddEndpointModal`. Returns the delay
+ * (in ms) to wait before the next status check given the zero-based attempt
+ * index. Sequence: 1s, 2s, 4s, 5s, 5s, … (capped at 5s). Keeps the modal
+ * responsive early on (when the user is most likely to have just clicked
+ * "Authorize") without hammering the relay for the rest of the 120s window.
+ */
+export function nextPollDelayMs(attempt: number): number {
+  if (attempt < 0) return 1000;
+  return Math.min(1000 * 2 ** attempt, 5000);
+}
+
+/**
+ * Decides whether the next poll fits inside `budgetMs`. Returns the delay to
+ * wait, or `null` when the cumulative time would exceed the budget and the
+ * caller should surface a timeout instead.
+ */
+export function nextPollOrTimeout(
+  attempt: number,
+  elapsedMs: number,
+  budgetMs: number = OAUTH_SETUP_POLL_BUDGET_MS,
+): number | null {
+  const delay = nextPollDelayMs(attempt);
+  if (elapsedMs + delay > budgetMs) return null;
+  return delay;
+}
+

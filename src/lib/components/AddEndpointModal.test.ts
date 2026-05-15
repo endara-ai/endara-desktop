@@ -2,7 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { sanitizeName } from '$lib/utils';
 import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
 import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
-import { buildScopesPayload, shouldShowManualOAuthStar } from './add-endpoint-helpers';
+import {
+  buildScopesPayload,
+  shouldShowManualOAuthStar,
+  nextPollDelayMs,
+  nextPollOrTimeout,
+  OAUTH_SETUP_POLL_BUDGET_MS,
+} from './add-endpoint-helpers';
 
 // `sanitizeName` mirrors the relay's `sanitize_server_name`
 // (`packages/relay/src/adapter/server_name.rs`). The cases below stay in
@@ -480,6 +486,65 @@ describe('Scope option shape', () => {
         expect(opt.description.trim().length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+// Slice A row 3 — exponential backoff schedule (1s → 2s → 4s → 5s cap).
+describe('nextPollDelayMs', () => {
+  it('returns 1s, 2s, 4s, then caps at 5s for subsequent attempts', () => {
+    expect(nextPollDelayMs(0)).toBe(1000);
+    expect(nextPollDelayMs(1)).toBe(2000);
+    expect(nextPollDelayMs(2)).toBe(4000);
+    expect(nextPollDelayMs(3)).toBe(5000);
+    expect(nextPollDelayMs(4)).toBe(5000);
+    expect(nextPollDelayMs(10)).toBe(5000);
+    expect(nextPollDelayMs(100)).toBe(5000);
+  });
+
+  it('clamps negative inputs to the initial 1s delay', () => {
+    expect(nextPollDelayMs(-1)).toBe(1000);
+  });
+});
+
+// Slice A row 4 — cumulative-budget guard: polling stops once the next wait
+// would push us past the 120s window so `pollForSetupAuth` can surface a
+// timeout message instead of overshooting.
+describe('nextPollOrTimeout', () => {
+  it('returns the next delay while inside the budget', () => {
+    expect(nextPollOrTimeout(0, 0)).toBe(1000);
+    expect(nextPollOrTimeout(1, 1_000)).toBe(2000);
+    expect(nextPollOrTimeout(2, 3_000)).toBe(4000);
+    expect(nextPollOrTimeout(3, 7_000)).toBe(5000);
+  });
+
+  it('returns null when the next wait would exceed the 120s budget', () => {
+    expect(nextPollOrTimeout(99, OAUTH_SETUP_POLL_BUDGET_MS)).toBeNull();
+    expect(nextPollOrTimeout(99, OAUTH_SETUP_POLL_BUDGET_MS - 4_999)).toBeNull();
+    // Exactly fits — still allowed.
+    expect(nextPollOrTimeout(99, OAUTH_SETUP_POLL_BUDGET_MS - 5_000)).toBe(5000);
+  });
+
+  it('runs a bounded number of polls and stops within the 120s budget', () => {
+    // Simulates the loop in `pollForSetupAuth` and verifies it terminates
+    // with a timeout rather than overshooting the wall-clock budget.
+    let attempt = 0;
+    let elapsed = 0;
+    const delays: number[] = [];
+    while (true) {
+      const next = nextPollOrTimeout(attempt, elapsed);
+      if (next === null) break;
+      delays.push(next);
+      elapsed += next;
+      attempt += 1;
+      // Guard against an accidental infinite loop in the test.
+      if (attempt > 1000) throw new Error('schedule did not terminate');
+    }
+    expect(delays.slice(0, 4)).toEqual([1000, 2000, 4000, 5000]);
+    expect(elapsed).toBeLessThanOrEqual(OAUTH_SETUP_POLL_BUDGET_MS);
+    // 1+2+4+5 = 12s, then 5s steps → 12 + 5*N ≤ 120  →  N ≤ 21  →  25 polls total.
+    expect(delays.length).toBe(25);
+    // The very next attempt after the loop terminates must be flagged as a timeout.
+    expect(nextPollOrTimeout(attempt, elapsed)).toBeNull();
   });
 });
 
