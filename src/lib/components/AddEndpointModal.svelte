@@ -399,7 +399,9 @@
         const data = await getEndpoints();
         endpoints.set(data);
       } catch {
-        // Will be picked up by the next poll cycle
+        // Mutation already succeeded — silent on purpose. The 2s poll
+        // loop in +page.svelte reconciles the list; surfacing a refresh
+        // error on top of the success toast below would confuse users.
       }
       selectedEndpoint.set(name.trim());
       toast.success(`Server "${name.trim()}" added`);
@@ -511,7 +513,9 @@
             const data = await getEndpoints();
             endpoints.set(data);
           } catch {
-            // Will be picked up by the next poll cycle
+            // OAuth commit already succeeded — silent on purpose. The
+            // 2s poll loop in +page.svelte reconciles the list; we
+            // don't want a refresh error on top of the success toast.
           }
           selectedEndpoint.set(endpointName);
           toast.success(`Connected to "${endpointName}"`);

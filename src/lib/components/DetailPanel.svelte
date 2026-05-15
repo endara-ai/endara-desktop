@@ -68,7 +68,11 @@
       try {
         const data = await getEndpoints();
         endpoints.set(data);
-      } catch { /* will be picked up by next poll */ }
+      } catch {
+        // Mutation already succeeded — silent on purpose. The 2s poll
+        // loop in +page.svelte reconciles the list; surfacing a refresh
+        // error on top of the success toast below would confuse users.
+      }
       toast.success(`Server "${ep.name}" ${ep.disabled ? 'enabled' : 'disabled'}`);
     } catch {
       toast.error(`Failed to ${action} "${ep.name}"`);
@@ -85,7 +89,11 @@
         try {
           const data = await getEndpoints();
           endpoints.set(data);
-        } catch { /* will be picked up by next poll */ }
+        } catch {
+          // Mutation already succeeded — silent on purpose. The 2s poll
+          // loop in +page.svelte reconciles the list; surfacing a refresh
+          // error on top of the success toast below would confuse users.
+        }
         toast.success(`Server "${name}" deleted`);
       } catch {
         toast.error(`Failed to delete "${name}"`);
