@@ -4,7 +4,14 @@
   import { toast } from 'svelte-sonner';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
   import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
-  import { buildScopesPayload, shouldShowManualOAuthStar, nextPollOrTimeout } from './add-endpoint-helpers';
+  import {
+    buildScopesPayload,
+    shouldShowManualOAuthStar,
+    nextPollOrTimeout,
+    validateAddEndpointForm,
+    firstAddEndpointFieldError,
+    type AddEndpointFieldErrors,
+  } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
   import { focusTrap } from '$lib/actions/focusTrap';
   import { openUrl } from '@tauri-apps/plugin-opener';
@@ -34,6 +41,11 @@
   let userArgValues: string[] = $state([]);
   let submitting = $state(false);
   let error = $state('');
+  // Per-field validation errors set on submit; cleared per-field as the user
+  // edits the offending input. Drives `aria-invalid` and the red-border
+  // style on individual inputs while `error` keeps the bottom-of-form
+  // summary working.
+  let fieldErrors: AddEndpointFieldErrors = $state({});
   let testing = $state(false);
   let testResult: { success: boolean; toolCount?: number; error?: string } | null = $state(null);
   let oauthServerUrl = $state('');
@@ -164,6 +176,7 @@
     serverTypeOverride = service.serverTypeOverride ?? '';
     serverTypeOverrideHasDefault = Boolean(service.serverTypeOverride);
     error = '';
+    fieldErrors = {};
     step = 'configure';
   }
 
@@ -190,6 +203,7 @@
     serverTypeOverride = server.serverTypeOverride ?? '';
     serverTypeOverrideHasDefault = Boolean(server.serverTypeOverride);
     error = '';
+    fieldErrors = {};
     step = 'configure';
   }
 
@@ -217,14 +231,28 @@
     serverTypeOverride = '';
     serverTypeOverrideHasDefault = false;
     error = '';
+    fieldErrors = {};
     step = 'configure';
   }
 
   function goBack() {
     step = 'browse';
     error = '';
+    fieldErrors = {};
     testResult = null;
     showingDcrFallback = false;
+  }
+
+  /**
+   * Drop a single field's invalid flag in response to user input on that
+   * field. Keeps the rest of the per-field map intact and avoids re-running
+   * full-form validation on every keystroke.
+   */
+  function clearFieldError(field: keyof AddEndpointFieldErrors) {
+    if (fieldErrors[field]) {
+      const { [field]: _removed, ...rest } = fieldErrors;
+      fieldErrors = rest;
+    }
   }
 
   function handlePrefixInput(value: string) {
@@ -310,7 +338,12 @@
   async function handleSubmit() {
     error = '';
     cancelHint = '';
-    if (!name.trim()) { error = 'Name is required'; return; }
+    const errs = validateAddEndpointForm({ transport, name, command, url });
+    fieldErrors = errs;
+    if (Object.keys(errs).length > 0) {
+      error = firstAddEndpointFieldError(errs);
+      return;
+    }
     const trimmedName = name.trim();
     const defaultPrefix = sanitizeName(trimmedName);
 
@@ -328,7 +361,6 @@
     }
 
     if (transport === 'stdio') {
-      if (!command.trim()) { error = 'Command is required for stdio'; return; }
       params.command = command.trim();
 
       // Build args: base args + userArgs values
@@ -345,7 +377,6 @@
         params.args = finalArgs;
       }
     } else if (transport === 'oauth') {
-      if (!url.trim()) { error = 'Server URL is required'; return; }
       params.url = url.trim();
       if (oauthServerUrl.trim()) params.oauth_server_url = oauthServerUrl.trim();
       if (clientId.trim()) params.client_id = clientId.trim();
@@ -356,7 +387,6 @@
       );
       if (scopesPayload.string) params.scopes = scopesPayload.string;
     } else {
-      if (!url.trim()) { error = 'URL is required'; return; }
       params.url = url.trim();
     }
 
@@ -418,8 +448,12 @@
     setupAuthCancelled = false;
     error = '';
     cancelHint = '';
-    if (!name.trim()) { error = 'Name is required'; return; }
-    if (!url.trim()) { error = 'Server URL is required'; return; }
+    const errs = validateAddEndpointForm({ transport: 'oauth', name, command, url });
+    fieldErrors = errs;
+    if (Object.keys(errs).length > 0) {
+      error = firstAddEndpointFieldError(errs);
+      return;
+    }
 
     const trimmedName = name.trim();
     const defaultPrefix = sanitizeName(trimmedName);
@@ -788,7 +822,9 @@
         <div>
           <label for="modal-ep-name" class="block text-xs font-medium mb-1 text-(--fg2)">Name</label>
           <input id="modal-ep-name" type="text" bind:value={name} placeholder="my-server"
-            class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+            aria-invalid={!!fieldErrors.name}
+            oninput={() => clearFieldError('name')}
+            class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {fieldErrors.name ? 'border-(--offline)' : 'border-(--border)'}" />
         </div>
 
         <div>
@@ -827,7 +863,9 @@
           <div>
             <label for="modal-ep-cmd" class="block text-xs font-medium mb-1 text-(--fg2)">Command</label>
             <input id="modal-ep-cmd" type="text" bind:value={command} placeholder="npx"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+              aria-invalid={!!fieldErrors.command}
+              oninput={() => clearFieldError('command')}
+              class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {fieldErrors.command ? 'border-(--offline)' : 'border-(--border)'}" />
           </div>
           <div>
             <label for="modal-ep-args" class="block text-xs font-medium mb-1 text-(--fg2)">Arguments <span class="text-(--fg2)/50">(space-separated)</span></label>
@@ -838,7 +876,9 @@
           <div>
             <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">Server URL</label>
             <input id="modal-ep-url" type="text" bind:value={url} placeholder="https://mcp.linear.app/mcp"
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+              aria-invalid={!!fieldErrors.url}
+              oninput={() => clearFieldError('url')}
+              class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {fieldErrors.url ? 'border-(--offline)' : 'border-(--border)'}" />
           </div>
 
           <!-- Curated scope checkbox list (only when the catalog entry exposes availableScopes) -->
@@ -937,7 +977,9 @@
           <div>
             <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">URL</label>
             <input id="modal-ep-url" type="text" bind:value={url} placeholder={transport === 'sse' ? 'http://localhost:3000/sse' : 'http://localhost:3000/mcp'}
-              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+              aria-invalid={!!fieldErrors.url}
+              oninput={() => clearFieldError('url')}
+              class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {fieldErrors.url ? 'border-(--offline)' : 'border-(--border)'}" />
           </div>
         {/if}
 

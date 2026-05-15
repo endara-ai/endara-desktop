@@ -83,3 +83,61 @@ export function nextPollOrTimeout(
   return delay;
 }
 
+/** Transports supported by the Add Server modal. Mirrors the inline literal in `AddEndpointModal.svelte`. */
+export type AddEndpointTransport = 'stdio' | 'sse' | 'http' | 'oauth';
+
+/**
+ * Per-field error map for inputs that surface `aria-invalid` in the Add
+ * Server modal. Presence of a key means that field failed validation; the
+ * value is the human-readable message reused for both the inline state and
+ * the bottom-of-form summary (see `firstAddEndpointFieldError`).
+ *
+ * Only required fields shared by all transports live here — advanced or
+ * optional checks (server type override sanitization, DCR client-id
+ * fallback, etc.) stay inline in the component since they have their own
+ * UI affordances.
+ */
+export type AddEndpointFieldErrors = {
+  name?: string;
+  command?: string;
+  url?: string;
+};
+
+export interface AddEndpointFormInput {
+  transport: AddEndpointTransport;
+  name: string;
+  command: string;
+  url: string;
+}
+
+/**
+ * Validates the required-field inputs of the Add Server modal and returns a
+ * per-field error map. An empty object means everything checked here is OK.
+ *
+ * No new rules are introduced: this surfaces the same conditions the
+ * inline `handleSubmit`/`handleOAuthSubmit` checks used to bail out on,
+ * just collected up front so the modal can flag every offending input at
+ * once instead of stopping at the first.
+ */
+export function validateAddEndpointForm(input: AddEndpointFormInput): AddEndpointFieldErrors {
+  const errors: AddEndpointFieldErrors = {};
+  if (!input.name.trim()) errors.name = 'Name is required';
+  if (input.transport === 'stdio') {
+    if (!input.command.trim()) errors.command = 'Command is required for stdio';
+  } else {
+    if (!input.url.trim()) {
+      errors.url = input.transport === 'oauth' ? 'Server URL is required' : 'URL is required';
+    }
+  }
+  return errors;
+}
+
+/**
+ * Returns the first error message in field-declaration order
+ * (`name` → `command` → `url`), or an empty string when the map is empty.
+ * Used to keep the bottom-of-form summary text matching the priority of
+ * the previous early-return validation flow.
+ */
+export function firstAddEndpointFieldError(errors: AddEndpointFieldErrors): string {
+  return errors.name ?? errors.command ?? errors.url ?? '';
+}

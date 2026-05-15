@@ -8,6 +8,9 @@ import {
   nextPollDelayMs,
   nextPollOrTimeout,
   OAUTH_SETUP_POLL_BUDGET_MS,
+  validateAddEndpointForm,
+  firstAddEndpointFieldError,
+  type AddEndpointFieldErrors,
 } from './add-endpoint-helpers';
 
 // `sanitizeName` mirrors the relay's `sanitize_server_name`
@@ -545,6 +548,153 @@ describe('nextPollOrTimeout', () => {
     expect(delays.length).toBe(25);
     // The very next attempt after the loop terminates must be flagged as a timeout.
     expect(nextPollOrTimeout(attempt, elapsed)).toBeNull();
+  });
+});
+
+// Slice C row 13 — per-field validation in AddEndpointModal: required fields
+// flag `aria-invalid` on submit and clear back to false once the user edits
+// the offending input. The pure helpers below back the in-component logic;
+// the on-edit clear is mirrored by `clearFieldError` in the modal.
+describe('validateAddEndpointForm', () => {
+  it('flags only `name` when stdio command is filled but name is empty', () => {
+    const errs = validateAddEndpointForm({
+      transport: 'stdio',
+      name: '   ',
+      command: 'npx',
+      url: '',
+    });
+    expect(errs).toEqual({ name: 'Name is required' });
+  });
+
+  it('flags only `command` for stdio when name is filled but command is empty', () => {
+    const errs = validateAddEndpointForm({
+      transport: 'stdio',
+      name: 'my-server',
+      command: '',
+      url: '',
+    });
+    expect(errs).toEqual({ command: 'Command is required for stdio' });
+  });
+
+  it('flags both `name` and `command` for stdio when both are blank', () => {
+    const errs = validateAddEndpointForm({
+      transport: 'stdio',
+      name: '',
+      command: '',
+      url: '',
+    });
+    expect(errs).toEqual({
+      name: 'Name is required',
+      command: 'Command is required for stdio',
+    });
+  });
+
+  it('flags `url` with the OAuth-specific message for the oauth transport', () => {
+    const errs = validateAddEndpointForm({
+      transport: 'oauth',
+      name: 'linear',
+      command: '',
+      url: '',
+    });
+    expect(errs).toEqual({ url: 'Server URL is required' });
+  });
+
+  it('flags `url` with the generic message for sse/http transports', () => {
+    for (const t of ['sse', 'http'] as const) {
+      const errs = validateAddEndpointForm({ transport: t, name: 'srv', command: '', url: '' });
+      expect(errs).toEqual({ url: 'URL is required' });
+    }
+  });
+
+  it('does not require a command for non-stdio transports', () => {
+    const errs = validateAddEndpointForm({
+      transport: 'sse',
+      name: 'srv',
+      command: '',
+      url: 'http://localhost:3000/sse',
+    });
+    expect(errs).toEqual({});
+  });
+
+  it('returns an empty object for a fully valid stdio form', () => {
+    const errs = validateAddEndpointForm({
+      transport: 'stdio',
+      name: 'echo',
+      command: 'npx',
+      url: '',
+    });
+    expect(errs).toEqual({});
+  });
+
+  it('treats whitespace-only inputs as missing for required fields', () => {
+    const errs = validateAddEndpointForm({
+      transport: 'oauth',
+      name: '   \t  ',
+      command: '',
+      url: '   ',
+    });
+    expect(errs).toEqual({
+      name: 'Name is required',
+      url: 'Server URL is required',
+    });
+    // `command` only appears when explicitly set; ensure it isn't a real key.
+    expect(Object.prototype.hasOwnProperty.call(errs, 'command')).toBe(false);
+  });
+});
+
+describe('firstAddEndpointFieldError', () => {
+  it('returns the empty string when the map is empty', () => {
+    expect(firstAddEndpointFieldError({})).toBe('');
+  });
+
+  it('prefers `name` over `command` over `url`', () => {
+    expect(
+      firstAddEndpointFieldError({ name: 'a', command: 'b', url: 'c' }),
+    ).toBe('a');
+    expect(firstAddEndpointFieldError({ command: 'b', url: 'c' })).toBe('b');
+    expect(firstAddEndpointFieldError({ url: 'c' })).toBe('c');
+  });
+});
+
+describe('per-field clear-on-edit (mirror of clearFieldError)', () => {
+  // Same contract as `clearFieldError` in AddEndpointModal.svelte: dropping a
+  // single key from `fieldErrors` is what flips `aria-invalid` on the
+  // matching input back to `false` while leaving the rest of the map intact.
+  function clearFieldError(
+    state: { fieldErrors: AddEndpointFieldErrors },
+    field: keyof AddEndpointFieldErrors,
+  ) {
+    if (state.fieldErrors[field]) {
+      const { [field]: _removed, ...rest } = state.fieldErrors;
+      state.fieldErrors = rest;
+    }
+  }
+
+  it('removes only the edited field and leaves the rest intact', () => {
+    const state = {
+      fieldErrors: {
+        name: 'Name is required',
+        command: 'Command is required for stdio',
+      } as AddEndpointFieldErrors,
+    };
+    clearFieldError(state, 'name');
+    expect(state.fieldErrors).toEqual({ command: 'Command is required for stdio' });
+    expect(Object.prototype.hasOwnProperty.call(state.fieldErrors, 'name')).toBe(false);
+  });
+
+  it('is a no-op when the field was not flagged', () => {
+    const state = {
+      fieldErrors: { url: 'URL is required' } as AddEndpointFieldErrors,
+    };
+    const before = state.fieldErrors;
+    clearFieldError(state, 'name');
+    expect(state.fieldErrors).toBe(before);
+  });
+
+  it('clearing the only flagged field empties the map (aria-invalid → false)', () => {
+    const state = { fieldErrors: { url: 'URL is required' } as AddEndpointFieldErrors };
+    clearFieldError(state, 'url');
+    expect(state.fieldErrors).toEqual({});
   });
 });
 
