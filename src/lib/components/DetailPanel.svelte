@@ -133,16 +133,16 @@
           aria-label={ep.disabled ? 'Enable server' : 'Disable server'}
         ><span></span></button>
         {#if shouldShowRefreshButton(!!ep.disabled)}
-          <button class="btn-sec" onclick={handleRefresh}>Refresh</button>
+          <button class="btn-sec btn-sm" onclick={handleRefresh}>Refresh</button>
         {/if}
         {#if shouldShowRestartButton(ep.transport, !!ep.disabled)}
           <button
-            class="btn-sec btn-danger"
+            class="btn-sec btn-sm btn-danger"
             onclick={() => showRestartConfirm = true}
             title={ep.transport === 'stdio' ? 'Kill and restart the server process' : 'Reconnect the SSE event stream'}
           >{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'}</button>
         {/if}
-        <button class="btn-sec btn-danger" onclick={() => showDeleteConfirm = true}>Delete</button>
+        <button class="btn-sec btn-sm btn-danger" onclick={() => showDeleteConfirm = true}>Delete</button>
       </div>
     </div>
 
@@ -254,31 +254,6 @@
   }
   .tgl:disabled {
     cursor: not-allowed;
-  }
-
-  /* Secondary button */
-  .btn-sec {
-    padding: 4px 10px;
-    font-size: 11px;
-    line-height: 1.4;
-    font-weight: 500;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: transparent;
-    color: var(--fg1);
-    cursor: pointer;
-    font-family: inherit;
-    transition: background-color 150ms var(--ease), color 150ms var(--ease);
-  }
-  .btn-sec:hover {
-    background: var(--hover-bg);
-  }
-  .btn-danger {
-    border-color: color-mix(in oklab, var(--offline) 35%, transparent);
-    color: var(--offline);
-  }
-  .btn-danger:hover {
-    background: color-mix(in oklab, var(--offline) 8%, transparent);
   }
 
   /* Detail tabs */

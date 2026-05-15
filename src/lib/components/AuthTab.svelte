@@ -176,7 +176,7 @@
       {/if}
       {#if canReauthorize}
         <button
-          class="btn-accent"
+          class="btn-pri"
           onclick={handleReauthorize}
           disabled={actionInProgress}
           title="Open the browser to sign in again"
@@ -188,53 +188,4 @@
 </div>
 
 
-<style>
-  .btn-sec {
-    padding: 6px 12px;
-    font-size: 13px;
-    line-height: 1.4;
-    font-weight: 500;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: transparent;
-    color: var(--fg1);
-    cursor: pointer;
-    font-family: inherit;
-    transition: background-color 150ms var(--ease), color 150ms var(--ease);
-  }
-  .btn-sec:hover:not(:disabled) {
-    background: var(--hover-bg);
-  }
-  .btn-sec:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .btn-danger {
-    border-color: color-mix(in oklab, var(--offline) 35%, transparent);
-    color: var(--offline);
-  }
-  .btn-danger:hover:not(:disabled) {
-    background: color-mix(in oklab, var(--offline) 8%, transparent);
-  }
-  .btn-accent {
-    padding: 6px 12px;
-    font-size: 13px;
-    line-height: 1.4;
-    font-weight: 500;
-    border: 1px solid var(--accent);
-    border-radius: 8px;
-    background: var(--accent);
-    color: var(--accent-fg, #fff);
-    cursor: pointer;
-    font-family: inherit;
-    transition: background-color 150ms var(--ease);
-  }
-  .btn-accent:hover:not(:disabled) {
-    background: var(--accent-hover);
-    border-color: var(--accent-hover);
-  }
-  .btn-accent:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-</style>
+

@@ -80,12 +80,12 @@
     <div class="flex items-center gap-1.5">
       {#if !autoScroll}
         <button
-          class="btn-sec"
+          class="btn-sec btn-sm"
           onclick={goToEnd}
         >Go to end</button>
       {/if}
       <button
-        class="btn-sec"
+        class="btn-sec btn-sm"
         onclick={clearLogs}
       >Clear</button>
     </div>
@@ -109,23 +109,4 @@
     {/if}
   </div>
 </div>
-
-<style>
-  .btn-sec {
-    padding: 4px 10px;
-    font-size: 11px;
-    line-height: 1.4;
-    font-weight: 500;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: transparent;
-    color: var(--fg1);
-    cursor: pointer;
-    font-family: inherit;
-    transition: background-color 150ms var(--ease), color 150ms var(--ease);
-  }
-  .btn-sec:hover {
-    background: var(--hover-bg);
-  }
-</style>
 

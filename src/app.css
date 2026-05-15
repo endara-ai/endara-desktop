@@ -399,6 +399,60 @@
     height: 10px;
     border-radius: var(--radius-full);
   }
+
+  /* ----------------------------------------------------------
+     Buttons — canonical set. Use across the desktop app.
+
+       .btn-sec  outlined secondary (default)
+       .btn-pri  filled accent primary
+       .btn-sm   compact size modifier (toolbar buttons)
+       .btn-danger  red outlined modifier (use with .btn-sec)
+     ---------------------------------------------------------- */
+  .btn-sec,
+  .btn-pri {
+    padding: 6px 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    font-weight: 500;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 150ms var(--ease), color 150ms var(--ease), border-color 150ms var(--ease);
+  }
+  .btn-sec {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg1);
+  }
+  .btn-sec:hover:not(:disabled) {
+    background: var(--hover-bg);
+  }
+  .btn-pri {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--accent-fg, #fff);
+  }
+  .btn-pri:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  .btn-sec:disabled,
+  .btn-pri:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-sec.btn-sm,
+  .btn-pri.btn-sm {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+  .btn-sec.btn-danger {
+    border-color: color-mix(in oklab, var(--offline) 35%, transparent);
+    color: var(--offline);
+  }
+  .btn-sec.btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--offline) 8%, transparent);
+  }
 }
 
 /* ============================================================
