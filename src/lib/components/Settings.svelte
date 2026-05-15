@@ -1,5 +1,6 @@
 <script lang="ts">
   import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from '$lib/stores';
+  import { autoStartEnabled, fetchAutoStart, toggleAutoStart } from '$lib/stores/autostart';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus } from '$lib/api';
@@ -12,7 +13,6 @@
   let portInput: number = $state($relayPort);
   let portSaved = $state(false);
   let portError = $state<string | null>(null);
-  let autoStartEnabled = $state(false);
   let configFilePath = $state('~/.endara/config.toml');
 
   async function savePort() {
@@ -125,25 +125,6 @@
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     return `${h}h ${m}m`;
-  }
-
-  async function toggleAutoStart() {
-    const newValue = !autoStartEnabled;
-    autoStartEnabled = newValue;
-    try {
-      await invoke('set_autostart', { enabled: newValue });
-    } catch (e) {
-      autoStartEnabled = !newValue;
-      console.error('Failed to set autostart:', e);
-    }
-  }
-
-  async function fetchAutoStart() {
-    try {
-      autoStartEnabled = await invoke<boolean>('get_autostart');
-    } catch (e) {
-      console.error('Failed to get autostart:', e);
-    }
   }
 
   onMount(async () => {
@@ -304,13 +285,13 @@
         <div class="text-xs text-(--fg2) mt-0.5">Automatically start Endara Desktop when you log in to your computer.</div>
       </div>
       <button
-        class="shrink-0 relative w-10 h-5 rounded-full transition-colors {autoStartEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+        class="shrink-0 relative w-10 h-5 rounded-full transition-colors {$autoStartEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
         onclick={() => toggleAutoStart()}
         role="switch"
-        aria-checked={autoStartEnabled}
+        aria-checked={$autoStartEnabled}
         aria-label="Toggle start on login"
       >
-        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {autoStartEnabled ? 'translate-x-5' : ''}"></span>
+        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$autoStartEnabled ? 'translate-x-5' : ''}"></span>
       </button>
     </div>
 

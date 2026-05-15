@@ -1,6 +1,6 @@
 <script lang="ts">
   import { relayPort } from '$lib/stores';
-  import { invoke } from '@tauri-apps/api/core';
+  import { autoStartEnabled, fetchAutoStart, toggleAutoStart } from '$lib/stores/autostart';
   import { onMount } from 'svelte';
   import AddEndpointModal from './AddEndpointModal.svelte';
 
@@ -16,27 +16,9 @@
     setTimeout(() => copied = false, 2000);
   }
 
-  let autostart = $state(false);
-
-  onMount(async () => {
-    try {
-      autostart = await invoke<boolean>('get_autostart');
-    } catch (e) {
-      console.error('Failed to get autostart state:', e);
-    }
+  onMount(() => {
+    fetchAutoStart();
   });
-
-  async function toggleAutostart() {
-    const newValue = !autostart;
-    autostart = newValue;
-    try {
-      await invoke('set_autostart', { enabled: newValue });
-    } catch (e) {
-      // Revert on failure
-      autostart = !newValue;
-      console.error('Failed to set autostart:', e);
-    }
-  }
 </script>
 
 <div class="h-full overflow-y-auto p-8">
@@ -83,13 +65,13 @@
           <div class="text-xs text-(--fg2) mt-0.5">Automatically start Endara Desktop when you log in to your computer.</div>
         </div>
         <button
-          class="shrink-0 relative w-10 h-5 rounded-full transition-colors {autostart ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
-          onclick={() => toggleAutostart()}
+          class="shrink-0 relative w-10 h-5 rounded-full transition-colors {$autoStartEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+          onclick={() => toggleAutoStart()}
           role="switch"
-          aria-checked={autostart}
+          aria-checked={$autoStartEnabled}
           aria-label="Toggle start on login"
         >
-          <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {autostart ? 'translate-x-5' : ''}"></span>
+          <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$autoStartEnabled ? 'translate-x-5' : ''}"></span>
         </button>
       </div>
     </div>
