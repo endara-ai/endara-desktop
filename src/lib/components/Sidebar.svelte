@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { groupedEndpoints, relayPort } from '$lib/stores';
+  import { groupedEndpoints, initialLoadComplete, relayPort } from '$lib/stores';
   import SearchBar from './SearchBar.svelte';
   import EndpointRow from './EndpointRow.svelte';
   import AddEndpointModal from './AddEndpointModal.svelte';
+  import { shouldShowSidebarSkeleton } from './sidebar-helpers';
 
   let searchBar: SearchBar | undefined = $state();
   let showAddModal = $state(false);
   let copied = $state(false);
 
   const RELAY_MCP_URL = $derived(`http://localhost:${$relayPort}/mcp`);
+  const showSkeleton = $derived(shouldShowSidebarSkeleton($initialLoadComplete));
 
   const healthLabels: Record<string, string> = {
     healthy: '● Healthy',
@@ -58,20 +60,39 @@
   </div>
 
   <div class="flex-1 overflow-y-auto p-2">
-    {#each Object.entries($groupedEndpoints) as [health, eps]}
-      {#if eps.length > 0}
-        <div>
-          <div class="text-[10px] font-semibold uppercase tracking-[0.1em] text-(--fg3) px-2 pt-2 pb-1">
-            {healthLabels[health] ?? health}
+    {#if showSkeleton}
+      <!-- Pulsing placeholder rows matching EndpointRow's flex layout
+           (20px icon, two text lines). Shown until the first poll
+           completes; loaded-empty falls through to onboarding at the
+           route level. aria-hidden so screen readers ignore the
+           decorative shimmer. -->
+      <div class="space-y-0.5" aria-hidden="true" data-testid="sidebar-skeleton">
+        {#each [0, 1, 2, 3] as i (i)}
+          <div class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg animate-pulse">
+            <div class="flex-shrink-0 rounded-full bg-(--border)" style="width: 20px; height: 20px;"></div>
+            <div class="flex-1 min-w-0 space-y-1.5">
+              <div class="h-3 rounded bg-(--border) w-3/4"></div>
+              <div class="h-2 rounded bg-(--border) w-1/2"></div>
+            </div>
           </div>
-          <div class="space-y-0.5">
-            {#each eps as endpoint (endpoint.name)}
-              <EndpointRow {endpoint} />
-            {/each}
+        {/each}
+      </div>
+    {:else}
+      {#each Object.entries($groupedEndpoints) as [health, eps]}
+        {#if eps.length > 0}
+          <div>
+            <div class="text-[10px] font-semibold uppercase tracking-[0.1em] text-(--fg3) px-2 pt-2 pb-1">
+              {healthLabels[health] ?? health}
+            </div>
+            <div class="space-y-0.5">
+              {#each eps as endpoint (endpoint.name)}
+                <EndpointRow {endpoint} />
+              {/each}
+            </div>
           </div>
-        </div>
-      {/if}
-    {/each}
+        {/if}
+      {/each}
+    {/if}
   </div>
 
   <div class="border-t border-(--border) p-3 bg-(--side-bg)">
