@@ -3,10 +3,11 @@
 // modal. Escape handling is intentionally left to the modal itself — this
 // action only intercepts Tab.
 //
-// We rolled our own (~30 LOC) instead of pulling in `svelte-focus-trap`
-// because that library binds `home`, `end`, `up`, `down`, and `alt+tab` at
-// the document level via Mousetrap, which would break normal text-input
-// navigation inside our many-input modals.
+// The keydown listener is attached at the document level in the capture
+// phase so we intercept Tab even when focus is still on the trigger button
+// that just opened the modal (i.e. before any element inside the modal has
+// received focus). A module-scoped stack ensures that with nested modals
+// only the top trap handles Tab.
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -19,7 +20,10 @@ const FOCUSABLE_SELECTOR = [
 
 function getFocusables(node: HTMLElement): HTMLElement[] {
   return Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    (el) => !el.hasAttribute('disabled') && el.offsetParent !== null,
+    (el) =>
+      !el.hasAttribute('disabled') &&
+      el.getAttribute('aria-hidden') !== 'true' &&
+      el.offsetParent !== null,
   );
 }
 
@@ -54,39 +58,74 @@ export interface FocusTrapOptions {
   initialFocus?: boolean;
 }
 
+// ── Module-scoped trap stack ──
+// Multiple modals can be open at once (e.g. a ConfirmModal layered over an
+// AddEndpointModal); only the top trap handles Tab so the user is always
+// constrained to the foreground modal.
+interface TrapEntry {
+  node: HTMLElement;
+}
+const trapStack: TrapEntry[] = [];
+let documentListenerInstalled = false;
+
+function onDocumentKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Tab') return;
+  const top = trapStack[trapStack.length - 1];
+  if (!top) return;
+  const focusables = getFocusables(top.node);
+  const target = computeFocusTrapTarget(
+    focusables,
+    document.activeElement as HTMLElement | null,
+    event.shiftKey,
+  );
+  if (target) {
+    event.preventDefault();
+    target.focus();
+  }
+}
+
+function installListener() {
+  if (documentListenerInstalled) return;
+  document.addEventListener('keydown', onDocumentKeydown, true);
+  documentListenerInstalled = true;
+}
+
+function uninstallListenerIfIdle() {
+  if (!documentListenerInstalled || trapStack.length > 0) return;
+  document.removeEventListener('keydown', onDocumentKeydown, true);
+  documentListenerInstalled = false;
+}
+
 export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
   const { initialFocus = true } = options;
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key !== 'Tab') return;
-    const focusables = getFocusables(node);
-    const target = computeFocusTrapTarget(
-      focusables,
-      document.activeElement as HTMLElement | null,
-      event.shiftKey,
-    );
-    if (target) {
-      event.preventDefault();
-      target.focus();
-    }
-  }
-
-  node.addEventListener('keydown', handleKeydown);
+  const entry: TrapEntry = { node };
+  trapStack.push(entry);
+  installListener();
 
   if (initialFocus) {
-    // Defer so the modal's `tabindex="-1"` container isn't the only thing
-    // focusable yet — wait a microtask for the children to render.
-    queueMicrotask(() => {
+    // requestAnimationFrame instead of queueMicrotask: in Svelte 5, modal
+    // children may not be in the DOM yet at microtask time. Retry once on
+    // the next frame if focusables aren't ready (e.g. async-rendered
+    // subtrees) but don't loop indefinitely.
+    let attempts = 0;
+    const tryFocus = () => {
+      if (node.contains(document.activeElement)) return;
       const focusables = getFocusables(node);
-      if (focusables.length > 0 && !node.contains(document.activeElement)) {
+      if (focusables.length > 0) {
         focusables[0].focus();
+        return;
       }
-    });
+      attempts += 1;
+      if (attempts < 2) requestAnimationFrame(tryFocus);
+    };
+    requestAnimationFrame(tryFocus);
   }
 
   return {
     destroy() {
-      node.removeEventListener('keydown', handleKeydown);
+      const idx = trapStack.indexOf(entry);
+      if (idx !== -1) trapStack.splice(idx, 1);
+      uninstallListenerIfIdle();
     },
   };
 }

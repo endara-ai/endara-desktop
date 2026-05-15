@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { computeFocusTrapTarget } from './focusTrap';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { computeFocusTrapTarget, focusTrap } from './focusTrap';
 
 // Lightweight stand-in for HTMLElement that's enough for `===`/`indexOf`
 // identity checks. The pure helper never touches DOM methods, so this keeps
@@ -111,4 +111,328 @@ describe('modal Escape routing (regression)', () => {
     expect(route({ showingDcrFallback: false }, 'Tab')).toBeNull();
   });
 });
+
+// ── Integration tests for the focusTrap action ──
+//
+// The vitest project runs in the `node` environment, not jsdom, so we hand-
+// roll a minimal DOM stub that supports just enough of the surface the
+// action uses: addEventListener/removeEventListener (with capture phase),
+// document.activeElement, element.contains(), element.focus(),
+// element.querySelectorAll() against the limited set of selectors in
+// FOCUSABLE_SELECTOR, and element.hasAttribute()/getAttribute().
+
+type KeydownListener = (event: KeyboardEvent) => void;
+interface ListenerEntry {
+  type: string;
+  listener: KeydownListener;
+}
+
+class FakeElement {
+  tagName: string;
+  parent: FakeElement | null = null;
+  children: FakeElement[] = [];
+  private attrs = new Map<string, string>();
+
+  constructor(tagName: string, attrs: Record<string, string> = {}) {
+    this.tagName = tagName.toUpperCase();
+    for (const [k, v] of Object.entries(attrs)) this.attrs.set(k, v);
+  }
+
+  appendChild(child: FakeElement): FakeElement {
+    child.parent = this;
+    this.children.push(child);
+    return child;
+  }
+
+  hasAttribute(name: string): boolean {
+    return this.attrs.has(name);
+  }
+  getAttribute(name: string): string | null {
+    return this.attrs.get(name) ?? null;
+  }
+
+  contains(other: FakeElement | null): boolean {
+    if (!other) return false;
+    let cur: FakeElement | null = other;
+    while (cur) {
+      if (cur === this) return true;
+      cur = cur.parent;
+    }
+    return false;
+  }
+
+  // pretend every element is visible — JSDOM-equivalent default
+  get offsetParent(): FakeElement | null {
+    return this.parent;
+  }
+
+  focus() {
+    fakeDocument.activeElement = this as unknown as HTMLElement;
+  }
+
+  querySelectorAll<T = FakeElement>(selector: string): T[] {
+    const parts = selector.split(',').map((s) => s.trim());
+    const results: FakeElement[] = [];
+    const walk = (el: FakeElement) => {
+      for (const c of el.children) {
+        if (parts.some((p) => matchSelector(c, p))) results.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return results as unknown as T[];
+  }
+}
+
+function matchSelector(el: FakeElement, sel: string): boolean {
+  // Supports only the selectors in FOCUSABLE_SELECTOR. Hard-coded so the
+  // stub stays small and unambiguous.
+  switch (sel) {
+    case 'a[href]':
+      return el.tagName === 'A' && el.hasAttribute('href');
+    case 'button:not([disabled])':
+      return el.tagName === 'BUTTON' && !el.hasAttribute('disabled');
+    case 'input:not([disabled])':
+      return el.tagName === 'INPUT' && !el.hasAttribute('disabled');
+    case 'select:not([disabled])':
+      return el.tagName === 'SELECT' && !el.hasAttribute('disabled');
+    case 'textarea:not([disabled])':
+      return el.tagName === 'TEXTAREA' && !el.hasAttribute('disabled');
+    case '[tabindex]:not([tabindex="-1"])':
+      return el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1';
+    default:
+      return false;
+  }
+}
+
+class FakeDocument {
+  activeElement: HTMLElement | null = null;
+  capture: ListenerEntry[] = [];
+  bubble: ListenerEntry[] = [];
+
+  addEventListener(type: string, listener: KeydownListener, useCapture?: boolean) {
+    (useCapture ? this.capture : this.bubble).push({ type, listener });
+  }
+  removeEventListener(type: string, listener: KeydownListener, useCapture?: boolean) {
+    const list = useCapture ? this.capture : this.bubble;
+    const idx = list.findIndex((e) => e.type === type && e.listener === listener);
+    if (idx !== -1) list.splice(idx, 1);
+  }
+
+  dispatchKeydown(key: string, shiftKey = false): { defaultPrevented: boolean } {
+    let prevented = false;
+    const event = {
+      key,
+      shiftKey,
+      preventDefault() {
+        prevented = true;
+      },
+      get defaultPrevented() {
+        return prevented;
+      },
+    } as unknown as KeyboardEvent;
+    // capture phase first, then bubble — matches DOM event flow well enough
+    // for this action which lives solely in the capture phase.
+    for (const e of [...this.capture]) {
+      if (e.type === 'keydown') e.listener(event);
+    }
+    for (const e of [...this.bubble]) {
+      if (e.type === 'keydown') e.listener(event);
+    }
+    return { defaultPrevented: prevented };
+  }
+}
+
+let fakeDocument: FakeDocument;
+let rafCallbacks: Array<() => void>;
+let prevDocument: unknown;
+let prevRaf: unknown;
+
+function setupDom() {
+  fakeDocument = new FakeDocument();
+  rafCallbacks = [];
+  // The test-setup.ts global `document` is defined as writable but not
+  // configurable, so `vi.stubGlobal` (which uses defineProperty) fails.
+  // Direct assignment works because the property is writable.
+  prevDocument = (globalThis as { document?: unknown }).document;
+  (globalThis as { document?: unknown }).document = fakeDocument;
+  prevRaf = (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+  (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame = (
+    cb: () => void,
+  ) => {
+    rafCallbacks.push(cb);
+    return rafCallbacks.length;
+  };
+}
+
+function teardownDom() {
+  (globalThis as { document?: unknown }).document = prevDocument;
+  (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame = prevRaf;
+}
+
+function flushRaf() {
+  // Drain queued callbacks, including any that re-queue another frame.
+  let guard = 0;
+  while (rafCallbacks.length > 0 && guard < 10) {
+    const cbs = rafCallbacks;
+    rafCallbacks = [];
+    for (const cb of cbs) cb();
+    guard += 1;
+  }
+}
+
+describe('focusTrap action (integration)', () => {
+  beforeEach(() => setupDom());
+  afterEach(() => teardownDom());
+
+  it('intercepts Tab at document capture phase even when focus is outside the trap', () => {
+    // Simulate the bug: user clicked the "Add Server" trigger button to open
+    // a modal. activeElement is still the trigger (outside the modal). Press
+    // Tab — focus must be pulled into the first focusable inside the modal.
+    const root = new FakeElement('DIV');
+    const triggerOutside = new FakeElement('BUTTON');
+    root.appendChild(triggerOutside);
+    const modal = new FakeElement('DIV', { tabindex: '-1' });
+    root.appendChild(modal);
+    const first = new FakeElement('BUTTON');
+    const second = new FakeElement('BUTTON');
+    modal.appendChild(first);
+    modal.appendChild(second);
+
+    fakeDocument.activeElement = triggerOutside as unknown as HTMLElement;
+    const trap = focusTrap(modal as unknown as HTMLElement, { initialFocus: false });
+
+    const result = fakeDocument.dispatchKeydown('Tab');
+    expect(result.defaultPrevented).toBe(true);
+    expect(fakeDocument.activeElement).toBe(first as unknown as HTMLElement);
+
+    trap.destroy();
+  });
+
+  it('Shift+Tab from outside pulls focus to the last focusable in the trap', () => {
+    const modal = new FakeElement('DIV');
+    const a = new FakeElement('BUTTON');
+    const b = new FakeElement('BUTTON');
+    const c = new FakeElement('BUTTON');
+    modal.appendChild(a);
+    modal.appendChild(b);
+    modal.appendChild(c);
+    const outside = new FakeElement('BUTTON');
+    fakeDocument.activeElement = outside as unknown as HTMLElement;
+
+    const trap = focusTrap(modal as unknown as HTMLElement, { initialFocus: false });
+    fakeDocument.dispatchKeydown('Tab', true);
+    expect(fakeDocument.activeElement).toBe(c as unknown as HTMLElement);
+    trap.destroy();
+  });
+
+  it('does NOT intercept Escape — modal Escape handlers continue to fire', () => {
+    const modal = new FakeElement('DIV');
+    const btn = new FakeElement('BUTTON');
+    modal.appendChild(btn);
+    fakeDocument.activeElement = btn as unknown as HTMLElement;
+
+    const trap = focusTrap(modal as unknown as HTMLElement, { initialFocus: false });
+    const result = fakeDocument.dispatchKeydown('Escape');
+    expect(result.defaultPrevented).toBe(false);
+    trap.destroy();
+  });
+
+  it('with nested traps only the top trap handles Tab; outer regains control after inner destroys', () => {
+    const outerNode = new FakeElement('DIV');
+    const outerBtn = new FakeElement('BUTTON');
+    outerNode.appendChild(outerBtn);
+
+    const innerNode = new FakeElement('DIV');
+    const innerBtn = new FakeElement('BUTTON');
+    innerNode.appendChild(innerBtn);
+
+    const outer = focusTrap(outerNode as unknown as HTMLElement, { initialFocus: false });
+    const inner = focusTrap(innerNode as unknown as HTMLElement, { initialFocus: false });
+
+    // activeElement is outside both — Tab should land in the inner (top) trap.
+    fakeDocument.activeElement = null;
+    fakeDocument.dispatchKeydown('Tab');
+    expect(fakeDocument.activeElement).toBe(innerBtn as unknown as HTMLElement);
+
+    // Destroy inner; outer should now handle Tab.
+    inner.destroy();
+    fakeDocument.activeElement = null;
+    fakeDocument.dispatchKeydown('Tab');
+    expect(fakeDocument.activeElement).toBe(outerBtn as unknown as HTMLElement);
+
+    outer.destroy();
+  });
+
+  it('destroy removes the document listener once the stack is empty', () => {
+    const modal = new FakeElement('DIV');
+    const btn = new FakeElement('BUTTON');
+    modal.appendChild(btn);
+    const trap = focusTrap(modal as unknown as HTMLElement, { initialFocus: false });
+    expect(fakeDocument.capture.length).toBe(1);
+    trap.destroy();
+    expect(fakeDocument.capture.length).toBe(0);
+  });
+
+  it('initial focus uses requestAnimationFrame so children rendered after mount are caught', () => {
+    const modal = new FakeElement('DIV');
+    // No focusables yet — they will be appended before the rAF fires.
+    const trap = focusTrap(modal as unknown as HTMLElement);
+    expect(rafCallbacks.length).toBe(1);
+    expect(fakeDocument.activeElement).toBeNull();
+
+    // Append a focusable child after mount but before the frame runs.
+    const btn = new FakeElement('BUTTON');
+    modal.appendChild(btn);
+    flushRaf();
+    expect(fakeDocument.activeElement).toBe(btn as unknown as HTMLElement);
+    trap.destroy();
+  });
+
+  it('initial focus retries once on the next frame when no focusables exist yet', () => {
+    const modal = new FakeElement('DIV');
+    const trap = focusTrap(modal as unknown as HTMLElement);
+    // First frame: still no focusables → schedule one retry.
+    const cbs1 = rafCallbacks;
+    rafCallbacks = [];
+    cbs1.forEach((cb) => cb());
+    expect(rafCallbacks.length).toBe(1);
+    // Add a focusable, then run the retry frame.
+    const btn = new FakeElement('BUTTON');
+    modal.appendChild(btn);
+    flushRaf();
+    expect(fakeDocument.activeElement).toBe(btn as unknown as HTMLElement);
+    trap.destroy();
+  });
+
+  it('initial focus does not steal focus if a child already focused itself', () => {
+    const modal = new FakeElement('DIV');
+    const preFocused = new FakeElement('INPUT');
+    const other = new FakeElement('BUTTON');
+    modal.appendChild(preFocused);
+    modal.appendChild(other);
+    // Simulate a child that auto-focused itself before rAF fires.
+    fakeDocument.activeElement = preFocused as unknown as HTMLElement;
+
+    const trap = focusTrap(modal as unknown as HTMLElement);
+    flushRaf();
+    expect(fakeDocument.activeElement).toBe(preFocused as unknown as HTMLElement);
+    trap.destroy();
+  });
+
+  it('aria-hidden elements are excluded from the focusable list', () => {
+    const modal = new FakeElement('DIV');
+    const hidden = new FakeElement('BUTTON', { 'aria-hidden': 'true' });
+    const visible = new FakeElement('BUTTON');
+    modal.appendChild(hidden);
+    modal.appendChild(visible);
+
+    fakeDocument.activeElement = null;
+    const trap = focusTrap(modal as unknown as HTMLElement, { initialFocus: false });
+    fakeDocument.dispatchKeydown('Tab');
+    expect(fakeDocument.activeElement).toBe(visible as unknown as HTMLElement);
+    trap.destroy();
+  });
+});
+
 
