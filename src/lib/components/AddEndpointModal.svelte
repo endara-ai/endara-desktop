@@ -6,6 +6,7 @@
   import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
   import { buildScopesPayload, shouldShowManualOAuthStar, nextPollOrTimeout } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
+  import { focusTrap } from '$lib/actions/focusTrap';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
 
@@ -629,6 +630,7 @@
     aria-modal="true"
     aria-label="Add Server"
     tabindex="-1"
+    use:focusTrap
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.stopPropagation()}
   >

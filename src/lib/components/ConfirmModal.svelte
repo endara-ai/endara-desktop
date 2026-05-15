@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { focusTrap } from '$lib/actions/focusTrap';
+
   let { title, message, confirmLabel = 'Confirm', onconfirm, oncancel }:
     { title: string; message: string; confirmLabel?: string; onconfirm: () => void; oncancel: () => void } = $props();
 
@@ -16,6 +18,7 @@
     aria-modal="true"
     aria-label={title}
     tabindex="-1"
+    use:focusTrap
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.stopPropagation()}
   >
