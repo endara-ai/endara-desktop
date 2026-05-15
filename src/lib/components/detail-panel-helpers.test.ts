@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import detailPanelSource from './DetailPanel.svelte?raw';
 import {
   shouldShowRestartButton,
   shouldShowRefreshButton,
@@ -204,3 +205,25 @@ describe('DetailPanel mutation-failure toasts', () => {
   });
 });
 
+// ── Toggle accessibility (Engineering Spec §4 Slice B row 5) ──
+//
+// The DetailPanel enable/disable toggle is a custom <button> styled as a
+// switch. Source-level check that it carries `role="switch"` and
+// `aria-checked` bound to the inverse of `ep.disabled` (i.e. the enabled
+// state). Done via static source inspection because the project has no
+// component-mount test infra (test env is node, not jsdom).
+describe('DetailPanel endpoint toggle (a11y)', () => {
+  const toggleBlock = detailPanelSource.match(
+    /<button[^>]*class="tgl[^"]*"[\s\S]*?>[\s\S]*?<\/button>/,
+  );
+
+  it('declares role="switch" on the endpoint enable/disable toggle', () => {
+    expect(toggleBlock, 'expected to find the endpoint toggle button').not.toBeNull();
+    expect(toggleBlock![0]).toContain('role="switch"');
+  });
+
+  it('binds aria-checked to the endpoint enabled state (!ep.disabled)', () => {
+    expect(toggleBlock, 'expected to find the endpoint toggle button').not.toBeNull();
+    expect(toggleBlock![0]).toMatch(/aria-checked=\{!ep\.disabled\}/);
+  });
+});

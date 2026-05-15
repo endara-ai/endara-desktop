@@ -127,6 +127,8 @@
           class="tgl {ep.disabled ? 'tgl-off' : ''} {toggling ? 'opacity-50' : ''}"
           onclick={handleToggle}
           disabled={toggling}
+          role="switch"
+          aria-checked={!ep.disabled}
           title={ep.disabled ? 'Enable server' : 'Disable server'}
           aria-label={ep.disabled ? 'Enable server' : 'Disable server'}
         ><span></span></button>

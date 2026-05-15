@@ -94,6 +94,8 @@
             class="tgl tool-tgl {tool.disabled ? 'tgl-off' : ''} {togglingTool === tool.name ? 'opacity-50' : ''}"
             onclick={(e) => handleToolToggle(e, tool)}
             disabled={togglingTool === tool.name}
+            role="switch"
+            aria-checked={!tool.disabled}
             title={tool.disabled ? 'Enable tool' : 'Disable tool'}
             aria-label={tool.disabled ? 'Enable tool' : 'Disable tool'}
           ><span></span></button>
