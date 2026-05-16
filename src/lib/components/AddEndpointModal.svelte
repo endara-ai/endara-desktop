@@ -10,10 +10,13 @@
     nextPollOrTimeout,
     validateAddEndpointForm,
     firstAddEndpointFieldError,
+    computeAddEndpointIsDirty,
     type AddEndpointFieldErrors,
+    type AddEndpointFormSnapshot,
   } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
   import { focusTrap } from '$lib/actions/focusTrap';
+  import ConfirmModal from './ConfirmModal.svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
 
@@ -89,6 +92,56 @@
   // value at ≤64 chars, but pasted content can occasionally bypass that on
   // some platforms. Surface a hint if it ever happens.
   let serverTypeOverrideTooLong = $derived(serverTypeOverride.length > 64);
+
+  // Captured at the moment `step` transitions to `'configure'` so any
+  // catalog pre-fills (name, command, args, etc.) become the dirty-check
+  // baseline. `null` while on the browse step — `isDirty` short-circuits
+  // to false in that case.
+  let originalSnapshot: AddEndpointFormSnapshot | null = $state(null);
+  // True iff the user has actually typed/changed something away from the
+  // snapshot in the configure step. Drives the "Discard changes?" prompt
+  // on Esc / backdrop click / Cancel.
+  let isDirty = $derived.by(() => {
+    if (step !== 'configure' || !originalSnapshot) return false;
+    return computeAddEndpointIsDirty(originalSnapshot, {
+      name,
+      command,
+      args,
+      url,
+      prefixCustom,
+      description,
+      envVars,
+      headerVars,
+      catalogEnvValues,
+      userArgValues,
+      oauthServerUrl,
+      clientId,
+      clientSecret,
+      scopes,
+      serverTypeOverride,
+    });
+  });
+  let showDiscardConfirm = $state(false);
+
+  function captureSnapshot(): AddEndpointFormSnapshot {
+    return {
+      name,
+      command,
+      args,
+      url,
+      prefixCustom,
+      description,
+      envVars: envVars.map((e) => ({ key: e.key, value: e.value })),
+      headerVars: headerVars.map((h) => ({ key: h.key, value: h.value })),
+      catalogEnvValues: { ...catalogEnvValues },
+      userArgValues: [...userArgValues],
+      oauthServerUrl,
+      clientId,
+      clientSecret,
+      scopes,
+      serverTypeOverride,
+    };
+  }
 
   let prefixPreview = $derived(prefix ? `${prefix}__tool` : 'prefix__tool');
 
@@ -177,6 +230,7 @@
     serverTypeOverrideHasDefault = Boolean(service.serverTypeOverride);
     error = '';
     fieldErrors = {};
+    originalSnapshot = captureSnapshot();
     step = 'configure';
   }
 
@@ -204,6 +258,7 @@
     serverTypeOverrideHasDefault = Boolean(server.serverTypeOverride);
     error = '';
     fieldErrors = {};
+    originalSnapshot = captureSnapshot();
     step = 'configure';
   }
 
@@ -232,6 +287,7 @@
     serverTypeOverrideHasDefault = false;
     error = '';
     fieldErrors = {};
+    originalSnapshot = captureSnapshot();
     step = 'configure';
   }
 
@@ -241,6 +297,7 @@
     fieldErrors = {};
     testResult = null;
     showingDcrFallback = false;
+    originalSnapshot = null;
   }
 
   /**
@@ -623,13 +680,28 @@
     }
   }
 
-  async function handleCancel() {
+  // Unconditional close — cancels any pending OAuth setup session and
+  // closes the modal. Reached either directly (browse step / pristine
+  // configure step) or via the discard-changes confirm.
+  async function doCancel() {
     // Cancel pending setup session if user cancels — no config cleanup needed
     if (pendingSetupSessionId) {
       try { await oauthSetupCancel(pendingSetupSessionId); } catch { /* best effort */ }
       pendingSetupSessionId = null;
     }
     onclose();
+  }
+
+  // Guarded close — when the configure step has unsaved input, route to a
+  // nested ConfirmModal instead of dropping the user's work. The DCR
+  // fallback sub-dialog has its own cancel flow and is excluded so its
+  // own Escape/backdrop routing keeps working.
+  function handleCancel() {
+    if (step === 'configure' && isDirty && !showingDcrFallback) {
+      showDiscardConfirm = true;
+      return;
+    }
+    void doCancel();
   }
 
   async function handleDcrCancel() {
@@ -1215,6 +1287,16 @@
     {/if}
   </div>
 </div>
+
+{#if showDiscardConfirm}
+  <ConfirmModal
+    title="Discard changes?"
+    message="You'll lose what you've typed."
+    confirmLabel="Discard"
+    onconfirm={() => { showDiscardConfirm = false; void doCancel(); }}
+    oncancel={() => { showDiscardConfirm = false; }}
+  />
+{/if}
 
 {#if showingDcrFallback}
   <div

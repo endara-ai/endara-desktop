@@ -141,3 +141,86 @@ export function validateAddEndpointForm(input: AddEndpointFormInput): AddEndpoin
 export function firstAddEndpointFieldError(errors: AddEndpointFieldErrors): string {
   return errors.name ?? errors.command ?? errors.url ?? '';
 }
+
+/**
+ * Snapshot of the user-editable fields in the Add Server modal's configure
+ * step. Captured when `step` transitions to `'configure'` (in
+ * `selectCatalog` / `selectOAuthService` / `selectCustom`) so the entry's
+ * own pre-fills become the dirty-check baseline rather than empty strings.
+ */
+export interface AddEndpointFormSnapshot {
+  name: string;
+  command: string;
+  args: string;
+  url: string;
+  prefixCustom: boolean;
+  description: string;
+  envVars: { key: string; value: string }[];
+  headerVars: { key: string; value: string }[];
+  catalogEnvValues: Record<string, string>;
+  userArgValues: string[];
+  oauthServerUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scopes: string;
+  serverTypeOverride: string;
+}
+
+function sameKvList(
+  a: { key: string; value: string }[],
+  b: { key: string; value: string }[],
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].key !== b[i].key || a[i].value !== b[i].value) return false;
+  }
+  return true;
+}
+
+function sameRecord(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+function sameStringList(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Returns true when `current` differs from `snapshot` on any user-editable
+ * field. Drives the "Discard changes?" confirmation in `AddEndpointModal`:
+ * Esc / backdrop click / Cancel routes through this so the user is only
+ * prompted when there's something to lose. The snapshot must already
+ * include any catalog pre-fills — see `AddEndpointFormSnapshot`.
+ */
+export function computeAddEndpointIsDirty(
+  snapshot: AddEndpointFormSnapshot,
+  current: AddEndpointFormSnapshot,
+): boolean {
+  if (snapshot.name !== current.name) return true;
+  if (snapshot.command !== current.command) return true;
+  if (snapshot.args !== current.args) return true;
+  if (snapshot.url !== current.url) return true;
+  if (snapshot.prefixCustom !== current.prefixCustom) return true;
+  if (snapshot.description !== current.description) return true;
+  if (snapshot.oauthServerUrl !== current.oauthServerUrl) return true;
+  if (snapshot.clientId !== current.clientId) return true;
+  if (snapshot.clientSecret !== current.clientSecret) return true;
+  if (snapshot.scopes !== current.scopes) return true;
+  if (snapshot.serverTypeOverride !== current.serverTypeOverride) return true;
+  if (!sameKvList(snapshot.envVars, current.envVars)) return true;
+  if (!sameKvList(snapshot.headerVars, current.headerVars)) return true;
+  if (!sameRecord(snapshot.catalogEnvValues, current.catalogEnvValues)) return true;
+  if (!sameStringList(snapshot.userArgValues, current.userArgValues)) return true;
+  return false;
+}

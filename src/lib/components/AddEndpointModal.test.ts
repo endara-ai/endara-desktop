@@ -10,7 +10,9 @@ import {
   OAUTH_SETUP_POLL_BUDGET_MS,
   validateAddEndpointForm,
   firstAddEndpointFieldError,
+  computeAddEndpointIsDirty,
   type AddEndpointFieldErrors,
+  type AddEndpointFormSnapshot,
 } from './add-endpoint-helpers';
 
 // `sanitizeName` mirrors the relay's `sanitize_server_name`
@@ -695,6 +697,128 @@ describe('per-field clear-on-edit (mirror of clearFieldError)', () => {
     const state = { fieldErrors: { url: 'URL is required' } as AddEndpointFieldErrors };
     clearFieldError(state, 'url');
     expect(state.fieldErrors).toEqual({});
+  });
+});
+
+// Slice D1 — `computeAddEndpointIsDirty` drives the "Discard changes?"
+// prompt in AddEndpointModal. The snapshot is captured at the moment
+// `step` transitions to `'configure'` (catalog pre-fills included), so
+// the dirty check is purely a deep-equal of the snapshot vs the current
+// editable fields. The tests below pin every comparison branch.
+describe('computeAddEndpointIsDirty', () => {
+  function makeSnapshot(overrides: Partial<AddEndpointFormSnapshot> = {}): AddEndpointFormSnapshot {
+    return {
+      name: '',
+      command: '',
+      args: '',
+      url: '',
+      prefixCustom: false,
+      description: '',
+      envVars: [],
+      headerVars: [],
+      catalogEnvValues: {},
+      userArgValues: [],
+      oauthServerUrl: '',
+      clientId: '',
+      clientSecret: '',
+      scopes: '',
+      serverTypeOverride: '',
+      ...overrides,
+    };
+  }
+
+  it('returns false when current matches snapshot exactly', () => {
+    const snap = makeSnapshot();
+    expect(computeAddEndpointIsDirty(snap, makeSnapshot())).toBe(false);
+  });
+
+  it('returns false against a catalog-prefilled baseline that is unchanged', () => {
+    const snap = makeSnapshot({
+      name: 'GitHub',
+      command: 'npx',
+      args: '-y @modelcontextprotocol/server-github',
+      description: 'Code hosting and collaboration',
+    });
+    expect(computeAddEndpointIsDirty(snap, { ...snap })).toBe(false);
+  });
+
+  it('flags each top-level string field independently', () => {
+    const snap = makeSnapshot();
+    const cases: (keyof AddEndpointFormSnapshot)[] = [
+      'name',
+      'command',
+      'args',
+      'url',
+      'description',
+      'oauthServerUrl',
+      'clientId',
+      'clientSecret',
+      'scopes',
+      'serverTypeOverride',
+    ];
+    for (const key of cases) {
+      const current = { ...snap, [key]: 'x' } as AddEndpointFormSnapshot;
+      expect(computeAddEndpointIsDirty(snap, current)).toBe(true);
+    }
+  });
+
+  it('flags prefixCustom toggling from false to true', () => {
+    const snap = makeSnapshot();
+    expect(computeAddEndpointIsDirty(snap, makeSnapshot({ prefixCustom: true }))).toBe(true);
+  });
+
+  it('flags envVars/headerVars when entries are added, even with empty key/value', () => {
+    const snap = makeSnapshot();
+    expect(
+      computeAddEndpointIsDirty(snap, makeSnapshot({ envVars: [{ key: '', value: '' }] })),
+    ).toBe(true);
+    expect(
+      computeAddEndpointIsDirty(snap, makeSnapshot({ headerVars: [{ key: '', value: '' }] })),
+    ).toBe(true);
+  });
+
+  it('flags envVars/headerVars when an existing entry is edited', () => {
+    const snap = makeSnapshot({ envVars: [{ key: 'TOKEN', value: '' }] });
+    const current = makeSnapshot({ envVars: [{ key: 'TOKEN', value: 'ghp_123' }] });
+    expect(computeAddEndpointIsDirty(snap, current)).toBe(true);
+  });
+
+  it('returns false when envVars match element-for-element', () => {
+    const snap = makeSnapshot({
+      envVars: [{ key: 'A', value: '1' }, { key: 'B', value: '2' }],
+    });
+    const current = makeSnapshot({
+      envVars: [{ key: 'A', value: '1' }, { key: 'B', value: '2' }],
+    });
+    expect(computeAddEndpointIsDirty(snap, current)).toBe(false);
+  });
+
+  it('flags catalogEnvValues when the user fills a prefilled key', () => {
+    // Catalog seeds the form with `catalogEnvValues: {}`; the GITHUB_TOKEN
+    // input writes back into the same record via two-way binding.
+    const snap = makeSnapshot();
+    const current = makeSnapshot({ catalogEnvValues: { GITHUB_TOKEN: 'ghp_123' } });
+    expect(computeAddEndpointIsDirty(snap, current)).toBe(true);
+  });
+
+  it('flags userArgValues when an entry is edited', () => {
+    // Catalog seeds `userArgValues` with empty strings — one per declared
+    // userArg slot — and the Browse… button writes the chosen path back.
+    const snap = makeSnapshot({ userArgValues: ['', ''] });
+    const current = makeSnapshot({ userArgValues: ['/tmp/path', ''] });
+    expect(computeAddEndpointIsDirty(snap, current)).toBe(true);
+  });
+
+  it('returns false when userArgValues match element-for-element', () => {
+    const snap = makeSnapshot({ userArgValues: ['/tmp', '/var'] });
+    const current = makeSnapshot({ userArgValues: ['/tmp', '/var'] });
+    expect(computeAddEndpointIsDirty(snap, current)).toBe(false);
+  });
+
+  it('flags userArgValues when the length differs', () => {
+    const snap = makeSnapshot({ userArgValues: [''] });
+    const current = makeSnapshot({ userArgValues: ['', ''] });
+    expect(computeAddEndpointIsDirty(snap, current)).toBe(true);
   });
 });
 
