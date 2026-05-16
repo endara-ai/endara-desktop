@@ -3,22 +3,16 @@
 
   let { title, message, confirmLabel = 'Confirm', onconfirm, oncancel }:
     { title: string; message: string; confirmLabel?: string; onconfirm: () => void; oncancel: () => void } = $props();
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') oncancel();
-  }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="presentation" onclick={oncancel} onkeydown={handleKeydown}>
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="presentation" onclick={oncancel}>
   <div
     class="bg-(--surface) rounded-xl shadow-xl border border-(--border) p-6 w-80 max-w-[90vw]"
     role="dialog"
     aria-modal="true"
     aria-label={title}
     tabindex="-1"
-    use:focusTrap
+    use:focusTrap={{ onEscape: oncancel }}
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.stopPropagation()}
   >

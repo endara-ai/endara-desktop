@@ -647,6 +647,8 @@
     cancelHint = 'OAuth setup cancelled — adjust your settings and try again.';
   }
 
+  // handleKeydown is still used by the (non-trapped) DCR sub-dialog backdrop
+  // below. The outer modal routes Escape via focusTrap's onEscape callback.
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       if (showingDcrFallback) handleDcrCancel();
@@ -655,16 +657,14 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="presentation" onclick={handleCancel} onkeydown={handleKeydown}>
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="presentation" onclick={handleCancel}>
   <div
     class="bg-(--surface) rounded-xl shadow-xl border border-(--border) p-6 w-[36rem] max-w-[90vw] max-h-[90vh] overflow-y-auto"
     role="dialog"
     aria-modal="true"
     aria-label="Add Server"
     tabindex="-1"
-    use:focusTrap
+    use:focusTrap={{ onEscape: () => { if (showingDcrFallback) handleDcrCancel(); else handleCancel(); } }}
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.stopPropagation()}
   >

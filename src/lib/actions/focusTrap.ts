@@ -1,13 +1,18 @@
 // Focus-trap action for modal containers. Tab/Shift+Tab cycle within the
 // node's focusable descendants instead of escaping to elements behind the
-// modal. Escape handling is intentionally left to the modal itself — this
-// action only intercepts Tab.
+// modal. Escape is intercepted only when the trap is given an explicit
+// `onEscape` callback — otherwise it falls through.
 //
 // The keydown listener is attached at the document level in the capture
 // phase so we intercept Tab even when focus is still on the trigger button
 // that just opened the modal (i.e. before any element inside the modal has
 // received focus). A module-scoped stack ensures that with nested modals
-// only the top trap handles Tab.
+// only the top trap handles Tab/Escape.
+//
+// Capture-phase Escape handling is also what makes this work for modals
+// whose inner dialog div has `onkeydown={(e) => e.stopPropagation()}` to
+// keep stray keys from reaching global app shortcuts: our document-level
+// listener fires before any bubble-phase stopPropagation can swallow it.
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -56,31 +61,45 @@ export interface FocusTrapOptions {
   // keyboard lands inside the modal. Pass `false` to leave initial focus
   // alone — useful if the modal already focuses a specific input itself.
   initialFocus?: boolean;
+  // When provided, Escape pressed while this trap is on top of the stack
+  // calls this callback (and the event is preventDefaulted + stopPropagated
+  // so other listeners don't double-fire). When omitted, Escape passes
+  // through unmodified.
+  onEscape?: () => void;
 }
 
 // ── Module-scoped trap stack ──
 // Multiple modals can be open at once (e.g. a ConfirmModal layered over an
-// AddEndpointModal); only the top trap handles Tab so the user is always
-// constrained to the foreground modal.
+// AddEndpointModal); only the top trap handles Tab/Escape so the user is
+// always constrained to the foreground modal and nested modals dismiss in
+// LIFO order.
 interface TrapEntry {
   node: HTMLElement;
+  onEscape?: () => void;
 }
 const trapStack: TrapEntry[] = [];
 let documentListenerInstalled = false;
 
 function onDocumentKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Tab') return;
   const top = trapStack[trapStack.length - 1];
   if (!top) return;
-  const focusables = getFocusables(top.node);
-  const target = computeFocusTrapTarget(
-    focusables,
-    document.activeElement as HTMLElement | null,
-    event.shiftKey,
-  );
-  if (target) {
-    event.preventDefault();
-    target.focus();
+  if (event.key === 'Tab') {
+    const focusables = getFocusables(top.node);
+    const target = computeFocusTrapTarget(
+      focusables,
+      document.activeElement as HTMLElement | null,
+      event.shiftKey,
+    );
+    if (target) {
+      event.preventDefault();
+      target.focus();
+    }
+  } else if (event.key === 'Escape') {
+    if (top.onEscape) {
+      top.onEscape();
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }
 }
 
@@ -97,8 +116,8 @@ function uninstallListenerIfIdle() {
 }
 
 export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
-  const { initialFocus = true } = options;
-  const entry: TrapEntry = { node };
+  const { initialFocus = true, onEscape } = options;
+  const entry: TrapEntry = { node, onEscape };
   trapStack.push(entry);
   installListener();
 

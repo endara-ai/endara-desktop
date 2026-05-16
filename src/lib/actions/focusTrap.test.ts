@@ -219,13 +219,20 @@ class FakeDocument {
     if (idx !== -1) list.splice(idx, 1);
   }
 
-  dispatchKeydown(key: string, shiftKey = false): { defaultPrevented: boolean } {
+  dispatchKeydown(
+    key: string,
+    shiftKey = false,
+  ): { defaultPrevented: boolean; propagationStopped: boolean } {
     let prevented = false;
+    let stopped = false;
     const event = {
       key,
       shiftKey,
       preventDefault() {
         prevented = true;
+      },
+      stopPropagation() {
+        stopped = true;
       },
       get defaultPrevented() {
         return prevented;
@@ -239,7 +246,7 @@ class FakeDocument {
     for (const e of [...this.bubble]) {
       if (e.type === 'keydown') e.listener(event);
     }
-    return { defaultPrevented: prevented };
+    return { defaultPrevented: prevented, propagationStopped: stopped };
   }
 }
 
@@ -326,7 +333,7 @@ describe('focusTrap action (integration)', () => {
     trap.destroy();
   });
 
-  it('does NOT intercept Escape — modal Escape handlers continue to fire', () => {
+  it('without onEscape, Escape passes through (defaultPrevented stays false)', () => {
     const modal = new FakeElement('DIV');
     const btn = new FakeElement('BUTTON');
     modal.appendChild(btn);
@@ -335,6 +342,91 @@ describe('focusTrap action (integration)', () => {
     const trap = focusTrap(modal as unknown as HTMLElement, { initialFocus: false });
     const result = fakeDocument.dispatchKeydown('Escape');
     expect(result.defaultPrevented).toBe(false);
+    expect(result.propagationStopped).toBe(false);
+    trap.destroy();
+  });
+
+  it('with onEscape, Escape calls the callback and prevents default + stops propagation', () => {
+    const modal = new FakeElement('DIV');
+    const btn = new FakeElement('BUTTON');
+    modal.appendChild(btn);
+    fakeDocument.activeElement = btn as unknown as HTMLElement;
+
+    let calls = 0;
+    const trap = focusTrap(modal as unknown as HTMLElement, {
+      initialFocus: false,
+      onEscape: () => {
+        calls += 1;
+      },
+    });
+    const result = fakeDocument.dispatchKeydown('Escape');
+    expect(calls).toBe(1);
+    expect(result.defaultPrevented).toBe(true);
+    expect(result.propagationStopped).toBe(true);
+    trap.destroy();
+  });
+
+  it('nested traps: only the top onEscape fires; outer regains control after inner destroys', () => {
+    const outerNode = new FakeElement('DIV');
+    outerNode.appendChild(new FakeElement('BUTTON'));
+    const innerNode = new FakeElement('DIV');
+    innerNode.appendChild(new FakeElement('BUTTON'));
+
+    let outerCalls = 0;
+    let innerCalls = 0;
+    const outer = focusTrap(outerNode as unknown as HTMLElement, {
+      initialFocus: false,
+      onEscape: () => {
+        outerCalls += 1;
+      },
+    });
+    const inner = focusTrap(innerNode as unknown as HTMLElement, {
+      initialFocus: false,
+      onEscape: () => {
+        innerCalls += 1;
+      },
+    });
+
+    fakeDocument.dispatchKeydown('Escape');
+    expect(innerCalls).toBe(1);
+    expect(outerCalls).toBe(0);
+
+    inner.destroy();
+    fakeDocument.dispatchKeydown('Escape');
+    expect(innerCalls).toBe(1);
+    expect(outerCalls).toBe(1);
+
+    outer.destroy();
+  });
+
+  it('Tab still cycles correctly when onEscape is configured (regression)', () => {
+    const modal = new FakeElement('DIV');
+    const a = new FakeElement('BUTTON');
+    const b = new FakeElement('BUTTON');
+    modal.appendChild(a);
+    modal.appendChild(b);
+    fakeDocument.activeElement = b as unknown as HTMLElement;
+
+    let escCalls = 0;
+    const trap = focusTrap(modal as unknown as HTMLElement, {
+      initialFocus: false,
+      onEscape: () => {
+        escCalls += 1;
+      },
+    });
+
+    // Tab from last → wraps to first.
+    const tabResult = fakeDocument.dispatchKeydown('Tab');
+    expect(tabResult.defaultPrevented).toBe(true);
+    expect(fakeDocument.activeElement).toBe(a as unknown as HTMLElement);
+    expect(escCalls).toBe(0);
+
+    // Shift+Tab from first → wraps to last.
+    const shiftResult = fakeDocument.dispatchKeydown('Tab', true);
+    expect(shiftResult.defaultPrevented).toBe(true);
+    expect(fakeDocument.activeElement).toBe(b as unknown as HTMLElement);
+    expect(escCalls).toBe(0);
+
     trap.destroy();
   });
 
