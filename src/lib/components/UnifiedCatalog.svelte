@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { CatalogEntry } from '$lib/types';
   import { selectedEndpoint, activeTopLevelTab, activeTab } from '$lib/stores';
+  import { requestNavigation } from '$lib/stores/unsavedChangesGuard';
   import { getCatalog } from '$lib/api';
 
   let catalog: CatalogEntry[] = $state([]);
@@ -45,9 +46,11 @@
   }
 
   function navigateToEndpoint(endpointName: string) {
-    selectedEndpoint.set(endpointName);
-    activeTab.set('tools');
-    activeTopLevelTab.set('servers');
+    requestNavigation(() => {
+      selectedEndpoint.set(endpointName);
+      activeTab.set('tools');
+      activeTopLevelTab.set('servers');
+    });
   }
 </script>
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { selectedEndpointData, activeTab, selectedEndpoint, endpoints } from '$lib/stores';
+  import { requestNavigation } from '$lib/stores/unsavedChangesGuard';
   import { restartEndpoint, refreshEndpoint, removeEndpoint, getEndpoints, disableEndpoint, enableEndpoint } from '$lib/api';
   import { toast } from 'svelte-sonner';
   import ToolsTab from './ToolsTab.svelte';
@@ -162,7 +163,10 @@
       {#each tabs as tab}
         <button
           class="dtab {$activeTab === tab.id ? 'active' : ''}"
-          onclick={() => activeTab.set(tab.id)}
+          onclick={() => {
+            if ($activeTab === tab.id) return;
+            requestNavigation(() => activeTab.set(tab.id));
+          }}
         >{tab.label}</button>
       {/each}
     </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getEndpointConfig, updateEndpoint, getEndpoints, type UpdateEndpointParams } from '$lib/api';
   import { selectedEndpoint, endpoints, selectedEndpointData } from '$lib/stores';
+  import { registerDirtyChecker } from '$lib/stores/unsavedChangesGuard';
   import { sanitizeName } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http' | 'oauth';
@@ -124,6 +125,15 @@
     scopes !== originalScopes ||
     serverTypeOverride !== originalServerTypeOverride
   );
+
+  // Register a dirty-checker with the shared navigation guard so that any
+  // nav site wrapped with `requestNavigation` can prompt before discarding
+  // unsaved edits. The closure reads the live `isDirty` derived value, and
+  // the cleanup returned from registerDirtyChecker tears the entry down on
+  // unmount so a different tab's checker can't fire stale results.
+  $effect(() => {
+    return registerDirtyChecker(() => isDirty);
+  });
 
   $effect(() => {
     if (!prefixCustom) {

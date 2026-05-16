@@ -7,7 +7,14 @@
   import RelayLogs from '$lib/components/RelayLogs.svelte';
   import UnifiedCatalog from '$lib/components/UnifiedCatalog.svelte';
   import Onboarding from '$lib/components/Onboarding.svelte';
+  import ConfirmModal from '$lib/components/ConfirmModal.svelte';
   import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete, oauthStatuses } from '$lib/stores';
+  import {
+    pendingNavigationAction,
+    requestNavigation,
+    confirmPendingNavigation,
+    cancelPendingNavigation,
+  } from '$lib/stores/unsavedChangesGuard';
   import { getEndpoints, getOAuthStatus } from '$lib/api';
   import { initRelayLogListener } from '$lib/logListener';
   import { getActiveTopLevelTab, getVisibleTopLevelTabs, shouldShowRelayStartupFailure, shouldSkipEndpointPolling } from '$lib/relaySidecarUi';
@@ -125,7 +132,8 @@
   function handleGlobalKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === ',') {
       e.preventDefault();
-      activeTopLevelTab.set('settings');
+      if ($activeTopLevelTab === 'settings') return;
+      requestNavigation(() => activeTopLevelTab.set('settings'));
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
@@ -136,13 +144,17 @@
   }
 
   function openRelayLogs() {
-    relayStartupFailureDismissed = true;
-    activeTopLevelTab.set('relay-logs');
+    requestNavigation(() => {
+      relayStartupFailureDismissed = true;
+      activeTopLevelTab.set('relay-logs');
+    });
   }
 
   function openSettings() {
-    relayStartupFailureDismissed = true;
-    activeTopLevelTab.set('settings');
+    requestNavigation(() => {
+      relayStartupFailureDismissed = true;
+      activeTopLevelTab.set('settings');
+    });
   }
 
   async function handleRetryRelay() {
@@ -219,7 +231,10 @@
               {$activeTopLevelTab === tab.id
                 ? 'border-(--accent) text-(--accent) bg-(--win-bg)'
                 : 'border-transparent text-(--fg3) hover:text-(--fg1) hover:bg-(--hover-bg)'}"
-            onclick={() => activeTopLevelTab.set(tab.id)}
+            onclick={() => {
+              if ($activeTopLevelTab === tab.id) return;
+              requestNavigation(() => activeTopLevelTab.set(tab.id));
+            }}
           >
             {tab.label}
           </button>
@@ -230,7 +245,10 @@
       <button
         class="ml-auto flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-(--fg3) hover:bg-(--hover-bg) transition-colors"
         title={dotTitle}
-        onclick={() => activeTopLevelTab.set('settings')}
+        onclick={() => {
+          if ($activeTopLevelTab === 'settings') return;
+          requestNavigation(() => activeTopLevelTab.set('settings'));
+        }}
       >
         <span>Relay</span>
         <span
@@ -275,4 +293,17 @@
       </div>
     </div>
   </div>
+{/if}
+
+<!-- Single shared discard-changes prompt. Driven by the unsavedChangesGuard
+     store so any wrapped navigation site (sidebar row, inner tab, top-level
+     tab, Cmd+,, UnifiedCatalog jump) reuses the same modal. -->
+{#if $pendingNavigationAction}
+  <ConfirmModal
+    title="Discard changes?"
+    message="You'll lose unsaved edits to this server's configuration."
+    confirmLabel="Discard"
+    onconfirm={confirmPendingNavigation}
+    oncancel={cancelPendingNavigation}
+  />
 {/if}

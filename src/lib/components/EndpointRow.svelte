@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Endpoint } from '$lib/types';
   import { selectedEndpoint } from '$lib/stores';
+  import { requestNavigation } from '$lib/stores/unsavedChangesGuard';
   import HealthDot from './HealthDot.svelte';
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
@@ -19,7 +20,10 @@
   let isFailed = $derived(!!endpoint.error || endpoint.health === 'error' || endpoint.health === 'failed');
 
   function select() {
-    selectedEndpoint.set(endpoint.name);
+    // Same row that's already selected → no-op so we don't show the
+    // discard-changes prompt for a navigation that wouldn't move anywhere.
+    if (endpoint.name === $selectedEndpoint) return;
+    requestNavigation(() => selectedEndpoint.set(endpoint.name));
   }
 </script>
 
