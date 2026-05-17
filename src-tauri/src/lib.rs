@@ -2,7 +2,9 @@ mod api_proxy;
 mod webview_recovery;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -46,6 +48,113 @@ const RELAY_WATCHDOG_PROBE_INTERVAL: std::time::Duration = std::time::Duration::
 /// Per-probe HTTP timeout for /healthz so a stalled relay does not block the
 /// watchdog loop or queue probes.
 const RELAY_WATCHDOG_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Base backoff (seconds) for the first auto-restart attempt after an
+/// unexpected relay sidecar termination.
+const RELAY_RESTART_BASE_SECS: u64 = 1;
+
+/// Cap (seconds) for the auto-restart exponential backoff schedule.
+const RELAY_RESTART_MAX_SECS: u64 = 30;
+
+/// Hard cap on consecutive auto-restart attempts before the supervisor
+/// suspends auto-restart and emits a `"failed"` status.
+const RELAY_RESTART_MAX_ATTEMPTS: u32 = 5;
+
+/// Healthy-uptime threshold (seconds): if the relay was up for at least this
+/// long before terminating, the supervisor resets its attempt counter.
+const RELAY_RESTART_HEALTHY_RESET_SECS: u64 = 60;
+
+/// User-facing message emitted when the supervisor exhausts its retry budget.
+const RELAY_RESTART_SUSPENDED_MSG: &str =
+    "Relay crashed repeatedly; auto-restart suspended. Click Restart to retry.";
+
+/// Compute the auto-restart backoff window in seconds for a given attempt
+/// number (1-indexed). Schedule: 1s, 2s, 4s, 8s, 16s, then capped at
+/// [`RELAY_RESTART_MAX_SECS`]. Returns `0` for `attempt == 0`.
+fn relay_restart_backoff_secs(attempt: u32) -> u64 {
+    if attempt == 0 {
+        return 0;
+    }
+    // Clamp the exponent so `1u64 << exp` never overflows.
+    let exp = (attempt - 1).min(20);
+    let secs = RELAY_RESTART_BASE_SECS.saturating_mul(1u64 << exp);
+    secs.min(RELAY_RESTART_MAX_SECS)
+}
+
+/// Decision returned by [`RelayRestartPolicy::on_termination`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayRestartDecision {
+    /// Termination was intentional (`stop_relay`, `restart_relay`, tray quit,
+    /// app exit, or a prior cap exhaustion); the supervisor must not respawn.
+    Suppress,
+    /// Schedule an auto-restart after `delay_secs`. `attempt` is 1-indexed and
+    /// `max` is the configured hard cap, both surfaced to the UI in the
+    /// `"restarting"` event payload.
+    Restart {
+        attempt: u32,
+        delay_secs: u64,
+        max: u32,
+    },
+    /// The supervisor has exhausted its retry budget; emit `"failed"` and stop.
+    GiveUp { max: u32 },
+}
+
+/// Pure state machine that drives the relay sidecar auto-restart supervisor.
+/// Lives behind a `std::sync::Mutex` inside [`RelayState`] and is also unit
+/// tested in isolation (no async, no `tauri` types).
+#[derive(Default, Debug, Clone)]
+pub struct RelayRestartPolicy {
+    /// Number of consecutive failed auto-restart attempts in the current
+    /// unhealthy window.
+    attempts: u32,
+}
+
+impl RelayRestartPolicy {
+    /// Apply the policy to a sidecar termination event.
+    ///
+    /// * `intentional_stop` — value of the `intentional_stop` flag *after* the
+    ///   atomic read-and-reset in the `Terminated` arm; when `true` we
+    ///   short-circuit to [`RelayRestartDecision::Suppress`] (and reset the
+    ///   attempt counter, since the next failure starts a fresh unhealthy
+    ///   window).
+    /// * `uptime_secs` — wall-clock seconds the child was alive before
+    ///   terminating; when it is `>= RELAY_RESTART_HEALTHY_RESET_SECS` the
+    ///   attempt counter is reset before this attempt is counted.
+    pub fn on_termination(
+        &mut self,
+        intentional_stop: bool,
+        uptime_secs: u64,
+    ) -> RelayRestartDecision {
+        if intentional_stop {
+            self.attempts = 0;
+            return RelayRestartDecision::Suppress;
+        }
+        if uptime_secs >= RELAY_RESTART_HEALTHY_RESET_SECS {
+            self.attempts = 0;
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        if self.attempts > RELAY_RESTART_MAX_ATTEMPTS {
+            // Drop the counter so a subsequent user-initiated restart starts
+            // from a clean slate; the caller is responsible for setting
+            // `intentional_stop = true` to block further auto-restart events.
+            self.attempts = 0;
+            return RelayRestartDecision::GiveUp {
+                max: RELAY_RESTART_MAX_ATTEMPTS,
+            };
+        }
+        RelayRestartDecision::Restart {
+            attempt: self.attempts,
+            delay_secs: relay_restart_backoff_secs(self.attempts),
+            max: RELAY_RESTART_MAX_ATTEMPTS,
+        }
+    }
+
+    /// Reset the attempt counter. Called when the user manually starts,
+    /// restarts, or stops the relay so a fresh unhealthy window begins.
+    pub fn reset(&mut self) {
+        self.attempts = 0;
+    }
+}
 
 /// Workaround: In Tauri v2, `set_activation_policy` is only available on `App`,
 /// not on `AppHandle`, so it cannot be called from event handlers.
@@ -238,6 +347,24 @@ pub struct RelayState {
     /// `std::sync::Mutex` so it can be aborted from synchronous contexts
     /// (`RunEvent::Exit`, tray quit). `None` when no relay is running.
     watchdog: Arc<std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    /// Set to `true` immediately before any intentional kill (user `stop_relay`
+    /// / `restart_relay`, tray quit, app exit, exhausted supervisor budget).
+    /// The `CommandEvent::Terminated` arm swaps this back to `false` and treats
+    /// a previously-`true` value as suppression of auto-restart.
+    intentional_stop: Arc<AtomicBool>,
+    /// Handle for a scheduled auto-restart task awaiting its backoff sleep.
+    /// Stored behind a `std::sync::Mutex` so it can be aborted from synchronous
+    /// contexts (`RunEvent::Exit`, tray quit). `None` when no respawn is
+    /// pending.
+    restart_pending: Arc<std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    /// Supervisor restart policy state: tracks the consecutive failed
+    /// auto-restart attempts so the backoff schedule and hard cap can be
+    /// evaluated deterministically.
+    restart_policy: Arc<std::sync::Mutex<RelayRestartPolicy>>,
+    /// Wall-clock instant at which the current (or most recent) child was
+    /// spawned. The supervisor reads this on termination to compute uptime and
+    /// decide whether to reset the attempt counter.
+    last_spawn_at: Arc<std::sync::Mutex<Option<Instant>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -571,6 +698,87 @@ fn stop_watchdog(state: &RelayState) {
     }
 }
 
+/// Abort and clear any pending auto-restart task. Safe to call from sync
+/// contexts.
+fn abort_pending_restart(state: &RelayState) {
+    if let Ok(mut guard) = state.restart_pending.lock() {
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+    }
+}
+
+/// Schedule an auto-restart of the relay sidecar after `delay_secs`. The
+/// returned task sleeps, re-checks the intentional-stop flag and the child
+/// slot, then calls [`spawn_relay`] and updates the shared state — mirroring
+/// the success path of [`start_relay`].
+fn schedule_relay_restart(app: &AppHandle, delay_secs: u64, attempt: u32, max: u32) {
+    let task_app = app.clone();
+    let handle = tauri::async_runtime::spawn(async move {
+        let app = task_app;
+        tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+
+        // Re-check state after the sleep so a user-initiated start / restart
+        // or app exit during the backoff window short-circuits the respawn.
+        let Some(state) = app.try_state::<RelayState>() else {
+            return;
+        };
+        if state.intentional_stop.load(Ordering::Acquire) {
+            log::info!(
+                "[relay] auto-restart cancelled attempt={} reason=intentional_stop",
+                attempt
+            );
+            return;
+        }
+        if state.child.lock().await.is_some() {
+            log::info!(
+                "[relay] auto-restart skipped attempt={} reason=child_already_running",
+                attempt
+            );
+            return;
+        }
+
+        let port = *state.port.lock().await;
+        log::info!(
+            "[relay] auto-restart attempt={}/{} port={}",
+            attempt,
+            max,
+            port
+        );
+        match spawn_relay(&app, port).await {
+            Ok(child) => {
+                if let Ok(mut pid_guard) = state.pid.lock() {
+                    *pid_guard = Some(child.pid());
+                }
+                *state.child.lock().await = Some(child);
+                *state.running.lock().await = true;
+            }
+            Err(e) => {
+                log::error!(
+                    "[relay] auto-restart attempt={} failed error={}",
+                    attempt,
+                    e
+                );
+                // `spawn_relay` already emitted a "failed" status on the
+                // pre-flight path (the only failure mode that can be reached
+                // here without producing a `Terminated` event). No further
+                // action: the pre-flight path also sets `intentional_stop` so
+                // the supervisor will not loop.
+            }
+        }
+    });
+    if let Some(state) = app.try_state::<RelayState>() {
+        if let Ok(mut guard) = state.restart_pending.lock() {
+            // Defensive: abort any prior pending restart (there should never
+            // be one, but never leak a JoinHandle).
+            if let Some(prior) = guard.take() {
+                prior.abort();
+            }
+            *guard = Some(handle);
+        }
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct BuildInfo {
     pub version: String,
@@ -620,6 +828,13 @@ async fn spawn_relay(
             port,
             err_msg
         );
+        // The spawn never started, so there is no `CommandEvent::Terminated`
+        // to suppress. Setting the flag is belt-and-suspenders against any
+        // orphan event that could otherwise trigger auto-restart.
+        if let Some(state) = app.try_state::<RelayState>() {
+            state.intentional_stop.store(true, Ordering::Release);
+            abort_pending_restart(&state);
+        }
         emit_sidecar_status(app, "failed", Some(err_msg.clone())).await;
         return Err(err_msg);
     }
@@ -652,6 +867,14 @@ async fn spawn_relay(
         })?;
 
     log::info!("[relay] sidecar spawned pid={} port={}", child.pid(), port);
+
+    // Record spawn timestamp so the supervisor can compute uptime when the
+    // child terminates and decide whether to reset the attempt counter.
+    if let Some(state) = app.try_state::<RelayState>() {
+        if let Ok(mut guard) = state.last_spawn_at.lock() {
+            *guard = Some(Instant::now());
+        }
+    }
 
     // Spawn a background task to monitor stdout/stderr
     let app_handle = app.clone();
@@ -739,9 +962,21 @@ async fn spawn_relay(
                         code,
                         signal
                     );
-                    // Update running state and stop the watchdog so it does
-                    // not keep probing a port no one is listening on.
+
+                    // Capture spawn timestamp before we clear it so the
+                    // supervisor sees the uptime of *this* child, not the
+                    // next one. `was_intentional` is the atomic read-and-reset
+                    // of the intentional-stop flag, so a follow-up unexpected
+                    // termination starts a fresh window.
+                    let mut uptime_secs: u64 = 0;
+                    let mut was_intentional = false;
                     if let Some(state) = app_handle.try_state::<RelayState>() {
+                        if let Ok(mut guard) = state.last_spawn_at.lock() {
+                            if let Some(spawned_at) = guard.take() {
+                                uptime_secs = spawned_at.elapsed().as_secs();
+                            }
+                        }
+                        was_intentional = state.intentional_stop.swap(false, Ordering::AcqRel);
                         if let Ok(mut pid_guard) = state.pid.lock() {
                             pid_guard.take();
                         }
@@ -749,7 +984,8 @@ async fn spawn_relay(
                         *state.child.lock().await = None;
                         stop_watchdog(&state);
                     }
-                    // Emit relay-health event for termination
+
+                    // Emit relay-health event for termination (unchanged).
                     let _ = app_handle.emit(
                         "relay-health",
                         RelayHealthPayload {
@@ -761,20 +997,95 @@ async fn spawn_relay(
                         },
                     );
 
-                    // Emit sidecar lifecycle status based on exit code
                     let exited_cleanly = code == Some(0) || (code.is_none() && signal.is_some());
-                    if exited_cleanly {
-                        emit_sidecar_status(&app_handle, "stopped", None).await;
+
+                    if was_intentional {
+                        // Intentional shutdown path — preserve prior semantics
+                        // and do not engage the supervisor.
+                        if exited_cleanly {
+                            emit_sidecar_status(&app_handle, "stopped", None).await;
+                        } else {
+                            emit_sidecar_status(
+                                &app_handle,
+                                "failed",
+                                Some(format!(
+                                    "Process exited with code: {:?}, signal: {:?}",
+                                    code, signal
+                                )),
+                            )
+                            .await;
+                        }
+                        break;
+                    }
+
+                    // Unexpected termination — consult the supervisor.
+                    let decision = if let Some(state) = app_handle.try_state::<RelayState>() {
+                        match state.restart_policy.lock() {
+                            Ok(mut policy) => policy.on_termination(false, uptime_secs),
+                            Err(_) => RelayRestartDecision::Suppress,
+                        }
                     } else {
-                        emit_sidecar_status(
-                            &app_handle,
-                            "failed",
-                            Some(format!(
-                                "Process exited with code: {:?}, signal: {:?}",
-                                code, signal
-                            )),
-                        )
-                        .await;
+                        RelayRestartDecision::Suppress
+                    };
+
+                    match decision {
+                        RelayRestartDecision::Restart {
+                            attempt,
+                            delay_secs,
+                            max,
+                        } => {
+                            let reason = format!(
+                                "signal={:?} code={:?}, attempt {}/{}",
+                                signal, code, attempt, max
+                            );
+                            log::warn!(
+                                "[relay] auto-restart scheduled attempt={} max={} delay_secs={} uptime_secs={} signal={:?} code={:?}",
+                                attempt,
+                                max,
+                                delay_secs,
+                                uptime_secs,
+                                signal,
+                                code
+                            );
+                            emit_sidecar_status(&app_handle, "restarting", Some(reason)).await;
+                            schedule_relay_restart(&app_handle, delay_secs, attempt, max);
+                        }
+                        RelayRestartDecision::GiveUp { max } => {
+                            log::error!(
+                                "[relay] auto-restart suspended after {} consecutive failed attempts",
+                                max
+                            );
+                            // Block any further auto-restart attempts until the
+                            // user manually intervenes (start/restart resets
+                            // both the flag and the policy).
+                            if let Some(state) = app_handle.try_state::<RelayState>() {
+                                state.intentional_stop.store(true, Ordering::Release);
+                                abort_pending_restart(&state);
+                            }
+                            emit_sidecar_status(
+                                &app_handle,
+                                "failed",
+                                Some(RELAY_RESTART_SUSPENDED_MSG.to_string()),
+                            )
+                            .await;
+                        }
+                        RelayRestartDecision::Suppress => {
+                            // Reachable only when state is missing; preserve
+                            // prior behavior.
+                            if exited_cleanly {
+                                emit_sidecar_status(&app_handle, "stopped", None).await;
+                            } else {
+                                emit_sidecar_status(
+                                    &app_handle,
+                                    "failed",
+                                    Some(format!(
+                                        "Process exited with code: {:?}, signal: {:?}",
+                                        code, signal
+                                    )),
+                                )
+                                .await;
+                            }
+                        }
                     }
                     break;
                 }
@@ -812,6 +1123,16 @@ async fn start_relay(
         return Ok(RelayStatusInfo { running: true });
     }
 
+    // A manual start always begins a fresh unhealthy window: clear any
+    // pending auto-restart, reset the supervisor counter, and clear the
+    // intentional-stop flag (which the supervisor may have left set after
+    // exhausting its budget) before launching.
+    abort_pending_restart(&state);
+    if let Ok(mut policy) = state.restart_policy.lock() {
+        policy.reset();
+    }
+    state.intentional_stop.store(false, Ordering::Release);
+
     let port = *state.port.lock().await;
     let child = spawn_relay(&app, port).await?;
     if let Ok(mut pid_guard) = state.pid.lock() {
@@ -824,17 +1145,27 @@ async fn start_relay(
 
 #[tauri::command]
 async fn stop_relay(state: State<'_, RelayState>) -> Result<RelayStatusInfo, String> {
+    // Cancel any pending auto-restart before we drop the watchdog / child so a
+    // mid-sleep supervisor task cannot race us by spawning a fresh relay.
+    abort_pending_restart(&state);
     stop_watchdog(&state);
     if let Ok(mut pid_guard) = state.pid.lock() {
         pid_guard.take();
     }
     let mut child_guard = state.child.lock().await;
     if let Some(child) = child_guard.take() {
+        // Mark this kill as intentional *before* delivering the signal so the
+        // `CommandEvent::Terminated` arm reads the flag set by us, not a stale
+        // value from a prior unexpected death.
+        state.intentional_stop.store(true, Ordering::Release);
         child
             .kill()
             .map_err(|e| format!("Failed to kill relay: {e}"))?;
     }
     *state.running.lock().await = false;
+    if let Ok(mut policy) = state.restart_policy.lock() {
+        policy.reset();
+    }
     Ok(RelayStatusInfo { running: false })
 }
 
@@ -843,17 +1174,28 @@ async fn restart_relay(
     app: AppHandle,
     state: State<'_, RelayState>,
 ) -> Result<RelayStatusInfo, String> {
+    abort_pending_restart(&state);
     stop_watchdog(&state);
+    // Clear any leftover intentional-stop flag (e.g. the supervisor set it
+    // when it gave up after exhausting its restart budget) so the next
+    // unexpected `Terminated` event is not silently routed to Suppress.
+    state.intentional_stop.store(false, Ordering::Release);
     {
         if let Ok(mut pid_guard) = state.pid.lock() {
             pid_guard.take();
         }
         let mut child_guard = state.child.lock().await;
         if let Some(child) = child_guard.take() {
+            // Arm the swap consumer in the `Terminated` arm so the kill we
+            // are about to issue is recognised as intentional.
+            state.intentional_stop.store(true, Ordering::Release);
             let _ = child.kill();
         }
     }
     *state.running.lock().await = false;
+    if let Ok(mut policy) = state.restart_policy.lock() {
+        policy.reset();
+    }
 
     // Brief pause before restart
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -1803,11 +2145,17 @@ pub fn run() {
         last_sidecar_error: Arc::new(Mutex::new(None)),
         log_buffer: Arc::new(Mutex::new(Vec::new())),
         watchdog: Arc::new(std::sync::Mutex::new(None)),
+        intentional_stop: Arc::new(AtomicBool::new(false)),
+        restart_pending: Arc::new(std::sync::Mutex::new(None)),
+        restart_policy: Arc::new(std::sync::Mutex::new(RelayRestartPolicy::default())),
+        last_spawn_at: Arc::new(std::sync::Mutex::new(None)),
     };
 
     let child_handle = relay_state.child.clone();
     let pid_handle = relay_state.pid.clone();
     let watchdog_handle = relay_state.watchdog.clone();
+    let intentional_stop_handle = relay_state.intentional_stop.clone();
+    let restart_pending_handle = relay_state.restart_pending.clone();
 
     let pending_update = PendingUpdate(std::sync::Mutex::new(None));
 
@@ -1929,6 +2277,11 @@ pub fn run() {
                         log::info!("tray menu action=quit");
                         // Kill relay sidecar before exiting
                         if let Some(state) = app.try_state::<RelayState>() {
+                            // Mark the impending kill as intentional and cancel
+                            // any pending auto-restart so the supervisor does
+                            // not respawn the sidecar mid-shutdown.
+                            state.intentional_stop.store(true, Ordering::Release);
+                            abort_pending_restart(&state);
                             // Stop the watchdog so it does not race shutdown.
                             stop_watchdog(&state);
                             // Kill by PID first (synchronous, reliable)
@@ -2040,6 +2393,15 @@ pub fn run() {
         .run(move |_app, event| {
             if let RunEvent::Exit = event {
                 log::info!("app exit");
+                // Suppress any in-flight supervisor logic so the upcoming SIGTERM
+                // is treated as an intentional shutdown, then abort a pending
+                // auto-restart task if one is sleeping out its backoff window.
+                intentional_stop_handle.store(true, Ordering::Release);
+                if let Ok(mut guard) = restart_pending_handle.lock() {
+                    if let Some(handle) = guard.take() {
+                        handle.abort();
+                    }
+                }
                 // Abort the watchdog before tearing down the relay so it does
                 // not log spurious "unhealthy" transitions while we shut down.
                 if let Ok(mut guard) = watchdog_handle.lock() {
@@ -2073,6 +2435,141 @@ pub fn run() {
                 .join();
             }
         });
+}
+
+#[cfg(test)]
+mod relay_restart_policy_tests {
+    use super::*;
+
+    #[test]
+    fn backoff_schedule_doubles_then_caps() {
+        assert_eq!(relay_restart_backoff_secs(0), 0);
+        assert_eq!(relay_restart_backoff_secs(1), 1);
+        assert_eq!(relay_restart_backoff_secs(2), 2);
+        assert_eq!(relay_restart_backoff_secs(3), 4);
+        assert_eq!(relay_restart_backoff_secs(4), 8);
+        assert_eq!(relay_restart_backoff_secs(5), 16);
+        // Once 2^(n-1) exceeds RELAY_RESTART_MAX_SECS the value clamps.
+        assert_eq!(relay_restart_backoff_secs(6), RELAY_RESTART_MAX_SECS);
+        assert_eq!(relay_restart_backoff_secs(20), RELAY_RESTART_MAX_SECS);
+        // Large exponents must not overflow the saturating shift.
+        assert_eq!(relay_restart_backoff_secs(1000), RELAY_RESTART_MAX_SECS);
+    }
+
+    #[test]
+    fn intentional_stop_suppresses_and_resets_counter() {
+        let mut policy = RelayRestartPolicy::default();
+        // Burn one failed attempt to verify suppression also clears state.
+        let _ = policy.on_termination(false, 0);
+        let decision = policy.on_termination(true, 0);
+        assert_eq!(decision, RelayRestartDecision::Suppress);
+        // The next unexpected termination must start from attempt=1 again.
+        let next = policy.on_termination(false, 0);
+        assert!(matches!(
+            next,
+            RelayRestartDecision::Restart { attempt: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn healthy_uptime_resets_attempt_counter() {
+        let mut policy = RelayRestartPolicy::default();
+        // Three rapid failures bring the counter to 3.
+        for expected in 1..=3 {
+            match policy.on_termination(false, 0) {
+                RelayRestartDecision::Restart { attempt, .. } => assert_eq!(attempt, expected),
+                other => panic!("expected Restart, got {:?}", other),
+            }
+        }
+        // A failure after >= RELAY_RESTART_HEALTHY_RESET_SECS uptime resets first,
+        // so this counts as attempt=1.
+        match policy.on_termination(false, RELAY_RESTART_HEALTHY_RESET_SECS) {
+            RelayRestartDecision::Restart {
+                attempt,
+                delay_secs,
+                max,
+            } => {
+                assert_eq!(attempt, 1);
+                assert_eq!(delay_secs, 1);
+                assert_eq!(max, RELAY_RESTART_MAX_ATTEMPTS);
+            }
+            other => panic!("expected Restart, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn give_up_after_max_attempts_then_reset_allows_fresh_window() {
+        let mut policy = RelayRestartPolicy::default();
+        for expected in 1..=RELAY_RESTART_MAX_ATTEMPTS {
+            match policy.on_termination(false, 0) {
+                RelayRestartDecision::Restart { attempt, max, .. } => {
+                    assert_eq!(attempt, expected);
+                    assert_eq!(max, RELAY_RESTART_MAX_ATTEMPTS);
+                }
+                other => panic!("expected Restart at attempt {}, got {:?}", expected, other),
+            }
+        }
+        // One more crash inside the unhealthy window must trip the cap.
+        assert_eq!(
+            policy.on_termination(false, 0),
+            RelayRestartDecision::GiveUp {
+                max: RELAY_RESTART_MAX_ATTEMPTS,
+            }
+        );
+        // After GiveUp the counter is cleared so a manual restart (which calls
+        // reset()) followed by a fresh crash starts at attempt=1.
+        policy.reset();
+        match policy.on_termination(false, 0) {
+            RelayRestartDecision::Restart { attempt, .. } => assert_eq!(attempt, 1),
+            other => panic!("expected Restart, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn give_up_then_reset_arms_fresh_restart_window() {
+        let mut policy = RelayRestartPolicy::default();
+        // Burn through the full restart budget; the (max+1)-th failure must
+        // trip the cap and return GiveUp.
+        for _ in 0..RELAY_RESTART_MAX_ATTEMPTS {
+            match policy.on_termination(false, 0) {
+                RelayRestartDecision::Restart { .. } => {}
+                other => panic!("expected Restart, got {:?}", other),
+            }
+        }
+        assert_eq!(
+            policy.on_termination(false, 0),
+            RelayRestartDecision::GiveUp {
+                max: RELAY_RESTART_MAX_ATTEMPTS,
+            }
+        );
+        // Simulate the user clicking "Retry" — `restart_relay` resets the
+        // policy before re-spawning. The next unintentional termination must
+        // open a fresh restart window starting at attempt=1 with the base
+        // backoff and the canonical max attempts.
+        policy.reset();
+        assert_eq!(
+            policy.on_termination(false, 0),
+            RelayRestartDecision::Restart {
+                attempt: 1,
+                delay_secs: 1,
+                max: RELAY_RESTART_MAX_ATTEMPTS,
+            }
+        );
+    }
+
+    #[test]
+    fn delay_secs_matches_backoff_schedule() {
+        let mut policy = RelayRestartPolicy::default();
+        let expected_delays = [1u64, 2, 4, 8, 16];
+        for expected in expected_delays {
+            match policy.on_termination(false, 0) {
+                RelayRestartDecision::Restart { delay_secs, .. } => {
+                    assert_eq!(delay_secs, expected);
+                }
+                other => panic!("expected Restart, got {:?}", other),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
