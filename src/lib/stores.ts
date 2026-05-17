@@ -68,7 +68,7 @@ export const relayConnected = writable<boolean>(false);
 export const onboardingDismissed = writable<boolean>(false);
 export const initialLoadComplete = writable<boolean>(false);
 
-export type RelaySidecarStatusType = 'unknown' | 'starting' | 'running' | 'failed' | 'stopped';
+export type RelaySidecarStatusType = 'unknown' | 'starting' | 'running' | 'failed' | 'stopped' | 'restarting';
 export const relaySidecarStatus = writable<RelaySidecarStatusType>('unknown');
 export const relaySidecarError = writable<string | null>(null);
 

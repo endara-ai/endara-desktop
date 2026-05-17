@@ -14,7 +14,7 @@ function applySidecarStatus(status: string, error?: string | null) {
   relaySidecarStatus.set(status as RelaySidecarStatusType);
   if (status === 'running') {
     relaySidecarError.set(null);
-  } else if (status === 'failed' && error) {
+  } else if ((status === 'failed' || status === 'restarting') && error) {
     relaySidecarError.set(error);
   }
 }

@@ -25,15 +25,17 @@
     ($relaySidecarStatus === 'running' && $relayConnected) ? 'bg-(--healthy)'
     : ($relaySidecarStatus === 'failed' && $relayConnected) ? 'bg-(--degraded)'
     : ($relaySidecarStatus === 'failed' && !$relayConnected) ? 'bg-(--offline)'
+    : ($relaySidecarStatus === 'restarting') ? 'bg-(--degraded)'
     : ($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown') ? 'bg-(--fg3)'
     : ($relaySidecarStatus === 'stopped') ? 'bg-(--offline)'
     : 'bg-(--fg3)'
   );
-  const dotPulse = $derived($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown');
+  const dotPulse = $derived($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown' || $relaySidecarStatus === 'restarting');
   const dotTitle = $derived(
     ($relaySidecarStatus === 'running' && $relayConnected) ? 'Relay running'
     : ($relaySidecarStatus === 'failed' && $relayConnected) ? `Warning: Port in use by another process. ${$relaySidecarError ?? ''}`
     : ($relaySidecarStatus === 'failed') ? `Relay failed: ${$relaySidecarError ?? 'unknown error'}`
+    : ($relaySidecarStatus === 'restarting') ? `Relay restarting…${$relaySidecarError ? ` (${$relaySidecarError})` : ''}`
     : ($relaySidecarStatus === 'starting') ? 'Relay starting...'
     : ($relaySidecarStatus === 'stopped') ? 'Relay stopped'
     : 'Relay status unknown'

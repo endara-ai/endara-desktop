@@ -4,7 +4,7 @@
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus } from '$lib/api';
-  import { canRetryRelay, restartRelay } from '$lib/relaySidecarUi';
+  import { canRetryRelay, getSettingsStatusLabel, restartRelay } from '$lib/relaySidecarUi';
   import { fetchJsExecutionMode, toggleJsExecutionMode } from '$lib/jsExecutionModeUi';
   import { checkAndAutoDownload, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
@@ -151,18 +151,17 @@
   const isAmber = $derived($relaySidecarStatus === 'failed' && $relayConnected);
   const isRed = $derived(($relaySidecarStatus === 'failed' || $relaySidecarStatus === 'stopped') && !$relayConnected);
   const isStarting = $derived($relaySidecarStatus === 'starting' || $relaySidecarStatus === 'unknown');
+  const isRestarting = $derived($relaySidecarStatus === 'restarting');
   const showRetryRelayButton = $derived(canRetryRelay($relaySidecarStatus));
-  const statusDotColor = $derived(isGreen ? 'bg-green-500' : isAmber ? 'bg-yellow-500' : isRed ? 'bg-red-500' : 'bg-gray-400');
+  const statusDotColor = $derived(isGreen ? 'bg-green-500'
+    : isAmber || isRestarting ? 'bg-yellow-500'
+    : isRed ? 'bg-red-500'
+    : 'bg-gray-400');
   const statusBadgeClass = $derived(isGreen ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-    : isAmber ? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+    : isAmber || isRestarting ? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
     : isRed ? 'bg-red-500/10 text-red-600 dark:text-red-400'
     : 'bg-gray-500/10 text-gray-600 dark:text-gray-400');
-  const statusLabel = $derived(isGreen ? 'Running'
-    : isAmber ? 'Port Conflict'
-    : $relaySidecarStatus === 'stopped' ? 'Stopped'
-    : isRed ? 'Failed'
-    : isStarting ? 'Starting...'
-    : 'Unknown');
+  const statusLabel = $derived(getSettingsStatusLabel($relaySidecarStatus, $relayConnected));
 
   async function handleRetryRelay() {
     if (retryingRelay) return;
@@ -189,7 +188,7 @@
       <div class="flex items-center gap-2 mb-3">
         <span
           class="w-2.5 h-2.5 rounded-full {statusDotColor}"
-          class:animate-pulse={isStarting}
+          class:animate-pulse={isStarting || isRestarting}
         ></span>
         <span class="text-sm font-medium">Relay Status</span>
         <span class="text-xs px-1.5 py-0.5 rounded-full {statusBadgeClass}">
@@ -232,6 +231,15 @@
         <p class="text-xs text-(--fg2) mt-1">
           Relay starting...
         </p>
+      {/if}
+
+      {#if isRestarting}
+        <div class="mt-2 p-2 rounded bg-yellow-500/10 border border-yellow-500/20">
+          <p class="text-xs text-yellow-600 dark:text-yellow-400 font-medium">Relay is restarting…</p>
+          {#if $relaySidecarError}
+            <p class="text-xs text-yellow-600 dark:text-yellow-400 font-mono break-all mt-1">{$relaySidecarError}</p>
+          {/if}
+        </div>
       {/if}
 
       {#if showRetryRelayButton}

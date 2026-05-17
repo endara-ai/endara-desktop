@@ -129,6 +129,30 @@ describe('logListener', () => {
       expect(get(relaySidecarStatus)).toBe('failed');
       expect(get(relaySidecarError)).toBe('crash');
     });
+
+    it('forwards the restarting status and preserves the supervisor reason', async () => {
+      const mockListen = vi.mocked(listen);
+      let sidecarCallback: ((event: { payload: { status: string; error?: string | null } }) => void) | undefined;
+
+      mockListen.mockImplementation(async (eventName: string, handler: any) => {
+        if (eventName === 'relay-sidecar-status') {
+          sidecarCallback = handler;
+        }
+        return (() => {}) as () => void;
+      });
+
+      const { initRelayLogListener } = await import('./logListener');
+      const { relaySidecarStatus, relaySidecarError } = await import('./stores');
+      await initRelayLogListener();
+
+      sidecarCallback!({ payload: { status: 'restarting', error: 'terminated by signal SIGTERM' } });
+      expect(get(relaySidecarStatus)).toBe('restarting');
+      expect(get(relaySidecarError)).toBe('terminated by signal SIGTERM');
+
+      sidecarCallback!({ payload: { status: 'running' } });
+      expect(get(relaySidecarStatus)).toBe('running');
+      expect(get(relaySidecarError)).toBeNull();
+    });
   });
 });
 

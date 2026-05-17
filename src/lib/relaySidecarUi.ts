@@ -46,3 +46,21 @@ export async function restartRelay(invokeFn: (command: string) => Promise<unknow
   await invokeFn('restart_relay');
 }
 
+export function getSettingsStatusLabel(
+  sidecarStatus: RelaySidecarStatusType,
+  relayConnected: boolean,
+): string {
+  const isGreen = sidecarStatus === 'running' && relayConnected;
+  const isAmber = sidecarStatus === 'failed' && relayConnected;
+  const isRed = (sidecarStatus === 'failed' || sidecarStatus === 'stopped') && !relayConnected;
+  const isStarting = sidecarStatus === 'starting' || sidecarStatus === 'unknown';
+  const isRestarting = sidecarStatus === 'restarting';
+  if (isGreen) return 'Running';
+  if (isAmber) return 'Port Conflict';
+  if (isRestarting) return 'Restarting…';
+  if (sidecarStatus === 'stopped') return 'Stopped';
+  if (isRed) return 'Failed';
+  if (isStarting) return 'Starting...';
+  return 'Unknown';
+}
+

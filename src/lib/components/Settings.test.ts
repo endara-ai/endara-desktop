@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 
-import { canRetryRelay, restartRelay } from '$lib/relaySidecarUi';
+import { canRetryRelay, getSettingsStatusLabel, restartRelay } from '$lib/relaySidecarUi';
 
 // Mock the relay API surface so we can assert the read path doesn't touch
 // `getConfig` and that the write path still calls `reloadConfig`.
@@ -35,12 +35,47 @@ describe('Settings relay retry behavior', () => {
     expect(canRetryRelay('unknown')).toBe(false);
   });
 
+  it('does not show the retry button when the sidecar is restarting', () => {
+    expect(canRetryRelay('restarting')).toBe(false);
+  });
+
   it('invokes restart_relay when retry is triggered', async () => {
     const invokeFn = vi.fn().mockResolvedValue(undefined);
 
     await restartRelay(invokeFn);
 
     expect(invokeFn).toHaveBeenCalledWith('restart_relay');
+  });
+});
+
+describe('Settings status label', () => {
+  it('returns "Running" when sidecar is running and relay is connected', () => {
+    expect(getSettingsStatusLabel('running', true)).toBe('Running');
+  });
+
+  it('returns "Port Conflict" when sidecar failed but relay is connected', () => {
+    expect(getSettingsStatusLabel('failed', true)).toBe('Port Conflict');
+  });
+
+  it('returns "Restarting…" when sidecar is restarting (regardless of connected state)', () => {
+    expect(getSettingsStatusLabel('restarting', false)).toBe('Restarting…');
+    expect(getSettingsStatusLabel('restarting', true)).toBe('Restarting…');
+  });
+
+  it('returns "Stopped" when sidecar is stopped', () => {
+    expect(getSettingsStatusLabel('stopped', false)).toBe('Stopped');
+  });
+
+  it('returns "Failed" when sidecar failed and relay is not connected', () => {
+    expect(getSettingsStatusLabel('failed', false)).toBe('Failed');
+  });
+
+  it('returns "Starting..." when sidecar is starting', () => {
+    expect(getSettingsStatusLabel('starting', false)).toBe('Starting...');
+  });
+
+  it('returns "Starting..." when sidecar status is unknown', () => {
+    expect(getSettingsStatusLabel('unknown', false)).toBe('Starting...');
   });
 });
 

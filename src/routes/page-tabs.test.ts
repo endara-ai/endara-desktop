@@ -23,6 +23,19 @@ describe('+page relay tab logic', () => {
   it('switches to settings when the active tab is hidden by relay restrictions', () => {
     expect(getActiveTopLevelTab('servers', 'failed')).toBe('settings');
   });
+
+  it('shows all top-level tabs when the relay sidecar is restarting', () => {
+    expect(getVisibleTopLevelTabs('restarting').map((tab) => tab.id)).toEqual([
+      'servers',
+      'unified-catalog',
+      'relay-logs',
+      'settings',
+    ]);
+  });
+
+  it('keeps the active tab when the sidecar is restarting', () => {
+    expect(getActiveTopLevelTab('servers', 'restarting')).toBe('servers');
+  });
 });
 
 describe('shouldShowRelayStartupFailure', () => {
@@ -44,6 +57,10 @@ describe('shouldShowRelayStartupFailure', () => {
 
   it('returns false when sidecar is starting', () => {
     expect(shouldShowRelayStartupFailure('starting', false, false)).toBe(false);
+  });
+
+  it('returns false when sidecar is restarting', () => {
+    expect(shouldShowRelayStartupFailure('restarting', false, false)).toBe(false);
   });
 });
 
@@ -67,6 +84,10 @@ describe('shouldSkipEndpointPolling', () => {
   it('returns true when sidecar status is stopped', () => {
     expect(shouldSkipEndpointPolling('stopped')).toBe(true);
   });
+
+  it('returns false when sidecar status is restarting', () => {
+    expect(shouldSkipEndpointPolling('restarting')).toBe(false);
+  });
 });
 
 describe('relayTabsRestricted', () => {
@@ -84,5 +105,8 @@ describe('relayTabsRestricted', () => {
   });
   it('returns false when sidecar status is unknown', () => {
     expect(relayTabsRestricted('unknown')).toBe(false);
+  });
+  it('returns false when sidecar status is restarting', () => {
+    expect(relayTabsRestricted('restarting')).toBe(false);
   });
 });
