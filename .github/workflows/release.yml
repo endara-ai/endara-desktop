@@ -237,7 +237,7 @@ jobs:
           version="${tag#v}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-      - name: Download DMGs from release
+      - name: Download DMG from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -245,25 +245,19 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           mkdir -p dmgs
-          for arch in aarch64 x64; do
-            asset="Endara.Desktop_${VERSION}_${arch}.dmg"
-            echo "Downloading ${asset} from release ${TAG}..."
-            gh release download "${TAG}" \
-              --repo "${REPO}" \
-              --pattern "${asset}" \
-              --dir dmgs
-          done
-      - name: Compute SHA256 sums
+          asset="Endara.Desktop_${VERSION}_aarch64.dmg"
+          echo "Downloading ${asset} from release ${TAG}..."
+          gh release download "${TAG}" \
+            --repo "${REPO}" \
+            --pattern "${asset}" \
+            --dir dmgs
+      - name: Compute SHA256 sum
         id: sha
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           sha_arm64=$(shasum -a 256 "dmgs/Endara.Desktop_${VERSION}_aarch64.dmg" | awk '{print $1}')
-          sha_x64=$(shasum -a 256 "dmgs/Endara.Desktop_${VERSION}_x64.dmg" | awk '{print $1}')
-          {
-            echo "arm64=${sha_arm64}"
-            echo "x64=${sha_x64}"
-          } >> "$GITHUB_OUTPUT"
+          echo "arm64=${sha_arm64}" >> "$GITHUB_OUTPUT"
       - name: Checkout endara-desktop (for update-cask.py)
         uses: actions/checkout@v4
         with:
@@ -282,13 +276,11 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           SHA_ARM64: ${{ steps.sha.outputs.arm64 }}
-          SHA_X64: ${{ steps.sha.outputs.x64 }}
         run: |
           mkdir -p homebrew-tap/Casks
           python3 desktop/scripts/update-cask.py \
             --version "${VERSION}" \
             --sha256-arm64 "${SHA_ARM64}" \
-            --sha256-x64 "${SHA_X64}" \
             --cask-path homebrew-tap/Casks/endara.rb
       - name: Commit and push to homebrew-tap
         working-directory: homebrew-tap
