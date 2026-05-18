@@ -1,10 +1,8 @@
 <script lang="ts">
   import type { OAuthStatus, OAuthStatusValue } from '$lib/types';
   import { selectedEndpoint, oauthStatuses } from '$lib/stores';
-  import { getOAuthStatus, refreshOAuth, startOAuth } from '$lib/api';
+  import { getOAuthStatus, refreshOAuth } from '$lib/api';
   import { toast } from 'svelte-sonner';
-  import { openUrl } from '@tauri-apps/plugin-opener';
-  import { canReauthorize as canReauthorizeStatus, reauthorize } from '$lib/oauth/actions';
 
   let status = $state<OAuthStatus | null>(null);
   let loading = $state(true);
@@ -87,25 +85,7 @@
     actionInProgress = false;
   }
 
-  async function handleReauthorize() {
-    const name = $selectedEndpoint;
-    if (!name || actionInProgress) return;
-    actionInProgress = true;
-    try {
-      await reauthorize(name, {
-        startOAuth,
-        openUrl,
-        onSuccess: toast.success,
-        onError: toast.error,
-      });
-    } catch {
-      toast.error('Failed to start OAuth flow');
-    }
-    actionInProgress = false;
-  }
-
-  let canRefresh = $derived(status !== null && status.has_refresh_token && ['authenticated', 'auth_required'].includes(status.status));
-  let canReauthorize = $derived(status !== null && canReauthorizeStatus(status.status));
+  let canRefresh = $derived(status !== null && status.has_refresh_token && ['authenticated'].includes(status.status));
 </script>
 
 <div class="h-full overflow-y-auto p-4 space-y-4">
@@ -166,24 +146,15 @@
     </div>
 
     <!-- Actions -->
-    <div class="flex gap-2">
-      {#if canRefresh}
+    {#if canRefresh}
+      <div class="flex gap-2">
         <button
           class="btn-sec"
           onclick={handleRefresh}
           disabled={actionInProgress}
         >Refresh Now</button>
-      {/if}
-      {#if canReauthorize}
-        <button
-          class="btn-pri"
-          onclick={handleReauthorize}
-          disabled={actionInProgress}
-          title="Open the browser to sign in again"
-          aria-label="Re-authorize"
-        >Re-authorize</button>
-      {/if}
-    </div>
+      </div>
+    {/if}
   {/if}
 </div>
 

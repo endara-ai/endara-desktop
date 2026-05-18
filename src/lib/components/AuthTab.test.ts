@@ -21,6 +21,32 @@ function formatCountdown(seconds: number | null): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+// Pure mirror of the `canRefresh` derivation in AuthTab.svelte. Kept in sync
+// with the component so we can unit-test which OAuth statuses surface the
+// "Refresh Now" button. `auth_required` is intentionally excluded — once the
+// token is expired the user must re-authorize, not silently refresh.
+type OAuthStatusValue =
+  | 'authenticated'
+  | 'needs_login'
+  | 'refreshing'
+  | 'auth_required'
+  | 'disconnected'
+  | 'connection_failed';
+
+interface MinimalOAuthStatus {
+  status: OAuthStatusValue;
+  has_refresh_token: boolean;
+}
+
+function canRefresh(status: MinimalOAuthStatus | null): boolean {
+  return (
+    status !== null &&
+    status.has_refresh_token &&
+    (['authenticated'] as OAuthStatusValue[]).includes(status.status)
+  );
+}
+
+
 describe('formatTime', () => {
   it('returns "—" for null', () => {
     expect(formatTime(null)).toBe('—');
@@ -82,6 +108,35 @@ describe('formatCountdown', () => {
   it('formats 3661 seconds as "1h 1m"', () => {
     // 3661 seconds = 61 minutes 1 second → 1h 1m
     expect(formatCountdown(3661)).toBe('1h 1m');
+  });
+});
+
+describe('canRefresh', () => {
+  it('returns true when authenticated and a refresh token is present', () => {
+    expect(canRefresh({ status: 'authenticated', has_refresh_token: true })).toBe(true);
+  });
+
+  it('returns false when authenticated but no refresh token is present', () => {
+    expect(canRefresh({ status: 'authenticated', has_refresh_token: false })).toBe(false);
+  });
+
+  // Regression guard: prior to moving Re-authorize into the error bar,
+  // `auth_required` qualified for Refresh Now. After the change, an expired
+  // token should hide Refresh Now so the user re-authorizes instead.
+  it('returns false for auth_required (regression guard)', () => {
+    expect(canRefresh({ status: 'auth_required', has_refresh_token: true })).toBe(false);
+  });
+
+  it('returns false for needs_login', () => {
+    expect(canRefresh({ status: 'needs_login', has_refresh_token: true })).toBe(false);
+  });
+
+  it('returns false for disconnected', () => {
+    expect(canRefresh({ status: 'disconnected', has_refresh_token: true })).toBe(false);
+  });
+
+  it('returns false when status is null', () => {
+    expect(canRefresh(null)).toBe(false);
   });
 });
 

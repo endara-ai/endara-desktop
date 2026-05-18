@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { selectedEndpointData, activeTab, selectedEndpoint, endpoints } from '$lib/stores';
+  import { selectedEndpointData, activeTab, selectedEndpoint, endpoints, oauthStatuses } from '$lib/stores';
   import { requestNavigation } from '$lib/stores/unsavedChangesGuard';
-  import { restartEndpoint, refreshEndpoint, removeEndpoint, getEndpoints, disableEndpoint, enableEndpoint } from '$lib/api';
+  import { restartEndpoint, refreshEndpoint, removeEndpoint, getEndpoints, disableEndpoint, enableEndpoint, startOAuth } from '$lib/api';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { reauthorize } from '$lib/oauth/actions';
   import { toast } from 'svelte-sonner';
   import ToolsTab from './ToolsTab.svelte';
   import LogsTab from './LogsTab.svelte';
@@ -11,11 +13,26 @@
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
   import AuthTab from './AuthTab.svelte';
-  import { shouldShowRestartButton, shouldShowRefreshButton, visibleTabs } from './detail-panel-helpers';
+  import {
+    shouldShowRestartButton,
+    shouldShowRefreshButton,
+    shouldShowReauthorizeButton,
+    visibleTabs,
+  } from './detail-panel-helpers';
 
   let showRestartConfirm = $state(false);
   let showDeleteConfirm = $state(false);
   let toggling = $state(false);
+  let reauthInProgress = $state(false);
+
+  let oauthStatus = $derived(
+    $selectedEndpointData ? $oauthStatuses.get($selectedEndpointData.name)?.status ?? null : null
+  );
+  let showReauthorize = $derived(
+    $selectedEndpointData
+      ? shouldShowReauthorizeButton($selectedEndpointData.transport, oauthStatus)
+      : false
+  );
 
   let tabs = $derived(
     $selectedEndpointData
@@ -102,6 +119,23 @@
     }
     showDeleteConfirm = false;
   }
+
+  async function handleReauthorize() {
+    const name = $selectedEndpoint;
+    if (!name || reauthInProgress) return;
+    reauthInProgress = true;
+    try {
+      await reauthorize(name, {
+        startOAuth,
+        openUrl,
+        onSuccess: toast.success,
+        onError: toast.error,
+      });
+    } catch {
+      toast.error('Failed to start OAuth flow');
+    }
+    reauthInProgress = false;
+  }
 </script>
 
 <div class="flex-1 h-full flex flex-col bg-(--surface) min-w-0">
@@ -147,14 +181,28 @@
       </div>
     </div>
 
-    {#if ep.error}
+    {#if ep.error || showReauthorize}
       <div class="px-5 py-3 border-b" style="background: color-mix(in oklab, var(--offline) 12%, transparent); border-bottom-color: color-mix(in oklab, var(--offline) 30%, transparent);">
         <div class="flex items-start gap-2">
           <span class="flex-shrink-0 text-(--offline)">⚠</span>
-          <div>
-            <div class="text-sm font-medium text-(--offline)">Initialization Error</div>
-            <div class="text-xs text-(--offline) mt-0.5 whitespace-pre-wrap break-all max-h-[5lh] overflow-y-auto opacity-90">{ep.error}</div>
+          <div class="min-w-0">
+            {#if ep.error}
+              <div class="text-sm font-medium text-(--offline)">Initialization Error</div>
+              <div class="text-xs text-(--offline) mt-0.5 whitespace-pre-wrap break-all max-h-[5lh] overflow-y-auto opacity-90">{ep.error}</div>
+            {:else}
+              <div class="text-sm font-medium text-(--offline)">Authorization required</div>
+              <div class="text-xs text-(--offline) mt-0.5 opacity-90">Sign in again to reconnect this server.</div>
+            {/if}
           </div>
+          {#if showReauthorize}
+            <button
+              class="btn-pri btn-sm ml-auto flex-shrink-0 self-start"
+              onclick={handleReauthorize}
+              disabled={reauthInProgress}
+              title="Open the browser to sign in again"
+              aria-label="Re-authorize"
+            >Re-authorize</button>
+          {/if}
         </div>
       </div>
     {/if}

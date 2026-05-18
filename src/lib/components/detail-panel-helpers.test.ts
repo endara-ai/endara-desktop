@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import detailPanelSource from './DetailPanel.svelte?raw';
+import type { OAuthStatusValue } from '$lib/types';
 import {
   shouldShowRestartButton,
   shouldShowRefreshButton,
+  shouldShowReauthorizeButton,
   visibleTabs,
   type EndpointTransport,
 } from './detail-panel-helpers';
@@ -225,5 +227,53 @@ describe('DetailPanel endpoint toggle (a11y)', () => {
   it('binds aria-checked to the endpoint enabled state (!ep.disabled)', () => {
     expect(toggleBlock, 'expected to find the endpoint toggle button').not.toBeNull();
     expect(toggleBlock![0]).toMatch(/aria-checked=\{!ep\.disabled\}/);
+  });
+});
+
+describe('shouldShowReauthorizeButton', () => {
+  const reauthStatuses: OAuthStatusValue[] = ['disconnected', 'auth_required', 'needs_login'];
+  const nonReauthStatuses: OAuthStatusValue[] = ['authenticated', 'refreshing', 'connection_failed'];
+
+  for (const s of reauthStatuses) {
+    it(`returns true for oauth + "${s}"`, () => {
+      expect(shouldShowReauthorizeButton('oauth', s)).toBe(true);
+    });
+  }
+  for (const s of nonReauthStatuses) {
+    it(`returns false for oauth + "${s}"`, () => {
+      expect(shouldShowReauthorizeButton('oauth', s)).toBe(false);
+    });
+  }
+  it('returns false when oauthStatus is null', () => {
+    expect(shouldShowReauthorizeButton('oauth', null)).toBe(false);
+  });
+  it('returns false when oauthStatus is undefined', () => {
+    expect(shouldShowReauthorizeButton('oauth', undefined)).toBe(false);
+  });
+  for (const t of ['stdio', 'sse', 'http'] as const) {
+    it(`returns false for non-oauth transport "${t}" even when auth_required`, () => {
+      expect(shouldShowReauthorizeButton(t, 'auth_required')).toBe(false);
+    });
+  }
+});
+
+// ── Re-authorize button source-inspection (mirrors the toggle a11y pattern) ──
+//
+// The Re-authorize button lives inside the red error bar in DetailPanel.svelte
+// and must (a) be rendered only when `showReauthorize` is true and (b) be
+// right-aligned via `ml-auto` so it sits opposite the message column.
+describe('DetailPanel re-authorize button', () => {
+  const reauthBlock = detailPanelSource.match(
+    /\{#if showReauthorize\}[\s\S]*?<button[^>]*aria-label="Re-authorize"[\s\S]*?<\/button>[\s\S]*?\{\/if\}/,
+  );
+
+  it('renders the Re-authorize button under a showReauthorize guard', () => {
+    expect(reauthBlock, 'expected to find the Re-authorize {#if showReauthorize} block').not.toBeNull();
+    expect(reauthBlock![0]).toContain('>Re-authorize<');
+  });
+
+  it('right-aligns the Re-authorize button using ml-auto', () => {
+    expect(reauthBlock, 'expected to find the Re-authorize {#if showReauthorize} block').not.toBeNull();
+    expect(reauthBlock![0]).toContain('ml-auto');
   });
 });

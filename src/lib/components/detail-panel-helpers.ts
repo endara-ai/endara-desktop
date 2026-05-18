@@ -1,6 +1,21 @@
-import type { Endpoint } from '$lib/types';
+import type { Endpoint, OAuthStatusValue } from '$lib/types';
 
 export type EndpointTransport = Endpoint['transport'];
+
+const REAUTH_NEEDED_STATUSES: ReadonlyArray<OAuthStatusValue> = [
+  'disconnected',
+  'auth_required',
+  'needs_login',
+];
+
+export function shouldShowReauthorizeButton(
+  transport: EndpointTransport,
+  oauthStatus: OAuthStatusValue | null | undefined,
+): boolean {
+  if (transport !== 'oauth') return false;
+  if (!oauthStatus) return false;
+  return REAUTH_NEEDED_STATUSES.includes(oauthStatus);
+}
 
 export type DetailTabId = 'tools' | 'logs' | 'config' | 'auth';
 
