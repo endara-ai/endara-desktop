@@ -28,6 +28,11 @@ export interface ParsedLogLine {
 const SPAN_RE = /(\w+)\{([^}]+)\}/g;
 const FIELD_RE = /(\w+)=([^\s,}]+|"[^"]*")/g;
 const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?)\s+/;
+// Whole-word level token that the relay emits right after the timestamp. The
+// regex is case-sensitive because the relay always emits these upper-case;
+// matching lower-case "error" would also swallow English words in the message
+// body.
+const LEVEL_RE = /^(ERROR|WARN|INFO|DEBUG|TRACE)\s+/;
 
 export function extractTimestamp(message: string): { timestamp: Date; rest: string } {
   const match = message.match(TIMESTAMP_RE);
@@ -60,7 +65,19 @@ export function parseLogLine(
   message: string,
   options?: ParseLogLineOptions,
 ): ParsedLogLine {
-  const { timestamp, rest } = extractTimestamp(message);
+  const { timestamp, rest: afterTimestamp } = extractTimestamp(message);
+
+  // Strip the level token (ERROR/WARN/INFO/DEBUG/TRACE) that the relay emits
+  // right after the timestamp. The extracted token is the authoritative pill
+  // level — the Rust sidecar may have defaulted to "info" when the line
+  // arrived on stdout, so the in-text token wins when present.
+  let rest = afterTimestamp;
+  let extractedLevel: string | undefined;
+  const lvlMatch = rest.match(LEVEL_RE);
+  if (lvlMatch) {
+    extractedLevel = lvlMatch[1].toLowerCase();
+    rest = rest.slice(lvlMatch[0].length);
+  }
 
   const spans: Record<string, Record<string, string>> = {};
   const fields: Record<string, string> = {};
@@ -108,7 +125,7 @@ export function parseLogLine(
 
   return {
     timestamp,
-    level: normalizeLevel(level),
+    level: normalizeLevel(extractedLevel ?? level),
     endpoint,
     transport: spans.endpoint?.transport,
     serverType: spans.endpoint?.server_type,
