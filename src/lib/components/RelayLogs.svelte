@@ -5,6 +5,7 @@
   import { isAtBottom } from '$lib/scrollUtils';
   import { endpointStripeStyle } from '$lib/endpointColor';
   import LogFilterBar from './LogFilterBar.svelte';
+  import ToolCallRow from './ToolCallRow.svelte';
   import { toggleEndpointFilter } from './relay-logs-helpers';
 
   type Props = {
@@ -23,6 +24,7 @@
   let activeLevels = $state<Set<LogLevel>>(new Set(['error', 'warn', 'info', 'debug', 'trace']));
   let selectedEndpoints = $state<Set<string>>(new Set());
   let searchText = $state('');
+  let toolCallsOnly = $state(false);
 
   // Hover tooltip clock — ticks every second only while this tab is visible
   // so we don't keep firing $effect updates in the background (spec §2.6).
@@ -38,6 +40,7 @@
     const hasEndpointFilter = selectedEndpoints.size > 0;
     return $relayLogLines.filter((line) => {
       if (!activeLevels.has(line.level)) return false;
+      if (toolCallsOnly && !line.isToolCall) return false;
       if (hasEndpointFilter) {
         if (!line.endpoint || !selectedEndpoints.has(line.endpoint)) return false;
       }
@@ -183,6 +186,7 @@
     bind:activeLevels
     bind:selectedEndpoints
     bind:searchText
+    bind:toolCallsOnly
     onclear={clearLogs}
   />
   <div class="px-4 py-1 border-b border-(--border) bg-(--hd-bg) flex items-center justify-end">
@@ -228,11 +232,15 @@
           {:else}
             <span class="truncate text-(--fg3)" title="Relay-level event">──</span>
           {/if}
-          <span class="whitespace-pre-wrap break-all">
-            {#each segs as seg}
-              {#if seg.match}<mark class="bg-(--accent)/20 text-(--fg1)">{seg.text}</mark>{:else}{seg.text}{/if}
-            {/each}
-          </span>
+          {#if line.isToolCall}
+            <ToolCallRow {line} />
+          {:else}
+            <span class="whitespace-pre-wrap break-all">
+              {#each segs as seg}
+                {#if seg.match}<mark class="bg-(--accent)/20 text-(--fg1)">{seg.text}</mark>{:else}{seg.text}{/if}
+              {/each}
+            </span>
+          {/if}
         </div>
       {/each}
     {/if}

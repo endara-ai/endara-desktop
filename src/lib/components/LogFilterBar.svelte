@@ -11,6 +11,7 @@
     activeLevels: Set<LogLevel>;
     selectedEndpoints: Set<string>;
     searchText: string;
+    toolCallsOnly: boolean;
     onclear: () => void;
   };
 
@@ -20,6 +21,7 @@
     activeLevels = $bindable(),
     selectedEndpoints = $bindable(),
     searchText = $bindable(),
+    toolCallsOnly = $bindable(),
     onclear,
   }: Props = $props();
 
@@ -50,6 +52,12 @@
     const set = new Set<string>();
     for (const line of lines) if (line.endpoint) set.add(line.endpoint);
     return Array.from(set).sort();
+  });
+
+  const toolCallCount = $derived.by(() => {
+    let n = 0;
+    for (const line of lines) if (line.isToolCall) n++;
+    return n;
   });
 
   function toggleLevel(level: LogLevel) {
@@ -94,6 +102,18 @@
         {level.toUpperCase()} ({levelCounts[level]})
       </button>
     {/each}
+
+    <button
+      type="button"
+      class="pill border transition-colors {toolCallsOnly
+        ? 'border-(--accent) bg-(--accent)/10 text-(--accent)'
+        : 'border-(--border) text-(--fg3) bg-transparent'}"
+      aria-pressed={toolCallsOnly}
+      title="Show only tool-call events"
+      onclick={() => (toolCallsOnly = !toolCallsOnly)}
+    >
+      ⚡ Tool calls only ({toolCallCount})
+    </button>
 
     <div class="ml-auto relative">
       <button

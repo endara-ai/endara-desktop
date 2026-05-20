@@ -11,13 +11,16 @@ interface LogFilterState {
   activeLevels: Set<LogLevel>;
   searchText: string;
   selectedEndpoints: Set<string>; // empty = "All"
+  toolCallsOnly?: boolean;
 }
 
 function applyLogFilters(lines: ParsedLogLine[], state: LogFilterState): ParsedLogLine[] {
   const q = state.searchText.trim().toLowerCase();
   const hasEndpointFilter = state.selectedEndpoints.size > 0;
+  const toolCallsOnly = state.toolCallsOnly === true;
   return lines.filter((line) => {
     if (!state.activeLevels.has(line.level)) return false;
+    if (toolCallsOnly && !line.isToolCall) return false;
     if (hasEndpointFilter) {
       if (!line.endpoint || !state.selectedEndpoints.has(line.endpoint)) return false;
     }
@@ -147,5 +150,49 @@ describe('applyLogFilters', () => {
       selectedEndpoints: new Set(['github']),
     });
     expect(noMatch).toHaveLength(0);
+  });
+
+  // #16 — "Tool calls only" filter shows only isToolCall === true lines, and
+  // AND-combines with the existing level / search / endpoint filters.
+  it('"Tool calls only" toggle restricts to isToolCall lines and AND-combines', () => {
+    const lines = makeSampleLines();
+
+    // toolCallsOnly = false (default) keeps every line that the level filter allows.
+    const allWhenOff = applyLogFilters(lines, {
+      activeLevels: ALL_LEVELS,
+      searchText: '',
+      selectedEndpoints: new Set(),
+      toolCallsOnly: false,
+    });
+    expect(allWhenOff).toHaveLength(lines.length);
+
+    // toolCallsOnly = true keeps only the single Tool-call completed line.
+    const onlyToolCalls = applyLogFilters(lines, {
+      activeLevels: ALL_LEVELS,
+      searchText: '',
+      selectedEndpoints: new Set(),
+      toolCallsOnly: true,
+    });
+    expect(onlyToolCalls).toHaveLength(1);
+    expect(onlyToolCalls[0].isToolCall).toBe(true);
+    expect(onlyToolCalls[0].tool).toBe('get_file_contents');
+
+    // AND-combine with level/endpoint: turning off INFO drops the only tool call.
+    const noInfoToolCalls = applyLogFilters(lines, {
+      activeLevels: new Set<LogLevel>(['error', 'warn', 'debug', 'trace']),
+      searchText: '',
+      selectedEndpoints: new Set(),
+      toolCallsOnly: true,
+    });
+    expect(noInfoToolCalls).toHaveLength(0);
+
+    // AND-combine with endpoint: restricting to slack drops the github tool call.
+    const slackToolCalls = applyLogFilters(lines, {
+      activeLevels: ALL_LEVELS,
+      searchText: '',
+      selectedEndpoints: new Set(['slack']),
+      toolCallsOnly: true,
+    });
+    expect(slackToolCalls).toHaveLength(0);
   });
 });
