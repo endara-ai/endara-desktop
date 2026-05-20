@@ -3,11 +3,21 @@
   import { relayLogLines, activeTopLevelTab } from '$lib/stores';
   import type { LogLevel, ParsedLogLine } from '$lib/logParser';
   import { isAtBottom } from '$lib/scrollUtils';
+  import { endpointStripeStyle } from '$lib/endpointColor';
   import LogFilterBar from './LogFilterBar.svelte';
+  import { toggleEndpointFilter } from './relay-logs-helpers';
+
+  type Props = {
+    ongotoendpoint?: (name: string) => void;
+  };
+  let { ongotoendpoint }: Props = $props();
 
   let scrollContainer: HTMLDivElement | undefined = $state();
   let autoScroll = $state(true);
   let isTabSwitching = $state(false);
+
+  // Right-click "Go to endpoint" context menu state. `null` = no menu open.
+  let contextMenu = $state<{ x: number; y: number; endpoint: string } | null>(null);
 
   // Filter state — local, not persisted (engineering spec §2.2).
   let activeLevels = $state<Set<LogLevel>>(new Set(['error', 'warn', 'info', 'debug', 'trace']));
@@ -131,6 +141,39 @@
   });
 
   const trimmedSearch = $derived(searchText.trim());
+
+  function onEndpointClick(name: string) {
+    selectedEndpoints = toggleEndpointFilter(selectedEndpoints, name);
+  }
+
+  function onEndpointContextMenu(event: MouseEvent, name: string) {
+    event.preventDefault();
+    contextMenu = { x: event.clientX, y: event.clientY, endpoint: name };
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
+  }
+
+  function onGoToEndpoint(name: string) {
+    closeContextMenu();
+    ongotoendpoint?.(name);
+  }
+
+  // Close the context menu on any outside click or Escape.
+  $effect(() => {
+    if (!contextMenu) return;
+    const onDown = () => closeContextMenu();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeContextMenu();
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  });
 </script>
 
 <div class="h-full flex flex-col">
@@ -163,15 +206,28 @@
     {:else}
       {#each filteredLines as line (line)}
         {@const segs = highlightSegments(line.message || line.raw, trimmedSearch)}
-        <div class="grid grid-cols-[auto_4rem_8rem_1fr] gap-3 px-3 py-0.5 hover:bg-(--surface-hover) items-baseline">
+        {@const isActive = !!line.endpoint && selectedEndpoints.size === 1 && selectedEndpoints.has(line.endpoint)}
+        <div
+          class="grid grid-cols-[auto_4rem_8rem_1fr] gap-3 pl-2 pr-3 py-0.5 hover:bg-(--surface-hover) items-baseline"
+          style={endpointStripeStyle(line.endpoint)}
+        >
           <span
             class="text-(--fg3) select-none tabular-nums"
             title={`${line.timestamp.toISOString()} · ${formatRelative(line.timestamp, now)}`}
           >{formatHMS(line.timestamp)}</span>
           <span class="pill {levelPillClass(line.level)}">{line.level.toUpperCase()}</span>
-          <span class="truncate text-(--fg2)" title={line.endpoint ?? ''}>
-            {line.endpoint ?? '──'}
-          </span>
+          {#if line.endpoint}
+            <button
+              type="button"
+              class="truncate text-left text-(--fg2) hover:text-(--accent) hover:underline cursor-pointer {isActive ? 'text-(--accent) font-medium' : ''}"
+              title={`${line.endpoint} — click to filter, right-click for actions`}
+              aria-pressed={isActive}
+              onclick={() => onEndpointClick(line.endpoint!)}
+              oncontextmenu={(e) => onEndpointContextMenu(e, line.endpoint!)}
+            >{line.endpoint}</button>
+          {:else}
+            <span class="truncate text-(--fg3)" title="Relay-level event">──</span>
+          {/if}
           <span class="whitespace-pre-wrap break-all">
             {#each segs as seg}
               {#if seg.match}<mark class="bg-(--accent)/20 text-(--fg1)">{seg.text}</mark>{:else}{seg.text}{/if}
@@ -181,4 +237,24 @@
       {/each}
     {/if}
   </div>
+
+  {#if contextMenu}
+    <ul
+      role="menu"
+      class="fixed z-20 min-w-[10rem] rounded-md border border-(--border) bg-(--surface) shadow-lg text-sm py-1"
+      style:left="{contextMenu.x}px"
+      style:top="{contextMenu.y}px"
+    >
+      <li role="none">
+        <button
+          type="button"
+          role="menuitem"
+          class="w-full text-left px-3 py-1.5 hover:bg-(--surface-hover)"
+          onclick={() => onGoToEndpoint(contextMenu!.endpoint)}
+        >
+          Go to endpoint
+        </button>
+      </li>
+    </ul>
+  {/if}
 </div>

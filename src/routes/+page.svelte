@@ -17,6 +17,7 @@
   } from '$lib/stores/unsavedChangesGuard';
   import { getEndpoints, getOAuthStatus } from '$lib/api';
   import { initRelayLogListener } from '$lib/logListener';
+  import { applyGoToEndpoint } from '$lib/components/relay-logs-helpers';
   import { getActiveTopLevelTab, getVisibleTopLevelTabs, shouldShowRelayStartupFailure, shouldSkipEndpointPolling } from '$lib/relaySidecarUi';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
@@ -159,6 +160,10 @@
     });
   }
 
+  function handleGoToEndpoint(name: string) {
+    requestNavigation(() => applyGoToEndpoint(name));
+  }
+
   async function handleRetryRelay() {
     if (retryingRelay) return;
 
@@ -288,7 +293,7 @@
         <UnifiedCatalog />
       </div>
       <div class="h-full" style:display={$activeTopLevelTab === 'relay-logs' ? 'block' : 'none'}>
-        <RelayLogs />
+        <RelayLogs ongotoendpoint={handleGoToEndpoint} />
       </div>
       <div class="h-full" style:display={$activeTopLevelTab === 'settings' ? 'block' : 'none'}>
         <Settings />
