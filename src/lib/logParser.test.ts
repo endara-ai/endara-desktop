@@ -1,0 +1,127 @@
+import { describe, it, expect } from 'vitest';
+import { parseLogLine, extractTimestamp } from '$lib/logParser';
+
+describe('parseLogLine', () => {
+  it('extracts endpoint name from endpoint{endpoint=github} span', () => {
+    const parsed = parseLogLine('info', 'endpoint{endpoint=github}: Initialize handshake complete');
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.message).toBe('Initialize handshake complete');
+    expect(parsed.level).toBe('info');
+  });
+
+  it('extracts multiple span fields (endpoint, transport, server_type)', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint=github transport=stdio server_type=github}: Initialize handshake complete'
+    );
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.transport).toBe('stdio');
+    expect(parsed.serverType).toBe('github');
+    expect(parsed.message).toBe('Initialize handshake complete');
+  });
+
+  it('extracts inline fields (tool, status, duration_ms) and request span', () => {
+    const parsed = parseLogLine(
+      'info',
+      'request{method=tools/call id=42} endpoint{endpoint=github}: Tool call completed tool=get_file_contents status=ok duration_ms=312'
+    );
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.method).toBe('tools/call');
+    expect(parsed.requestId).toBe('42');
+    expect(parsed.tool).toBe('get_file_contents');
+    expect(parsed.status).toBe('ok');
+    expect(parsed.durationMs).toBe(312);
+    expect(parsed.message).toBe('Tool call completed');
+  });
+
+  it('handles lines with no span context (relay-level events)', () => {
+    const parsed = parseLogLine('info', 'Relay listening on 127.0.0.1:47107');
+    expect(parsed.endpoint).toBeUndefined();
+    expect(parsed.transport).toBeUndefined();
+    expect(parsed.method).toBeUndefined();
+    expect(parsed.message).toBe('Relay listening on 127.0.0.1:47107');
+    expect(parsed.raw).toBe('Relay listening on 127.0.0.1:47107');
+  });
+
+  it('extracts ISO timestamp from message prefix', () => {
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-20T10:32:05.123Z endpoint{endpoint=github}: Initialize handshake complete'
+    );
+    expect(parsed.timestamp.toISOString()).toBe('2026-05-20T10:32:05.123Z');
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.message).toBe('Initialize handshake complete');
+  });
+
+  it('falls back to client-side timestamp when no timestamp in message', () => {
+    const before = Date.now();
+    const parsed = parseLogLine('info', 'endpoint{endpoint=github}: Initialize handshake complete');
+    const after = Date.now();
+    const t = parsed.timestamp.getTime();
+    expect(t).toBeGreaterThanOrEqual(before);
+    expect(t).toBeLessThanOrEqual(after);
+  });
+
+  it('normalizes unknown levels to info and lowercases known ones', () => {
+    expect(parseLogLine('ERROR', 'boom').level).toBe('error');
+    expect(parseLogLine('Warn', 'careful').level).toBe('warn');
+    expect(parseLogLine('TRACE', 'noisy').level).toBe('trace');
+    expect(parseLogLine('whatever', 'fallback').level).toBe('info');
+  });
+
+  describe('isToolCall detection', () => {
+    it('flags completed tool calls when tool field is present', () => {
+      const parsed = parseLogLine(
+        'info',
+        'endpoint{endpoint=github}: Tool call completed tool=get_file_contents status=ok duration_ms=312'
+      );
+      expect(parsed.isToolCall).toBe(true);
+      expect(parsed.tool).toBe('get_file_contents');
+    });
+
+    it('flags failed tool calls when tool field is present', () => {
+      const parsed = parseLogLine(
+        'warn',
+        'endpoint{endpoint=slack}: Tool call failed tool=send_message status=error duration_ms=1204'
+      );
+      expect(parsed.isToolCall).toBe(true);
+      expect(parsed.tool).toBe('send_message');
+      expect(parsed.status).toBe('error');
+      expect(parsed.durationMs).toBe(1204);
+    });
+
+    it('flags rows that carry status + duration_ms even without "Tool call" phrasing', () => {
+      const parsed = parseLogLine(
+        'info',
+        'endpoint{endpoint=github}: handled status=ok duration_ms=42'
+      );
+      expect(parsed.isToolCall).toBe(true);
+      expect(parsed.status).toBe('ok');
+      expect(parsed.durationMs).toBe(42);
+    });
+
+    it('does not flag plain informational lines as tool calls', () => {
+      const parsed = parseLogLine('info', 'endpoint{endpoint=github}: Initialize handshake complete');
+      expect(parsed.isToolCall).toBe(false);
+    });
+  });
+});
+
+describe('extractTimestamp', () => {
+  it('parses an ISO timestamp prefix and returns the rest of the message', () => {
+    const { timestamp, rest } = extractTimestamp(
+      '2026-05-20T10:32:05.123Z endpoint{endpoint=github}: hello'
+    );
+    expect(timestamp.toISOString()).toBe('2026-05-20T10:32:05.123Z');
+    expect(rest).toBe('endpoint{endpoint=github}: hello');
+  });
+
+  it('falls back to the current time when no timestamp prefix is present', () => {
+    const before = Date.now();
+    const { timestamp, rest } = extractTimestamp('endpoint{endpoint=github}: hello');
+    const after = Date.now();
+    expect(timestamp.getTime()).toBeGreaterThanOrEqual(before);
+    expect(timestamp.getTime()).toBeLessThanOrEqual(after);
+    expect(rest).toBe('endpoint{endpoint=github}: hello');
+  });
+});
