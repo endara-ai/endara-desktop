@@ -3299,3 +3299,71 @@ mod js_execution_mode_tests {
         assert_eq!(args[0].as_str(), Some("hi"));
     }
 }
+
+#[cfg(test)]
+mod parse_endpoint_from_span_tests {
+    //! Coverage for [`parse_endpoint_from_span`] — the helper that lifts the
+    //! endpoint name out of the relay's compact-format tracing span so each
+    //! `relay-log` Tauri event carries an authoritative `endpoint` field.
+    //!
+    //! Corresponds to engineering spec §5 test rows #18 (endpoint present in
+    //! span) and #19 (relay-level event with no span yields `None`).
+
+    use super::*;
+
+    #[test]
+    fn endpoint_present_in_span_returns_some() {
+        // Spec §5 test #18 — typical tool-call event with span context.
+        let line = "2026-05-20T10:00:00.000Z  INFO endpoint{endpoint=github transport=stdio}: Tool call completed";
+        assert_eq!(
+            parse_endpoint_from_span(line),
+            Some("github".to_string()),
+            "endpoint name should be extracted from endpoint{{endpoint=NAME ...}} span"
+        );
+    }
+
+    #[test]
+    fn no_span_returns_none() {
+        // Spec §5 test #19 — relay-level event with no endpoint span.
+        let line = "2026-05-20T10:00:00.000Z  INFO Relay listening on 127.0.0.1:47107";
+        assert_eq!(
+            parse_endpoint_from_span(line),
+            None,
+            "lines without an endpoint{{...}} span must yield None"
+        );
+    }
+
+    #[test]
+    fn nested_request_and_endpoint_spans_still_extract_endpoint() {
+        // Compact format with multiple span scopes (request{...} endpoint{...}).
+        let line = "2026-05-20T10:00:00.000Z  INFO request{method=tools/call id=42} endpoint{endpoint=gmail transport=stdio}: handled";
+        assert_eq!(parse_endpoint_from_span(line), Some("gmail".to_string()),);
+    }
+
+    #[test]
+    fn quoted_endpoint_name_is_unquoted() {
+        // The relay does not quote endpoint names today, but if it ever did
+        // (e.g. names with spaces), the leading/trailing `"` should be trimmed
+        // to keep the parsed value usable as a key.
+        let line = "endpoint{endpoint=\"slack-prod\" transport=http}: connected";
+        assert_eq!(
+            parse_endpoint_from_span(line),
+            Some("slack-prod".to_string()),
+        );
+    }
+
+    #[test]
+    fn empty_endpoint_field_returns_none() {
+        // Defensive: a malformed `endpoint{endpoint=}` should not produce an
+        // empty-string endpoint that the front-end might display as a row.
+        let line = "endpoint{endpoint= transport=stdio}: weird";
+        assert_eq!(parse_endpoint_from_span(line), None);
+    }
+
+    #[test]
+    fn endpoint_at_end_of_span_closing_brace() {
+        // Endpoint field with no trailing space — terminator is the `}`.
+        let line = "endpoint{endpoint=postgres}: ready";
+        assert_eq!(parse_endpoint_from_span(line), Some("postgres".to_string()),);
+    }
+}
