@@ -161,3 +161,73 @@ describe('extractTimestamp', () => {
     expect(rest).toBe('endpoint{endpoint=github}: hello');
   });
 });
+
+describe('parseLogLine — in-text level extraction (hotfix)', () => {
+  it('extracts DEBUG level from the line and strips it from the message', () => {
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-20T17:54:47.123Z DEBUG endara_relay::registry: Registering adapter',
+    );
+    expect(parsed.level).toBe('debug');
+    // The "DEBUG" token is stripped; the module path that follows is left
+    // intact (parsing module paths is out of scope for this hotfix).
+    expect(parsed.message.startsWith('DEBUG')).toBe(false);
+    expect(parsed.message).toBe('endara_relay::registry: Registering adapter');
+  });
+
+  it('extracts INFO level even when the sidecar passed a different default', () => {
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-20T17:54:47.123Z INFO endpoint{endpoint=github transport=stdio}: Initialize handshake complete',
+    );
+    expect(parsed.level).toBe('info');
+    expect(parsed.message.startsWith('INFO')).toBe(false);
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.message).toBe('Initialize handshake complete');
+  });
+
+  it('extracts WARN level and strips it from the message', () => {
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-20T17:54:47.123Z WARN endpoint{endpoint=slack}: Connection lost, reconnecting',
+    );
+    expect(parsed.level).toBe('warn');
+    expect(parsed.message.startsWith('WARN')).toBe(false);
+    expect(parsed.message).toBe('Connection lost, reconnecting');
+  });
+
+  it('extracts ERROR level and strips it from the message', () => {
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-20T17:54:47.123Z ERROR endpoint{endpoint=postgres}: MCP server exited',
+    );
+    expect(parsed.level).toBe('error');
+    expect(parsed.message.startsWith('ERROR')).toBe(false);
+    expect(parsed.message).toBe('MCP server exited');
+  });
+
+  it('extracts TRACE level and strips it from the message', () => {
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-20T17:54:47.123Z TRACE endara_relay::core: very noisy',
+    );
+    expect(parsed.level).toBe('trace');
+    expect(parsed.message.startsWith('TRACE')).toBe(false);
+  });
+
+  it('preserves the passed-in level when no level token is present in the message', () => {
+    const parsed = parseLogLine('warn', 'raw text from an adapter');
+    expect(parsed.level).toBe('warn');
+    expect(parsed.message).toBe('raw text from an adapter');
+  });
+
+  it('does not strip lower-case level words from the message body', () => {
+    // The regex is case-sensitive and anchored — only the upper-case token
+    // immediately after the timestamp counts. An English "error" later in
+    // the line must stay in the message text.
+    const parsed = parseLogLine('info', '2026-05-20T17:54:47.123Z some error occurred');
+    // No upper-case level token → fall back to the passed-in arg.
+    expect(parsed.level).toBe('info');
+    expect(parsed.message).toBe('some error occurred');
+  });
+});
