@@ -45,7 +45,21 @@ function normalizeLevel(level: string): LogLevel {
   return 'info';
 }
 
-export function parseLogLine(level: string, message: string): ParsedLogLine {
+export interface ParseLogLineOptions {
+  /**
+   * Authoritative endpoint name supplied by the Rust sidecar (Slice D). When
+   * non-null/undefined, overrides whatever the regex extracts from the span
+   * context — the Rust side reads the same tracing span and knows the
+   * canonical value even when the formatted message is ambiguous.
+   */
+  endpointOverride?: string | null;
+}
+
+export function parseLogLine(
+  level: string,
+  message: string,
+  options?: ParseLogLineOptions,
+): ParsedLogLine {
   const { timestamp, rest } = extractTimestamp(message);
 
   const spans: Record<string, Record<string, string>> = {};
@@ -86,10 +100,16 @@ export function parseLogLine(level: string, message: string): ParsedLogLine {
         cleanedMessage.includes('Tool call failed'))) ||
     (status !== undefined && durationMs !== undefined && !Number.isNaN(durationMs));
 
+  const parsedEndpoint = spans.endpoint?.endpoint;
+  const endpoint =
+    options?.endpointOverride !== undefined && options.endpointOverride !== null
+      ? options.endpointOverride
+      : parsedEndpoint;
+
   return {
     timestamp,
     level: normalizeLevel(level),
-    endpoint: spans.endpoint?.endpoint,
+    endpoint,
     transport: spans.endpoint?.transport,
     serverType: spans.endpoint?.server_type,
     method: spans.request?.method,

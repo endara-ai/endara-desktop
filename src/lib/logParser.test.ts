@@ -107,6 +107,42 @@ describe('parseLogLine', () => {
   });
 });
 
+describe('parseLogLine — endpointOverride (Slice D.2)', () => {
+  it('uses the override when provided, ignoring the parsed span value', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint=github transport=stdio}: hello',
+      { endpointOverride: 'gmail' },
+    );
+    expect(parsed.endpoint).toBe('gmail');
+    // span-level fields beyond endpoint still come from the regex
+    expect(parsed.transport).toBe('stdio');
+  });
+
+  it('falls back to the parsed value when override is null', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint=github}: hello',
+      { endpointOverride: null },
+    );
+    expect(parsed.endpoint).toBe('github');
+  });
+
+  it('falls back to the parsed value when override is undefined', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint=github}: hello',
+      { endpointOverride: undefined },
+    );
+    expect(parsed.endpoint).toBe('github');
+  });
+
+  it('supplies the endpoint when the message has no span context', () => {
+    const parsed = parseLogLine('info', 'plain message', { endpointOverride: 'slack' });
+    expect(parsed.endpoint).toBe('slack');
+  });
+});
+
 describe('extractTimestamp', () => {
   it('parses an ISO timestamp prefix and returns the rest of the message', () => {
     const { timestamp, rest } = extractTimestamp(

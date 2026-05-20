@@ -25,8 +25,10 @@ export async function initRelayLogListener() {
   initialized = true;
 
   const listenerRegistrations = [
-    listen<{ level: string; message: string }>('relay-log', (event) => {
-    const line = parseLogLine(event.payload.level || 'info', event.payload.message);
+    listen<{ level: string; message: string; endpoint?: string | null }>('relay-log', (event) => {
+    const line = parseLogLine(event.payload.level || 'info', event.payload.message, {
+      endpointOverride: event.payload.endpoint,
+    });
     relayLogLines.update((lines) => {
       const updated = [...lines, line];
       return updated.length > 5000 ? updated.slice(-5000) : updated;
@@ -53,9 +55,11 @@ export async function initRelayLogListener() {
 
   // Replay any buffered logs that arrived before the listener was ready
   try {
-    const buffered = await invoke<Array<{ level: string; message: string }>>('get_buffered_relay_logs');
+    const buffered = await invoke<Array<{ level: string; message: string; endpoint?: string | null }>>('get_buffered_relay_logs');
     if (buffered && buffered.length > 0) {
-      const lines = buffered.map((entry) => parseLogLine(entry.level || 'info', entry.message));
+      const lines = buffered.map((entry) =>
+        parseLogLine(entry.level || 'info', entry.message, { endpointOverride: entry.endpoint }),
+      );
       relayLogLines.update(existing => {
         const merged = [...lines, ...existing];
         return merged.length > 5000 ? merged.slice(-5000) : merged;
