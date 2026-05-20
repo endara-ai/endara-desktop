@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { relayLogLines, relaySidecarStatus, relaySidecarError } from './stores';
-import type { RelayLogLine, RelaySidecarStatusType } from './stores';
+import type { RelaySidecarStatusType } from './stores';
+import { parseLogLine } from './logParser';
 
 let initialized = false;
 
@@ -25,11 +26,7 @@ export async function initRelayLogListener() {
 
   const listenerRegistrations = [
     listen<{ level: string; message: string }>('relay-log', (event) => {
-    const line: RelayLogLine = {
-      timestamp: new Date().toLocaleTimeString(),
-      level: (event.payload.level as RelayLogLine['level']) || 'info',
-      message: event.payload.message,
-    };
+    const line = parseLogLine(event.payload.level || 'info', event.payload.message);
     relayLogLines.update((lines) => {
       const updated = [...lines, line];
       return updated.length > 5000 ? updated.slice(-5000) : updated;
@@ -58,11 +55,7 @@ export async function initRelayLogListener() {
   try {
     const buffered = await invoke<Array<{ level: string; message: string }>>('get_buffered_relay_logs');
     if (buffered && buffered.length > 0) {
-      const lines: RelayLogLine[] = buffered.map(entry => ({
-        timestamp: new Date().toLocaleTimeString(),
-        level: (entry.level as RelayLogLine['level']) || 'info',
-        message: entry.message,
-      }));
+      const lines = buffered.map((entry) => parseLogLine(entry.level || 'info', entry.message));
       relayLogLines.update(existing => {
         const merged = [...lines, ...existing];
         return merged.length > 5000 ? merged.slice(-5000) : merged;

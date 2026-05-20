@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import type { Endpoint, Theme, OAuthStatus } from './types';
+import type { ParsedLogLine } from './logParser';
 
 export const endpoints = writable<Endpoint[]>([]);
 export const selectedEndpoint = writable<string | null>(null);
@@ -55,13 +56,7 @@ export const activeTab = writable<'tools' | 'logs' | 'config' | 'auth'>('tools')
 export const oauthStatuses = writable<Map<string, OAuthStatus>>(new Map());
 export const activeTopLevelTab = writable<'servers' | 'unified-catalog' | 'relay-logs' | 'settings'>('servers');
 
-export interface RelayLogLine {
-  timestamp: string;
-  level: 'info' | 'warn' | 'error';
-  message: string;
-}
-
-export const relayLogLines = writable<RelayLogLine[]>([]);
+export const relayLogLines = writable<ParsedLogLine[]>([]);
 export const miniPlayerMode = writable<boolean>(false);
 
 export const relayConnected = writable<boolean>(false);

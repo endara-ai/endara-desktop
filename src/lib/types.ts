@@ -131,3 +131,7 @@ export interface OAuthSetupStatusResponse {
 
 export type Theme = 'light' | 'dark' | 'system';
 
+// Re-export the parsed relay log type so components can import it from
+// `$lib/types` alongside the rest of the desktop type surface.
+export type { ParsedLogLine, LogLevel } from './logParser';
+

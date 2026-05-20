@@ -64,7 +64,7 @@ describe('logListener', () => {
       expect(get(relaySidecarError)).toBe('startup crash');
     });
 
-    it('adds log entries to relayLogLines store on relay-log event', async () => {
+    it('parses relay-log events into ParsedLogLine entries on the store', async () => {
       const mockListen = vi.mocked(listen);
       let relayLogCallback: ((event: { payload: { level: string; message: string } }) => void) | undefined;
 
@@ -80,12 +80,45 @@ describe('logListener', () => {
       await initRelayLogListener();
 
       expect(relayLogCallback).toBeDefined();
-      relayLogCallback!({ payload: { level: 'info', message: 'test message' } });
+      relayLogCallback!({
+        payload: {
+          level: 'info',
+          message:
+            '2026-05-20T10:32:05.123Z endpoint{endpoint=github transport=stdio}: Initialize handshake complete',
+        },
+      });
 
       const lines = get(relayLogLines);
       expect(lines).toHaveLength(1);
-      expect(lines[0].message).toBe('test message');
       expect(lines[0].level).toBe('info');
+      expect(lines[0].endpoint).toBe('github');
+      expect(lines[0].transport).toBe('stdio');
+      expect(lines[0].message).toBe('Initialize handshake complete');
+      expect(lines[0].raw).toContain('endpoint{endpoint=github');
+      expect(lines[0].timestamp.toISOString()).toBe('2026-05-20T10:32:05.123Z');
+    });
+
+    it('replays buffered relay logs through parseLogLine on init', async () => {
+      const mockListen = vi.mocked(listen);
+      mockListen.mockResolvedValue(vi.fn());
+      vi.mocked(invoke).mockImplementation((cmd: string) => {
+        if (cmd === 'get_buffered_relay_logs') {
+          return Promise.resolve([
+            { level: 'warn', message: 'endpoint{endpoint=slack}: Connection lost, reconnecting...' },
+          ]);
+        }
+        return Promise.resolve({ status: 'unknown', error: null });
+      });
+
+      const { initRelayLogListener } = await import('./logListener');
+      const { relayLogLines } = await import('./stores');
+      await initRelayLogListener();
+
+      const lines = get(relayLogLines);
+      expect(lines).toHaveLength(1);
+      expect(lines[0].level).toBe('warn');
+      expect(lines[0].endpoint).toBe('slack');
+      expect(lines[0].message).toBe('Connection lost, reconnecting...');
     });
 
     it('registers relay-health listener without error', async () => {
