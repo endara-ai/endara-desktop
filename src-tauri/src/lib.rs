@@ -268,6 +268,42 @@ fn parse_endpoint_from_span(line: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Extract the tracing level token from a relay compact-format log line.
+///
+/// The relay's stdout/stderr emits lines whose level token (`ERROR` / `WARN` /
+/// `INFO` / `DEBUG` / `TRACE`) appears as a whole word right after the ISO
+/// timestamp prefix, with one or two spaces of padding (compact format
+/// right-aligns the level). The regex anchors near the start of the line so it
+/// will not return `Some` just because the message body happens to contain the
+/// English word "error".
+///
+/// Returns the lowercased static level string (`"error"` / `"warn"` / `"info"`
+/// / `"debug"` / `"trace"`) when the token is present, or `None` for raw
+/// stdout/stderr lines emitted by adapters without tracing context. Callers
+/// (the stdout/stderr capture branches) supply their own fallback when the
+/// helper returns `None`.
+fn parse_level_from_line(line: &str) -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        // Match a whole-word level token after the ISO timestamp prefix. The
+        // compact format pads the level with one or two spaces, so we allow
+        // any run of whitespace before and after the token.
+        regex::Regex::new(r"^\S+\s+(ERROR|WARN|INFO|DEBUG|TRACE)(?:\s|$)")
+            .expect("parse_level_from_line regex is valid")
+    });
+    re.captures(line)
+        .and_then(|c| c.get(1))
+        .map(|m| match m.as_str() {
+            "ERROR" => "error",
+            "WARN" => "warn",
+            "INFO" => "info",
+            "DEBUG" => "debug",
+            "TRACE" => "trace",
+            _ => unreachable!("regex alternation restricts matches to the five level tokens"),
+        })
+}
+
 /// Return the path to config.toml in the appropriate data directory
 /// (`~/.endara-dev/config.toml` in dev mode, `~/.endara/config.toml` in production).
 fn config_path() -> Result<std::path::PathBuf, String> {
@@ -914,6 +950,7 @@ async fn spawn_relay(
                 CommandEvent::Stdout(line) => {
                     let text = strip_ansi(&String::from_utf8_lossy(&line));
                     let endpoint = parse_endpoint_from_span(&text);
+                    let level = parse_level_from_line(&text).unwrap_or("info");
                     // Detect successful startup from stdout
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
@@ -921,7 +958,7 @@ async fn spawn_relay(
                     if let Some(state) = app_handle.try_state::<RelayState>() {
                         let mut buf = state.log_buffer.lock().await;
                         buf.push(RelayLogPayload {
-                            level: "info".to_string(),
+                            level: level.to_string(),
                             message: text.clone(),
                             endpoint: endpoint.clone(),
                         });
@@ -933,7 +970,7 @@ async fn spawn_relay(
                     let _ = app_handle.emit(
                         "relay-log",
                         RelayLogPayload {
-                            level: "info".to_string(),
+                            level: level.to_string(),
                             message: text,
                             endpoint,
                         },
@@ -941,13 +978,18 @@ async fn spawn_relay(
                 }
                 CommandEvent::Stderr(line) => {
                     let text = strip_ansi(&String::from_utf8_lossy(&line));
-                    let level = if text.contains("ERROR") || text.contains("error") {
-                        "error"
-                    } else if text.contains("WARN") || text.contains("warn") {
-                        "warn"
-                    } else {
-                        "info"
-                    };
+                    // Prefer the tracing level token at the start of the line;
+                    // fall back to the legacy substring heuristic for raw
+                    // stderr lines that have no tracing prefix.
+                    let level = parse_level_from_line(&text).unwrap_or_else(|| {
+                        if text.contains("ERROR") || text.contains("error") {
+                            "error"
+                        } else if text.contains("WARN") || text.contains("warn") {
+                            "warn"
+                        } else {
+                            "info"
+                        }
+                    });
                     let endpoint = parse_endpoint_from_span(&text);
                     // Detect successful startup from stderr (tracing outputs to stderr)
                     if text.contains("MCP server running") {
@@ -3365,5 +3407,64 @@ mod parse_endpoint_from_span_tests {
         // Endpoint field with no trailing space — terminator is the `}`.
         let line = "endpoint{endpoint=postgres}: ready";
         assert_eq!(parse_endpoint_from_span(line), Some("postgres".to_string()),);
+    }
+}
+
+#[cfg(test)]
+mod parse_level_from_line_tests {
+    //! Coverage for [`parse_level_from_line`] — the helper that lifts the
+    //! tracing level token (ERROR/WARN/INFO/DEBUG/TRACE) out of the relay's
+    //! compact-format log line. Drives the level pill in both the top-level
+    //! Logs view and the per-endpoint LogsTab so DEBUG / WARN / TRACE lines
+    //! no longer fall through to the hardcoded `"info"` default.
+
+    use super::*;
+
+    #[test]
+    fn debug_line_returns_debug() {
+        let line = "2026-05-20T17:54:47.123Z DEBUG endara_relay::registry: Registering adapter";
+        assert_eq!(parse_level_from_line(line), Some("debug"));
+    }
+
+    #[test]
+    fn info_line_with_two_space_padding_returns_info() {
+        // Compact format right-aligns the level — INFO and WARN get an extra
+        // leading space so columns line up with ERROR / DEBUG / TRACE.
+        let line = "2026-05-20T17:54:47.123Z  INFO endpoint{endpoint=foo}: connected";
+        assert_eq!(parse_level_from_line(line), Some("info"));
+    }
+
+    #[test]
+    fn warn_line_returns_warn() {
+        let line = "2026-05-20T17:54:47.123Z  WARN endpoint{endpoint=slack}: reconnecting";
+        assert_eq!(parse_level_from_line(line), Some("warn"));
+    }
+
+    #[test]
+    fn error_line_returns_error() {
+        let line = "2026-05-20T17:54:47.123Z ERROR endpoint{endpoint=postgres}: server exited";
+        assert_eq!(parse_level_from_line(line), Some("error"));
+    }
+
+    #[test]
+    fn trace_line_returns_trace() {
+        let line = "2026-05-20T17:54:47.123Z TRACE endara_relay::core: very noisy";
+        assert_eq!(parse_level_from_line(line), Some("trace"));
+    }
+
+    #[test]
+    fn raw_line_with_no_level_token_returns_none() {
+        let line = "raw stdout from an adapter without tracing context";
+        assert_eq!(parse_level_from_line(line), None);
+    }
+
+    #[test]
+    fn message_body_word_error_does_not_match() {
+        // The helper anchors near the start of the line, so a lowercase
+        // English word "error" inside the message body must not be promoted
+        // to a tracing level. The stderr fallback substring matcher still
+        // handles this case, but the helper itself stays strict.
+        let line = "2026-05-20T17:54:47.123Z something happened: an error occurred mid-body";
+        assert_eq!(parse_level_from_line(line), None);
     }
 }
