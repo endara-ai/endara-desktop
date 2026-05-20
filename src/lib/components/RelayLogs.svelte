@@ -1,12 +1,40 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { relayLogLines, activeTopLevelTab } from '$lib/stores';
-  import type { RelayLogLine } from '$lib/stores';
+  import type { LogLevel, ParsedLogLine } from '$lib/logParser';
   import { isAtBottom } from '$lib/scrollUtils';
+  import LogFilterBar from './LogFilterBar.svelte';
 
   let scrollContainer: HTMLDivElement | undefined = $state();
   let autoScroll = $state(true);
   let isTabSwitching = $state(false);
+
+  // Filter state — local, not persisted (engineering spec §2.2).
+  let activeLevels = $state<Set<LogLevel>>(new Set(['error', 'warn', 'info', 'debug', 'trace']));
+  let selectedEndpoints = $state<Set<string>>(new Set());
+  let searchText = $state('');
+
+  // Hover tooltip clock — ticks every second only while this tab is visible
+  // so we don't keep firing $effect updates in the background (spec §2.6).
+  let now = $state(Date.now());
+  $effect(() => {
+    if ($activeTopLevelTab !== 'relay-logs') return;
+    const id = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(id);
+  });
+
+  const filteredLines = $derived.by(() => {
+    const q = searchText.trim().toLowerCase();
+    const hasEndpointFilter = selectedEndpoints.size > 0;
+    return $relayLogLines.filter((line) => {
+      if (!activeLevels.has(line.level)) return false;
+      if (hasEndpointFilter) {
+        if (!line.endpoint || !selectedEndpoints.has(line.endpoint)) return false;
+      }
+      if (q.length > 0 && !line.raw.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  });
 
   function handleScroll() {
     if (!scrollContainer || isTabSwitching) return;
@@ -16,7 +44,7 @@
 
   async function scrollToBottom() {
     if (!autoScroll) return;
-    await tick(); // wait for Svelte to flush DOM updates
+    await tick();
     requestAnimationFrame(() => {
       if (scrollContainer && autoScroll) {
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -39,21 +67,50 @@
     relayLogLines.set([]);
   }
 
-  function levelColor(level: string): string {
+  function formatHMS(d: Date): string {
+    return d.toLocaleTimeString(undefined, { hour12: false });
+  }
+
+  function formatRelative(d: Date, nowMs: number): string {
+    const diff = Math.max(0, Math.floor((nowMs - d.getTime()) / 1000));
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }
+
+  function levelPillClass(level: LogLevel): string {
     switch (level) {
-      case 'error': return 'text-(--offline)';
-      case 'warn': return 'text-(--degraded)';
-      default: return 'text-(--fg1)';
+      case 'error': return 'bg-(--offline)/10 text-(--offline)';
+      case 'warn': return 'bg-(--degraded)/10 text-(--degraded)';
+      case 'info': return 'text-(--fg2)';
+      case 'debug':
+      case 'trace': return 'text-(--fg3)';
     }
   }
 
-  // Auto-scroll when new lines arrive
+  // Split the message around the search term so the matching substring can be
+  // highlighted in the rendered row (case-insensitive, first occurrence only).
+  function highlightSegments(text: string, query: string): Array<{ text: string; match: boolean }> {
+    if (!query) return [{ text, match: false }];
+    const lower = text.toLowerCase();
+    const q = query.toLowerCase();
+    const idx = lower.indexOf(q);
+    if (idx === -1) return [{ text, match: false }];
+    return [
+      { text: text.slice(0, idx), match: false },
+      { text: text.slice(idx, idx + q.length), match: true },
+      { text: text.slice(idx + q.length), match: false },
+    ];
+  }
+
+  // Auto-scroll when new lines arrive (subscribe to filtered list so toggling
+  // a level back on also pins us to bottom).
   $effect(() => {
-    $relayLogLines;  // subscribe to log changes
+    filteredLines;
     scrollToBottom();
   });
 
-  // Force scroll when switching back to relay-logs tab
+  // Force scroll when switching back to the relay-logs tab.
   $effect(() => {
     const tab = $activeTopLevelTab;
     if (tab === 'relay-logs' && autoScroll && scrollContainer) {
@@ -72,41 +129,56 @@
       };
     }
   });
+
+  const trimmedSearch = $derived(searchText.trim());
 </script>
 
 <div class="h-full flex flex-col">
-  <div class="px-4 py-2 border-b border-(--border) flex items-center justify-between bg-(--hd-bg)">
-    <span class="text-xs text-(--fg3)">{$relayLogLines.length} lines</span>
-    <div class="flex items-center gap-1.5">
-      {#if !autoScroll}
-        <button
-          class="btn-sec btn-sm"
-          onclick={goToEnd}
-        >Go to end</button>
-      {/if}
-      <button
-        class="btn-sec btn-sm"
-        onclick={clearLogs}
-      >Clear</button>
-    </div>
+  <LogFilterBar
+    lines={$relayLogLines}
+    filteredCount={filteredLines.length}
+    bind:activeLevels
+    bind:selectedEndpoints
+    bind:searchText
+    onclear={clearLogs}
+  />
+  <div class="px-4 py-1 border-b border-(--border) bg-(--hd-bg) flex items-center justify-end">
+    {#if !autoScroll}
+      <button class="btn-sec btn-sm" onclick={goToEnd}>Go to end</button>
+    {/if}
   </div>
   <div
     bind:this={scrollContainer}
     onscroll={handleScroll}
-    class="flex-1 overflow-y-auto p-4 t-mono-log bg-(--surface-sunken)"
+    class="flex-1 overflow-y-auto t-mono-log bg-(--surface-sunken)"
   >
     {#if $relayLogLines.length === 0}
       <div class="text-(--fg3) text-center py-6">
         No relay logs yet. Logs will appear here when the relay sidecar produces output.
       </div>
+    {:else if filteredLines.length === 0}
+      <div class="text-(--fg3) text-center py-6">
+        No lines match the current filters.
+      </div>
     {:else}
-      {#each $relayLogLines as line, i}
-        <div class="hover:bg-(--surface-hover) px-1 rounded whitespace-pre-wrap break-all {levelColor(line.level)}">
-          <span class="text-(--fg3) select-none">{line.timestamp}</span>
-          {' '}{line.message}
+      {#each filteredLines as line (line)}
+        {@const segs = highlightSegments(line.message || line.raw, trimmedSearch)}
+        <div class="grid grid-cols-[auto_4rem_8rem_1fr] gap-3 px-3 py-0.5 hover:bg-(--surface-hover) items-baseline">
+          <span
+            class="text-(--fg3) select-none tabular-nums"
+            title={`${line.timestamp.toISOString()} · ${formatRelative(line.timestamp, now)}`}
+          >{formatHMS(line.timestamp)}</span>
+          <span class="pill {levelPillClass(line.level)}">{line.level.toUpperCase()}</span>
+          <span class="truncate text-(--fg2)" title={line.endpoint ?? ''}>
+            {line.endpoint ?? '──'}
+          </span>
+          <span class="whitespace-pre-wrap break-all">
+            {#each segs as seg}
+              {#if seg.match}<mark class="bg-(--accent)/20 text-(--fg1)">{seg.text}</mark>{:else}{seg.text}{/if}
+            {/each}
+          </span>
         </div>
       {/each}
     {/if}
   </div>
 </div>
-
