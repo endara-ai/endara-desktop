@@ -246,6 +246,28 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
+/// Extract the endpoint name from the relay's compact-format tracing span
+/// (e.g. `endpoint{endpoint=github transport=stdio}: Initialize handshake ...`).
+///
+/// Returns `Some("github")` when the span is present and `None` for
+/// relay-level events that have no `endpoint{...}` span. The match mirrors the
+/// front-end `SPAN_RE` parser: the field value runs from after the `=` up to
+/// the next space or closing brace and is not unquoted (the relay never quotes
+/// the endpoint name in compact format), but a leading `"` is trimmed so a
+/// hypothetical `endpoint{endpoint="my name"}` still yields a plausible token.
+fn parse_endpoint_from_span(line: &str) -> Option<String> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"endpoint\{endpoint=([^ }]+)")
+            .expect("parse_endpoint_from_span regex is valid")
+    });
+    re.captures(line)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Return the path to config.toml in the appropriate data directory
 /// (`~/.endara-dev/config.toml` in dev mode, `~/.endara/config.toml` in production).
 fn config_path() -> Result<std::path::PathBuf, String> {
@@ -376,6 +398,14 @@ pub struct RelayStatusInfo {
 pub struct RelayLogPayload {
     pub level: String,
     pub message: String,
+    /// Endpoint name extracted from the compact-format tracing span
+    /// (`endpoint{endpoint=NAME ...}`), or `None` for relay-level events with
+    /// no span context. Populated by [`parse_endpoint_from_span`] during
+    /// stdout/stderr capture so downstream consumers (live `relay-log` events
+    /// and the buffered-logs fetch) see the same authoritative value.
+    /// Serialized as JSON `null` (not omitted) when absent so the desktop
+    /// front-end can rely on the field being present on every event.
+    pub endpoint: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -883,6 +913,7 @@ async fn spawn_relay(
             match event {
                 CommandEvent::Stdout(line) => {
                     let text = strip_ansi(&String::from_utf8_lossy(&line));
+                    let endpoint = parse_endpoint_from_span(&text);
                     // Detect successful startup from stdout
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
@@ -892,6 +923,7 @@ async fn spawn_relay(
                         buf.push(RelayLogPayload {
                             level: "info".to_string(),
                             message: text.clone(),
+                            endpoint: endpoint.clone(),
                         });
                         let len = buf.len();
                         if len > 5000 {
@@ -903,6 +935,7 @@ async fn spawn_relay(
                         RelayLogPayload {
                             level: "info".to_string(),
                             message: text,
+                            endpoint,
                         },
                     );
                 }
@@ -915,6 +948,7 @@ async fn spawn_relay(
                     } else {
                         "info"
                     };
+                    let endpoint = parse_endpoint_from_span(&text);
                     // Detect successful startup from stderr (tracing outputs to stderr)
                     if text.contains("MCP server running") {
                         emit_sidecar_status(&app_handle, "running", None).await;
@@ -924,6 +958,7 @@ async fn spawn_relay(
                         buf.push(RelayLogPayload {
                             level: level.to_string(),
                             message: text.clone(),
+                            endpoint: endpoint.clone(),
                         });
                         let len = buf.len();
                         if len > 5000 {
@@ -935,6 +970,7 @@ async fn spawn_relay(
                         RelayLogPayload {
                             level: level.to_string(),
                             message: text.clone(),
+                            endpoint,
                         },
                     );
                     // Emit relay-health event for ERROR lines
