@@ -1,11 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { relayLogLines, activeTopLevelTab } from '$lib/stores';
-  import type { LogLevel, ParsedLogLine } from '$lib/logParser';
+  import type { LogLevel } from '$lib/logParser';
   import { isAtBottom } from '$lib/scrollUtils';
-  import { endpointStripeStyle } from '$lib/endpointColor';
   import LogFilterBar from './LogFilterBar.svelte';
-  import ToolCallRow from './ToolCallRow.svelte';
+  import LogRow from './LogRow.svelte';
   import { toggleEndpointFilter } from './relay-logs-helpers';
 
   type Props = {
@@ -78,42 +77,6 @@
 
   function clearLogs() {
     relayLogLines.set([]);
-  }
-
-  function formatHMS(d: Date): string {
-    return d.toLocaleTimeString(undefined, { hour12: false });
-  }
-
-  function formatRelative(d: Date, nowMs: number): string {
-    const diff = Math.max(0, Math.floor((nowMs - d.getTime()) / 1000));
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ago`;
-  }
-
-  function levelPillClass(level: LogLevel): string {
-    switch (level) {
-      case 'error': return 'bg-(--offline)/10 text-(--offline)';
-      case 'warn': return 'bg-(--degraded)/10 text-(--degraded)';
-      case 'info': return 'text-(--fg2)';
-      case 'debug':
-      case 'trace': return 'text-(--fg3)';
-    }
-  }
-
-  // Split the message around the search term so the matching substring can be
-  // highlighted in the rendered row (case-insensitive, first occurrence only).
-  function highlightSegments(text: string, query: string): Array<{ text: string; match: boolean }> {
-    if (!query) return [{ text, match: false }];
-    const lower = text.toLowerCase();
-    const q = query.toLowerCase();
-    const idx = lower.indexOf(q);
-    if (idx === -1) return [{ text, match: false }];
-    return [
-      { text: text.slice(0, idx), match: false },
-      { text: text.slice(idx, idx + q.length), match: true },
-      { text: text.slice(idx + q.length), match: false },
-    ];
   }
 
   // Auto-scroll when new lines arrive (subscribe to filtered list so toggling
@@ -209,39 +172,15 @@
       </div>
     {:else}
       {#each filteredLines as line (line)}
-        {@const segs = highlightSegments(line.message || line.raw, trimmedSearch)}
         {@const isActive = !!line.endpoint && selectedEndpoints.size === 1 && selectedEndpoints.has(line.endpoint)}
-        <div
-          class="grid grid-cols-[auto_4rem_8rem_1fr] gap-3 pl-2 pr-3 py-0.5 hover:bg-(--surface-hover) items-baseline"
-          style={endpointStripeStyle(line.endpoint)}
-        >
-          <span
-            class="text-(--fg3) select-none tabular-nums"
-            title={`${line.timestamp.toISOString()} · ${formatRelative(line.timestamp, now)}`}
-          >{formatHMS(line.timestamp)}</span>
-          <span class="pill {levelPillClass(line.level)}">{line.level.toUpperCase()}</span>
-          {#if line.endpoint}
-            <button
-              type="button"
-              class="truncate text-left text-(--fg2) hover:text-(--accent) hover:underline cursor-pointer {isActive ? 'text-(--accent) font-medium' : ''}"
-              title={`${line.endpoint} — click to filter, right-click for actions`}
-              aria-pressed={isActive}
-              onclick={() => onEndpointClick(line.endpoint!)}
-              oncontextmenu={(e) => onEndpointContextMenu(e, line.endpoint!)}
-            >{line.endpoint}</button>
-          {:else}
-            <span class="truncate text-(--fg3)" title="Relay-level event">──</span>
-          {/if}
-          {#if line.isToolCall}
-            <ToolCallRow {line} />
-          {:else}
-            <span class="whitespace-pre-wrap break-all">
-              {#each segs as seg}
-                {#if seg.match}<mark class="bg-(--accent)/20 text-(--fg1)">{seg.text}</mark>{:else}{seg.text}{/if}
-              {/each}
-            </span>
-          {/if}
-        </div>
+        <LogRow
+          {line}
+          isActiveEndpoint={isActive}
+          searchQuery={trimmedSearch}
+          nowMs={now}
+          onEndpointClick={onEndpointClick}
+          onEndpointContextMenu={onEndpointContextMenu}
+        />
       {/each}
     {/if}
   </div>
