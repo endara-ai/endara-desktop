@@ -48,8 +48,8 @@
     switch (level) {
       case 'error': return 'bg-(--offline)/10 text-(--offline)';
       case 'warn': return 'bg-(--degraded)/10 text-(--degraded)';
-      case 'info': return 'text-(--fg2)';
-      case 'debug':
+      case 'info': return 'bg-(--healthy)/10 text-(--healthy)';
+      case 'debug': return 'bg-(--accent)/10 text-(--accent)';
       case 'trace': return 'text-(--fg3)';
     }
   }

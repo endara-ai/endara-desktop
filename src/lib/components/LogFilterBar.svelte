@@ -83,9 +83,9 @@
     switch (level) {
       case 'error': return 'border-(--offline) bg-(--offline)/10 text-(--offline)';
       case 'warn': return 'border-(--degraded) bg-(--degraded)/10 text-(--degraded)';
-      case 'info': return 'border-(--border-strong) text-(--fg2)';
-      case 'debug':
-      case 'trace': return 'border-(--border) text-(--fg3)';
+      case 'info': return 'border-(--healthy) bg-(--healthy)/10 text-(--healthy)';
+      case 'debug': return 'border-(--accent) bg-(--accent)/10 text-(--accent)';
+      case 'trace': return 'border-(--fg3) bg-(--fg3)/15 text-(--fg2)';
     }
   }
 </script>
