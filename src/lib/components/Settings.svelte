@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { theme, jsExecutionMode, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from '$lib/stores';
+  import { theme, jsExecutionMode, toonOutput, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from '$lib/stores';
   import { autoStartEnabled, fetchAutoStart, toggleAutoStart } from '$lib/stores/autostart';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus } from '$lib/api';
   import { canRetryRelay, getSettingsStatusLabel, restartRelay } from '$lib/relaySidecarUi';
   import { fetchJsExecutionMode, toggleJsExecutionMode } from '$lib/jsExecutionModeUi';
+  import { fetchToonOutput, toggleToonOutput } from '$lib/toonOutputUi';
   import { checkAndAutoDownload, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
   import { toast } from 'svelte-sonner';
@@ -135,6 +136,7 @@
     }
     fetchRelayStatus();
     fetchJsExecutionMode();
+    fetchToonOutput();
     fetchAutoStart();
     fetchUpdateChannel();
     invoke('get_config_path_display').then((p: unknown) => {
@@ -284,6 +286,23 @@
         aria-label="Toggle JS execution mode"
       >
         <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$jsExecutionMode ? 'translate-x-5' : ''}"></span>
+      </button>
+    </div>
+
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <div class="text-sm font-medium">TOON Output Format</div>
+        <div class="text-xs text-(--fg2) mt-0.5">Tool responses are returned in TOON format (Token-Oriented Object Notation), a compact alternative to JSON that reduces token usage by 40–60% on structured data. AI clients parse it natively.</div>
+        <div class="text-xs text-(--fg2)/70 mt-1">Disable if a connected AI client has trouble parsing TOON output.</div>
+      </div>
+      <button
+        class="shrink-0 relative w-10 h-5 rounded-full transition-colors {$toonOutput ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+        onclick={() => toggleToonOutput()}
+        role="switch"
+        aria-checked={$toonOutput}
+        aria-label="Toggle TOON output format"
+      >
+        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$toonOutput ? 'translate-x-5' : ''}"></span>
       </button>
     </div>
 

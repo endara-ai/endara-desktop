@@ -390,6 +390,22 @@ fn read_js_execution_mode() -> bool {
         .unwrap_or(false)
 }
 
+/// Read `relay.toon_output` from `~/.endara/config.toml`.
+/// Returns `true` on any error, missing section, or missing key — matches the
+/// relay's own default so a cold-started UI doesn't flash "disabled" before
+/// the on-disk value resolves.
+fn read_toon_output() -> bool {
+    let Ok(parsed) = read_config() else {
+        return true;
+    };
+    parsed
+        .get("relay")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("toon_output"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
 /// Holds the relay sidecar child process handle.
 pub struct RelayState {
     child: Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>,
@@ -1416,6 +1432,44 @@ async fn set_js_execution_mode(enabled: bool) -> Result<(), String> {
     write_config(&table)
 }
 
+/// Get whether TOON output is enabled in the relay config.
+/// Returns `true` (the relay's own default) if the config is missing,
+/// malformed, has no `[relay]` section, or has no `toon_output` field.
+#[tauri::command]
+async fn get_toon_output() -> Result<bool, String> {
+    Ok(read_toon_output())
+}
+
+#[tauri::command]
+async fn set_toon_output(enabled: bool) -> Result<(), String> {
+    let mut table = read_config().unwrap_or_else(|_| toml::Table::new());
+
+    // Ensure [relay] section exists. The relay's `RelayConfig` requires
+    // `machine_name`, so populate it from the system hostname when creating
+    // the section from scratch — otherwise the relay's next config reload
+    // would fail to deserialize.
+    let relay = table
+        .entry("relay")
+        .or_insert_with(|| {
+            let mut t = toml::Table::new();
+            let machine_name = hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_else(|| "unknown".to_string());
+            t.insert(
+                "machine_name".to_string(),
+                toml::Value::String(machine_name),
+            );
+            toml::Value::Table(t)
+        })
+        .as_table_mut()
+        .ok_or("Invalid [relay] section in config")?;
+
+    relay.insert("toon_output".to_string(), toml::Value::Boolean(enabled));
+
+    write_config(&table)
+}
+
 /// Get the current update channel ("stable" or "beta").
 #[tauri::command]
 async fn get_update_channel() -> Result<String, String> {
@@ -2291,6 +2345,8 @@ pub fn run() {
             get_mgmt_api_socket_path,
             get_js_execution_mode,
             set_js_execution_mode,
+            get_toon_output,
+            set_toon_output,
             get_config_path_display,
             get_buffered_relay_logs,
             get_update_channel,
@@ -3318,6 +3374,240 @@ mod js_execution_mode_tests {
             relay.get("local_js_execution").and_then(|v| v.as_bool()),
             Some(true),
             "local_js_execution should be set to true"
+        );
+
+        let endpoints = parsed
+            .get("endpoints")
+            .and_then(|v| v.as_array())
+            .expect("[[endpoints]] preserved");
+        assert_eq!(endpoints.len(), 1, "endpoint count should be unchanged");
+        let ep = endpoints[0].as_table().expect("endpoint is a table");
+        assert_eq!(ep.get("name").and_then(|v| v.as_str()), Some("gmail-acct"));
+        assert_eq!(ep.get("transport").and_then(|v| v.as_str()), Some("stdio"));
+        assert_eq!(
+            ep.get("tool_prefix").and_then(|v| v.as_str()),
+            Some("gmail")
+        );
+        assert_eq!(ep.get("command").and_then(|v| v.as_str()), Some("echo"));
+        let args = ep
+            .get("args")
+            .and_then(|v| v.as_array())
+            .expect("args preserved");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].as_str(), Some("hi"));
+    }
+}
+
+#[cfg(test)]
+mod toon_output_tests {
+    //! Round-trip coverage for `read_toon_output` and `set_toon_output`.
+    //! Mirrors `js_execution_mode_tests` but pins the default to `true` to
+    //! match the relay's own default — a missing field, missing section,
+    //! missing file, or malformed file all resolve to `true`.
+    use super::*;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    struct HomeGuard {
+        prior: Option<String>,
+        _tmp: TempDir,
+    }
+
+    impl HomeGuard {
+        fn new() -> Self {
+            let prior = std::env::var("HOME").ok();
+            let tmp = tempfile::tempdir().expect("create tempdir");
+            std::env::set_var("HOME", tmp.path());
+            Self { prior, _tmp: tmp }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime")
+    }
+
+    fn write_config_str(contents: &str) {
+        let path = config_path().expect("config_path");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent dir");
+        }
+        std::fs::write(&path, contents).expect("write config.toml");
+    }
+
+    fn read_config_str() -> String {
+        let path = config_path().expect("config_path");
+        std::fs::read_to_string(&path).expect("read config.toml")
+    }
+
+    #[test]
+    #[serial]
+    fn get_toon_output_returns_true_when_set() {
+        let _home = HomeGuard::new();
+        write_config_str("[relay]\ntoon_output = true\nmachine_name = \"x\"\n");
+        assert!(read_toon_output());
+    }
+
+    #[test]
+    #[serial]
+    fn get_toon_output_returns_false_when_unset_explicitly() {
+        let _home = HomeGuard::new();
+        write_config_str("[relay]\ntoon_output = false\nmachine_name = \"x\"\n");
+        assert!(!read_toon_output());
+    }
+
+    #[test]
+    #[serial]
+    fn get_toon_output_returns_true_when_field_missing() {
+        let _home = HomeGuard::new();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+        assert!(read_toon_output());
+    }
+
+    #[test]
+    #[serial]
+    fn get_toon_output_returns_true_when_no_relay_section() {
+        let _home = HomeGuard::new();
+        write_config_str("[desktop]\nupdate_channel = \"stable\"\n");
+        assert!(read_toon_output());
+    }
+
+    #[test]
+    #[serial]
+    fn get_toon_output_returns_true_when_file_missing() {
+        let _home = HomeGuard::new();
+        // No config.toml written.
+        assert!(read_toon_output());
+    }
+
+    #[test]
+    #[serial]
+    fn get_toon_output_returns_true_when_file_malformed() {
+        let _home = HomeGuard::new();
+        write_config_str("not valid toml ====\n");
+        assert!(read_toon_output());
+    }
+
+    #[test]
+    #[serial]
+    fn set_toon_output_roundtrips() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+
+        rt.block_on(set_toon_output(false)).expect("set false");
+        assert!(!read_toon_output());
+
+        rt.block_on(set_toon_output(true)).expect("set true");
+        assert!(read_toon_output());
+    }
+
+    #[test]
+    #[serial]
+    fn set_toon_output_creates_missing_relay_section() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[desktop]\nupdate_channel = \"stable\"\n");
+
+        rt.block_on(set_toon_output(false))
+            .expect("set_toon_output should succeed");
+
+        let toml_str = read_config_str();
+        let parsed: toml::Table =
+            toml::from_str(&toml_str).expect("re-parse config.toml as toml::Table");
+
+        let relay = parsed
+            .get("relay")
+            .and_then(|v| v.as_table())
+            .expect("[relay] section should exist");
+        assert_eq!(
+            relay.get("toon_output").and_then(|v| v.as_bool()),
+            Some(false),
+            "toon_output should be false"
+        );
+        let machine_name = relay
+            .get("machine_name")
+            .and_then(|v| v.as_str())
+            .expect("machine_name should be set");
+        assert!(
+            !machine_name.is_empty(),
+            "machine_name should be non-empty, got {machine_name:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_toon_output_preserves_other_fields() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str(
+            "[desktop]\n\
+             update_channel = \"beta\"\n\
+             \n\
+             [relay]\n\
+             machine_name = \"host\"\n\
+             token_dir = \"/tmp/x\"\n\
+             local_js_execution = true\n\
+             \n\
+             [[endpoints]]\n\
+             name = \"gmail-acct\"\n\
+             transport = \"stdio\"\n\
+             tool_prefix = \"gmail\"\n\
+             command = \"echo\"\n\
+             args = [\"hi\"]\n",
+        );
+
+        rt.block_on(set_toon_output(false))
+            .expect("set_toon_output should succeed");
+
+        let toml_str = read_config_str();
+        let parsed: toml::Table =
+            toml::from_str(&toml_str).expect("re-parse config.toml as toml::Table");
+
+        let desktop = parsed
+            .get("desktop")
+            .and_then(|v| v.as_table())
+            .expect("[desktop] preserved");
+        assert_eq!(
+            desktop.get("update_channel").and_then(|v| v.as_str()),
+            Some("beta"),
+            "update_channel should be preserved"
+        );
+
+        let relay = parsed
+            .get("relay")
+            .and_then(|v| v.as_table())
+            .expect("[relay] preserved");
+        assert_eq!(
+            relay.get("machine_name").and_then(|v| v.as_str()),
+            Some("host"),
+            "machine_name should be preserved"
+        );
+        assert_eq!(
+            relay.get("token_dir").and_then(|v| v.as_str()),
+            Some("/tmp/x"),
+            "token_dir should be preserved"
+        );
+        assert_eq!(
+            relay.get("local_js_execution").and_then(|v| v.as_bool()),
+            Some(true),
+            "local_js_execution should be preserved"
+        );
+        assert_eq!(
+            relay.get("toon_output").and_then(|v| v.as_bool()),
+            Some(false),
+            "toon_output should be set to false"
         );
 
         let endpoints = parsed

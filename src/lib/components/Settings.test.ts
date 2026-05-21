@@ -181,3 +181,101 @@ describe('Settings JS execution mode helpers', () => {
   });
 });
 
+describe('Settings TOON output helpers', () => {
+  const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    invokeMock.mockReset();
+    getConfigMock.mockReset();
+    reloadConfigMock.mockReset();
+    // Reset the shared store to its default (`true`) before each test so
+    // order doesn't matter.
+    const { toonOutput } = await import('$lib/stores');
+    toonOutput.set(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetchToonOutput updates the store from the Tauri command (false)', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_toon_output') return Promise.resolve(false);
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { fetchToonOutput } = await import('$lib/toonOutputUi');
+    const { toonOutput } = await import('$lib/stores');
+
+    await fetchToonOutput();
+
+    expect(invokeMock).toHaveBeenCalledWith('get_toon_output');
+    expect(get(toonOutput)).toBe(false);
+  });
+
+  it('fetchToonOutput is resilient to a failing relay path', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_toon_output') return Promise.resolve(false);
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    getConfigMock.mockRejectedValue(new Error('relay socket not ready'));
+    reloadConfigMock.mockRejectedValue(new Error('relay socket not ready'));
+    const { fetchToonOutput } = await import('$lib/toonOutputUi');
+    const { toonOutput } = await import('$lib/stores');
+
+    await expect(fetchToonOutput()).resolves.toBeUndefined();
+    expect(get(toonOutput)).toBe(false);
+  });
+
+  it('fetchToonOutput does NOT call getConfig (relay is no longer in the read path)', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_toon_output') return Promise.resolve(true);
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { fetchToonOutput } = await import('$lib/toonOutputUi');
+
+    await fetchToonOutput();
+
+    expect(getConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('toggleToonOutput calls set_toon_output then reloadConfig, in order', async () => {
+    const callOrder: string[] = [];
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'set_toon_output') {
+        callOrder.push(`set:${args?.enabled}`);
+        return Promise.resolve(undefined);
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    reloadConfigMock.mockImplementation(() => {
+      callOrder.push('reload');
+      return Promise.resolve();
+    });
+    const { toggleToonOutput } = await import('$lib/toonOutputUi');
+    const { toonOutput } = await import('$lib/stores');
+    toonOutput.set(true);
+
+    await toggleToonOutput();
+
+    expect(invokeMock).toHaveBeenCalledWith('set_toon_output', { enabled: false });
+    expect(reloadConfigMock).toHaveBeenCalledTimes(1);
+    expect(callOrder).toEqual(['set:false', 'reload']);
+    expect(get(toonOutput)).toBe(false);
+  });
+
+  it('toggleToonOutput reverts the store when set_toon_output rejects', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'set_toon_output') return Promise.reject(new Error('write failed'));
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { toggleToonOutput } = await import('$lib/toonOutputUi');
+    const { toonOutput } = await import('$lib/stores');
+    toonOutput.set(true);
+
+    await toggleToonOutput();
+
+    expect(get(toonOutput)).toBe(true);
+    expect(reloadConfigMock).not.toHaveBeenCalled();
+  });
+});
+

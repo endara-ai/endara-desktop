@@ -5,6 +5,7 @@ import type { ParsedLogLine } from './logParser';
 export const endpoints = writable<Endpoint[]>([]);
 export const selectedEndpoint = writable<string | null>(null);
 export const jsExecutionMode = writable<boolean>(false);
+export const toonOutput = writable<boolean>(true);
 
 function createThemeStore() {
   const stored = typeof window !== 'undefined' ? localStorage.getItem('endara-theme') as Theme | null : null;
