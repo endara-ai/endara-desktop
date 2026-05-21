@@ -5,6 +5,7 @@
   import HealthDot from './HealthDot.svelte';
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
+  import { getEndpointStatusLabel } from './endpoint-row-helpers';
 
   let { endpoint }: { endpoint: Endpoint } = $props();
 
@@ -57,7 +58,7 @@
       {:else if endpoint.disabled}
         <span class="text-[11px] text-(--fg3)" style="font-family: var(--font-mono);">Disabled</span>
       {:else}
-        <span class="text-[11px] text-(--fg3)" style="font-family: var(--font-mono);">{endpoint.tool_count} tools</span>
+        <span class="text-[11px] text-(--fg3)" style="font-family: var(--font-mono);">{getEndpointStatusLabel(endpoint)}</span>
       {/if}
     </div>
   </div>

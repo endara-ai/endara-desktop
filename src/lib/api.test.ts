@@ -74,6 +74,7 @@ describe('api', () => {
 
     it('preserves lifecycle Ready state without modifying health', async () => {
       const { getEndpoints } = await import('./api');
+      const { getEndpointStatusLabel } = await import('./components/endpoint-row-helpers');
       const mockEndpoints = [{
         name: 'ready-ep',
         transport: 'stdio',
@@ -88,10 +89,14 @@ describe('api', () => {
       expect(result[0].health).toBe('healthy');
       expect(result[0].error).toBeUndefined();
       expect(result[0].lifecycle).toEqual({ state: 'Ready', server_name: 'my-server' });
+      // Ready endpoints must keep showing the tool count — the Initializing
+      // branch added in EndpointRow.svelte must not regress this case.
+      expect(getEndpointStatusLabel(result[0])).toBe('5 tools');
     });
 
     it('handles lifecycle Initializing state', async () => {
       const { getEndpoints } = await import('./api');
+      const { getEndpointStatusLabel } = await import('./components/endpoint-row-helpers');
       const mockEndpoints = [{
         name: 'init-ep',
         transport: 'stdio',
@@ -105,6 +110,9 @@ describe('api', () => {
       const result = await getEndpoints();
       expect(result[0].health).toBe('starting');
       expect(result[0].lifecycle).toEqual({ state: 'Initializing' });
+      // EndpointRow's secondary label must surface the transient state so a
+      // freshly-spawned endpoint doesn't look like an empty "0 tools" server.
+      expect(getEndpointStatusLabel(result[0])).toBe('Initializing…');
     });
   });
 
