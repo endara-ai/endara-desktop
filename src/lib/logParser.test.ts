@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { parseLogLine, extractTimestamp } from '$lib/logParser';
 
+// The relay sidecar is launched with `--log-format text` (Full formatter),
+// which emits span field values WITH surrounding double-quotes — e.g.
+// `endpoint{endpoint="github" transport="stdio"}`. Fixtures below match that
+// real wire shape so a regression in the unquoting path would fail loudly.
 describe('parseLogLine', () => {
-  it('extracts endpoint name from endpoint{endpoint=github} span', () => {
-    const parsed = parseLogLine('info', 'endpoint{endpoint=github}: Initialize handshake complete');
+  it('extracts endpoint name from endpoint{endpoint="github"} span', () => {
+    const parsed = parseLogLine('info', 'endpoint{endpoint="github"}: Initialize handshake complete');
     expect(parsed.endpoint).toBe('github');
     expect(parsed.message).toBe('Initialize handshake complete');
     expect(parsed.level).toBe('info');
@@ -12,7 +16,7 @@ describe('parseLogLine', () => {
   it('extracts multiple span fields (endpoint, transport, server_type)', () => {
     const parsed = parseLogLine(
       'info',
-      'endpoint{endpoint=github transport=stdio server_type=github}: Initialize handshake complete'
+      'endpoint{endpoint="github" transport="stdio" server_type="github"}: Initialize handshake complete'
     );
     expect(parsed.endpoint).toBe('github');
     expect(parsed.transport).toBe('stdio');
@@ -23,7 +27,7 @@ describe('parseLogLine', () => {
   it('extracts inline fields (tool, status, duration_ms) and request span', () => {
     const parsed = parseLogLine(
       'info',
-      'request{method=tools/call id=42} endpoint{endpoint=github}: Tool call completed tool=get_file_contents status=ok duration_ms=312'
+      'request{method="tools/call" id=42} endpoint{endpoint="github"}: Tool call completed tool=get_file_contents status=ok duration_ms=312'
     );
     expect(parsed.endpoint).toBe('github');
     expect(parsed.method).toBe('tools/call');
@@ -46,7 +50,7 @@ describe('parseLogLine', () => {
   it('extracts ISO timestamp from message prefix', () => {
     const parsed = parseLogLine(
       'info',
-      '2026-05-20T10:32:05.123Z endpoint{endpoint=github}: Initialize handshake complete'
+      '2026-05-20T10:32:05.123Z endpoint{endpoint="github"}: Initialize handshake complete'
     );
     expect(parsed.timestamp.toISOString()).toBe('2026-05-20T10:32:05.123Z');
     expect(parsed.endpoint).toBe('github');
@@ -55,7 +59,7 @@ describe('parseLogLine', () => {
 
   it('falls back to client-side timestamp when no timestamp in message', () => {
     const before = Date.now();
-    const parsed = parseLogLine('info', 'endpoint{endpoint=github}: Initialize handshake complete');
+    const parsed = parseLogLine('info', 'endpoint{endpoint="github"}: Initialize handshake complete');
     const after = Date.now();
     const t = parsed.timestamp.getTime();
     expect(t).toBeGreaterThanOrEqual(before);
@@ -73,7 +77,7 @@ describe('parseLogLine', () => {
     it('flags completed tool calls when tool field is present', () => {
       const parsed = parseLogLine(
         'info',
-        'endpoint{endpoint=github}: Tool call completed tool=get_file_contents status=ok duration_ms=312'
+        'endpoint{endpoint="github"}: Tool call completed tool=get_file_contents status=ok duration_ms=312'
       );
       expect(parsed.isToolCall).toBe(true);
       expect(parsed.tool).toBe('get_file_contents');
@@ -82,7 +86,7 @@ describe('parseLogLine', () => {
     it('flags failed tool calls when tool field is present', () => {
       const parsed = parseLogLine(
         'warn',
-        'endpoint{endpoint=slack}: Tool call failed tool=send_message status=error duration_ms=1204'
+        'endpoint{endpoint="slack"}: Tool call failed tool=send_message status=error duration_ms=1204'
       );
       expect(parsed.isToolCall).toBe(true);
       expect(parsed.tool).toBe('send_message');
@@ -93,7 +97,7 @@ describe('parseLogLine', () => {
     it('flags rows that carry status + duration_ms even without "Tool call" phrasing', () => {
       const parsed = parseLogLine(
         'info',
-        'endpoint{endpoint=github}: handled status=ok duration_ms=42'
+        'endpoint{endpoint="github"}: handled status=ok duration_ms=42'
       );
       expect(parsed.isToolCall).toBe(true);
       expect(parsed.status).toBe('ok');
@@ -101,7 +105,7 @@ describe('parseLogLine', () => {
     });
 
     it('does not flag plain informational lines as tool calls', () => {
-      const parsed = parseLogLine('info', 'endpoint{endpoint=github}: Initialize handshake complete');
+      const parsed = parseLogLine('info', 'endpoint{endpoint="github"}: Initialize handshake complete');
       expect(parsed.isToolCall).toBe(false);
     });
   });
@@ -111,7 +115,7 @@ describe('parseLogLine — endpointOverride (Slice D.2)', () => {
   it('uses the override when provided, ignoring the parsed span value', () => {
     const parsed = parseLogLine(
       'info',
-      'endpoint{endpoint=github transport=stdio}: hello',
+      'endpoint{endpoint="github" transport="stdio"}: hello',
       { endpointOverride: 'gmail' },
     );
     expect(parsed.endpoint).toBe('gmail');
@@ -122,7 +126,7 @@ describe('parseLogLine — endpointOverride (Slice D.2)', () => {
   it('falls back to the parsed value when override is null', () => {
     const parsed = parseLogLine(
       'info',
-      'endpoint{endpoint=github}: hello',
+      'endpoint{endpoint="github"}: hello',
       { endpointOverride: null },
     );
     expect(parsed.endpoint).toBe('github');
@@ -131,7 +135,7 @@ describe('parseLogLine — endpointOverride (Slice D.2)', () => {
   it('falls back to the parsed value when override is undefined', () => {
     const parsed = parseLogLine(
       'info',
-      'endpoint{endpoint=github}: hello',
+      'endpoint{endpoint="github"}: hello',
       { endpointOverride: undefined },
     );
     expect(parsed.endpoint).toBe('github');
@@ -146,19 +150,19 @@ describe('parseLogLine — endpointOverride (Slice D.2)', () => {
 describe('extractTimestamp', () => {
   it('parses an ISO timestamp prefix and returns the rest of the message', () => {
     const { timestamp, rest } = extractTimestamp(
-      '2026-05-20T10:32:05.123Z endpoint{endpoint=github}: hello'
+      '2026-05-20T10:32:05.123Z endpoint{endpoint="github"}: hello'
     );
     expect(timestamp.toISOString()).toBe('2026-05-20T10:32:05.123Z');
-    expect(rest).toBe('endpoint{endpoint=github}: hello');
+    expect(rest).toBe('endpoint{endpoint="github"}: hello');
   });
 
   it('falls back to the current time when no timestamp prefix is present', () => {
     const before = Date.now();
-    const { timestamp, rest } = extractTimestamp('endpoint{endpoint=github}: hello');
+    const { timestamp, rest } = extractTimestamp('endpoint{endpoint="github"}: hello');
     const after = Date.now();
     expect(timestamp.getTime()).toBeGreaterThanOrEqual(before);
     expect(timestamp.getTime()).toBeLessThanOrEqual(after);
-    expect(rest).toBe('endpoint{endpoint=github}: hello');
+    expect(rest).toBe('endpoint{endpoint="github"}: hello');
   });
 });
 
@@ -178,7 +182,7 @@ describe('parseLogLine — in-text level extraction (hotfix)', () => {
   it('extracts INFO level even when the sidecar passed a different default', () => {
     const parsed = parseLogLine(
       'info',
-      '2026-05-20T17:54:47.123Z INFO endpoint{endpoint=github transport=stdio}: Initialize handshake complete',
+      '2026-05-20T17:54:47.123Z INFO endpoint{endpoint="github" transport="stdio"}: Initialize handshake complete',
     );
     expect(parsed.level).toBe('info');
     expect(parsed.message.startsWith('INFO')).toBe(false);
@@ -189,7 +193,7 @@ describe('parseLogLine — in-text level extraction (hotfix)', () => {
   it('extracts WARN level and strips it from the message', () => {
     const parsed = parseLogLine(
       'info',
-      '2026-05-20T17:54:47.123Z WARN endpoint{endpoint=slack}: Connection lost, reconnecting',
+      '2026-05-20T17:54:47.123Z WARN endpoint{endpoint="slack"}: Connection lost, reconnecting',
     );
     expect(parsed.level).toBe('warn');
     expect(parsed.message.startsWith('WARN')).toBe(false);
@@ -199,7 +203,7 @@ describe('parseLogLine — in-text level extraction (hotfix)', () => {
   it('extracts ERROR level and strips it from the message', () => {
     const parsed = parseLogLine(
       'info',
-      '2026-05-20T17:54:47.123Z ERROR endpoint{endpoint=postgres}: MCP server exited',
+      '2026-05-20T17:54:47.123Z ERROR endpoint{endpoint="postgres"}: MCP server exited',
     );
     expect(parsed.level).toBe('error');
     expect(parsed.message.startsWith('ERROR')).toBe(false);

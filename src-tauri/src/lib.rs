@@ -246,15 +246,27 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Extract the endpoint name from the relay's compact-format tracing span
-/// (e.g. `endpoint{endpoint=github transport=stdio}: Initialize handshake ...`).
+/// Extract the endpoint name from the relay's tracing span.
 ///
-/// Returns `Some("github")` when the span is present and `None` for
-/// relay-level events that have no `endpoint{...}` span. The match mirrors the
-/// front-end `SPAN_RE` parser: the field value runs from after the `=` up to
-/// the next space or closing brace and is not unquoted (the relay never quotes
-/// the endpoint name in compact format), but a leading `"` is trimmed so a
-/// hypothetical `endpoint{endpoint="my name"}` still yields a plausible token.
+/// The relay sidecar is launched with `--log-format text` (see
+/// [`build_sidecar_args`]) so tracing-subscriber emits its "Full" formatter
+/// shape, with span fields inline:
+///
+/// ```text
+/// 2026-05-22T15:10:43Z  INFO endpoint{endpoint="github" transport="stdio"}: <target>: <msg>
+/// ```
+///
+/// Returns `Some("github")` when the `endpoint{...}` span is present and
+/// `None` for relay-level events that have no span context (e.g. "Relay
+/// listening on …"). A leading and trailing pair of double-quotes is stripped
+/// from the captured token so callers get the bare endpoint name — the Full
+/// formatter quotes string-typed field values, while older test fixtures and
+/// the compact format used unquoted values, so the parser accepts both.
+///
+/// Lines emitted in the relay's `compact` format (`INFO endpoint: <target>:
+/// <msg> endpoint="NAME" transport="…"`) do NOT match because the span fields
+/// trail the message instead of appearing inline — this is why the sidecar
+/// must run with `--log-format text`.
 fn parse_endpoint_from_span(line: &str) -> Option<String> {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
@@ -264,8 +276,20 @@ fn parse_endpoint_from_span(line: &str) -> Option<String> {
     });
     re.captures(line)
         .and_then(|c| c.get(1))
-        .map(|m| m.as_str().trim_matches('"').to_string())
+        .map(|m| strip_quote_pair(m.as_str()).to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Strip exactly one leading and one trailing `"` from `s` when both are
+/// present. Returns the input unchanged if the value is not double-quoted on
+/// both sides — this avoids over-eager trimming of values that legitimately
+/// begin or end with a quote character.
+fn strip_quote_pair(s: &str) -> &str {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
 }
 
 /// Extract the tracing level token from a relay compact-format log line.
@@ -3675,28 +3699,33 @@ mod toon_output_tests {
 #[cfg(test)]
 mod parse_endpoint_from_span_tests {
     //! Coverage for [`parse_endpoint_from_span`] — the helper that lifts the
-    //! endpoint name out of the relay's compact-format tracing span so each
+    //! endpoint name out of the relay's Full-format tracing span so each
     //! `relay-log` Tauri event carries an authoritative `endpoint` field.
     //!
-    //! Corresponds to engineering spec §5 test rows #18 (endpoint present in
-    //! span) and #19 (relay-level event with no span yields `None`).
+    //! The sidecar is pinned to `--log-format text` ([`build_sidecar_args`]),
+    //! which produces tracing-subscriber's Full-formatter shape with QUOTED
+    //! span field values: `endpoint{endpoint="github" transport="stdio"}`.
+    //! Fixtures here use that real wire shape so a future regression in the
+    //! quote-stripping path would fail loudly. One backward-compatible
+    //! unquoted fixture is retained, and a negative compact-format fixture
+    //! documents why the sidecar must run with `--log-format text`.
 
     use super::*;
 
     #[test]
     fn endpoint_present_in_span_returns_some() {
-        // Spec §5 test #18 — typical tool-call event with span context.
-        let line = "2026-05-20T10:00:00.000Z  INFO endpoint{endpoint=github transport=stdio}: Tool call completed";
+        // Real Full-format wire shape — tracing-subscriber quotes the field.
+        let line = "2026-05-20T10:00:00.000Z  INFO endpoint{endpoint=\"github\" transport=\"stdio\"}: Tool call completed";
         assert_eq!(
             parse_endpoint_from_span(line),
             Some("github".to_string()),
-            "endpoint name should be extracted from endpoint{{endpoint=NAME ...}} span"
+            "endpoint name should be extracted from endpoint{{endpoint=\"NAME\" ...}} span"
         );
     }
 
     #[test]
     fn no_span_returns_none() {
-        // Spec §5 test #19 — relay-level event with no endpoint span.
+        // Relay-level event with no endpoint span.
         let line = "2026-05-20T10:00:00.000Z  INFO Relay listening on 127.0.0.1:47107";
         assert_eq!(
             parse_endpoint_from_span(line),
@@ -3707,17 +3736,16 @@ mod parse_endpoint_from_span_tests {
 
     #[test]
     fn nested_request_and_endpoint_spans_still_extract_endpoint() {
-        // Compact format with multiple span scopes (request{...} endpoint{...}).
-        let line = "2026-05-20T10:00:00.000Z  INFO request{method=tools/call id=42} endpoint{endpoint=gmail transport=stdio}: handled";
+        // Full format with multiple span scopes (request{...} endpoint{...}).
+        let line = "2026-05-20T10:00:00.000Z  INFO request{method=\"tools/call\" id=42} endpoint{endpoint=\"gmail\" transport=\"stdio\"}: handled";
         assert_eq!(parse_endpoint_from_span(line), Some("gmail".to_string()),);
     }
 
     #[test]
     fn quoted_endpoint_name_is_unquoted() {
-        // The relay does not quote endpoint names today, but if it ever did
-        // (e.g. names with spaces), the leading/trailing `"` should be trimmed
-        // to keep the parsed value usable as a key.
-        let line = "endpoint{endpoint=\"slack-prod\" transport=http}: connected";
+        // A name with a hyphen — the surrounding pair of double-quotes from
+        // the Full formatter must be stripped to yield the bare key.
+        let line = "endpoint{endpoint=\"slack-prod\" transport=\"http\"}: connected";
         assert_eq!(
             parse_endpoint_from_span(line),
             Some("slack-prod".to_string()),
@@ -3725,18 +3753,50 @@ mod parse_endpoint_from_span_tests {
     }
 
     #[test]
+    fn unquoted_endpoint_name_still_parses_for_backward_compat() {
+        // Older relay builds (and the spec §5 fixtures predating PR #67's
+        // log-format flag) emitted bare unquoted values. Keep parsing them so
+        // a stale buffered log line from a previous run still surfaces an
+        // endpoint name.
+        let line = "endpoint{endpoint=postgres transport=stdio}: ready";
+        assert_eq!(parse_endpoint_from_span(line), Some("postgres".to_string()),);
+    }
+
+    #[test]
     fn empty_endpoint_field_returns_none() {
         // Defensive: a malformed `endpoint{endpoint=}` should not produce an
         // empty-string endpoint that the front-end might display as a row.
-        let line = "endpoint{endpoint= transport=stdio}: weird";
+        let line = "endpoint{endpoint= transport=\"stdio\"}: weird";
+        assert_eq!(parse_endpoint_from_span(line), None);
+    }
+
+    #[test]
+    fn empty_quoted_endpoint_field_returns_none() {
+        // Same defense for the quoted shape — `endpoint=""` strips to "" and
+        // must be filtered out so the front-end never renders a blank row.
+        let line = "endpoint{endpoint=\"\" transport=\"stdio\"}: weird";
         assert_eq!(parse_endpoint_from_span(line), None);
     }
 
     #[test]
     fn endpoint_at_end_of_span_closing_brace() {
-        // Endpoint field with no trailing space — terminator is the `}`.
-        let line = "endpoint{endpoint=postgres}: ready";
+        // Quoted endpoint field with no trailing space — terminator is `}`.
+        let line = "endpoint{endpoint=\"postgres\"}: ready";
         assert_eq!(parse_endpoint_from_span(line), Some("postgres".to_string()),);
+    }
+
+    #[test]
+    fn compact_format_line_returns_none() {
+        // Documents why the sidecar must run with `--log-format text`: the
+        // relay's CLI default (`compact`) emits span fields at the END of
+        // the line, not inline. The parser intentionally returns `None` for
+        // this shape so future maintainers see the dependency.
+        let line = "2026-05-22T15:10:11Z  INFO endpoint: endara_relay::adapter::http: MCP server reported serverInfo.name endpoint=\"github\" transport=\"stdio\"";
+        assert_eq!(
+            parse_endpoint_from_span(line),
+            None,
+            "compact-format lines have trailing span fields and must not match"
+        );
     }
 }
 
