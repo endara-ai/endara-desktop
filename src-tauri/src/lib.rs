@@ -315,6 +315,14 @@ fn config_path() -> Result<std::path::PathBuf, String> {
 /// In dev mode we pass `--data-dir` (letting the relay derive its config path and
 /// perform the first-run copy from production). In production we pass `--config`
 /// directly. Extracted as a pure helper so it is trivially unit-testable.
+///
+/// We also force `--log-format text` (tracing-subscriber's "Full" formatter)
+/// so span fields appear inline as `endpoint{endpoint="NAME" ...}:` instead of
+/// the relay's CLI default `compact` shape, which trails the span fields at
+/// the end of the line. Both [`parse_endpoint_from_span`] and the front-end
+/// `SPAN_RE` parser are written against the inline shape — without this pin
+/// every relay-log event would report a `null` endpoint and the Logs view's
+/// "Endpoint" column would render `---` for every row.
 fn build_sidecar_args<'a>(
     dev: bool,
     data_dir: &'a str,
@@ -322,9 +330,25 @@ fn build_sidecar_args<'a>(
     port: &'a str,
 ) -> Vec<&'a str> {
     if dev {
-        vec!["start", "--data-dir", data_dir, "--port", port]
+        vec![
+            "start",
+            "--data-dir",
+            data_dir,
+            "--port",
+            port,
+            "--log-format",
+            "text",
+        ]
     } else {
-        vec!["start", "--config", config, "--port", port]
+        vec![
+            "start",
+            "--config",
+            config,
+            "--port",
+            port,
+            "--log-format",
+            "text",
+        ]
     }
 }
 
@@ -2779,10 +2803,24 @@ mod dev_mode_tests {
 
     #[test]
     fn build_sidecar_args_dev_vs_prod() {
+        // Both branches must end with `--log-format text` so the relay's
+        // tracing layer emits the inline span shape the desktop parsers
+        // (`parse_endpoint_from_span` + the front-end `SPAN_RE`) expect.
+        // Without it the relay's compact-format default would hide span
+        // fields at the end of the line and the Logs view's Endpoint
+        // column would render `---` for every row.
         let dev = build_sidecar_args(true, "/tmp/dev", "/tmp/dev/config.toml", "9500");
         assert_eq!(
             dev,
-            vec!["start", "--data-dir", "/tmp/dev", "--port", "9500"]
+            vec![
+                "start",
+                "--data-dir",
+                "/tmp/dev",
+                "--port",
+                "9500",
+                "--log-format",
+                "text",
+            ]
         );
 
         let prod = build_sidecar_args(false, "/tmp/dev", "/tmp/prod/config.toml", "9400");
@@ -2793,7 +2831,9 @@ mod dev_mode_tests {
                 "--config",
                 "/tmp/prod/config.toml",
                 "--port",
-                "9400"
+                "9400",
+                "--log-format",
+                "text",
             ]
         );
     }
