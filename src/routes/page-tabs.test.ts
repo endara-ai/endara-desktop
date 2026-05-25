@@ -15,6 +15,7 @@ describe('+page relay tab logic', () => {
     expect(getVisibleTopLevelTabs('running').map((tab) => tab.id)).toEqual([
       'servers',
       'unified-catalog',
+      'profiles',
       'relay-logs',
       'settings',
     ]);
@@ -28,6 +29,7 @@ describe('+page relay tab logic', () => {
     expect(getVisibleTopLevelTabs('restarting').map((tab) => tab.id)).toEqual([
       'servers',
       'unified-catalog',
+      'profiles',
       'relay-logs',
       'settings',
     ]);
