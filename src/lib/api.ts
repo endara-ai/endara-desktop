@@ -392,3 +392,65 @@ export async function oauthSetupCancel(sessionId: string): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------
+
+export interface ProfileSummary {
+  name: string;
+  path: string;
+  endpoints: string[];
+  /** `null` = inherit from `RelayConfig::local_js_execution`. */
+  js_execution: boolean | null;
+  /** `null` = inherit from `RelayConfig::toon_output`. */
+  toon_output: boolean | null;
+  endpoint_count: number;
+  tool_count: number;
+}
+
+export interface ProfileDetail extends ProfileSummary {
+  /** Full catalog scoped to the profile's endpoints. */
+  tools: Tool[];
+}
+
+export interface CreateProfileParams {
+  name: string;
+  path: string;
+  endpoints: string[];
+  js_execution?: boolean | null;
+  toon_output?: boolean | null;
+}
+
+export type UpdateProfileParams = CreateProfileParams;
+
+export async function listProfiles(): Promise<ProfileSummary[]> {
+  return fetchJson<ProfileSummary[]>('/profiles');
+}
+
+export async function getProfile(path: string): Promise<ProfileDetail> {
+  return fetchJson<ProfileDetail>(`/profiles/${encodeURIComponent(path)}`);
+}
+
+export async function createProfile(params: CreateProfileParams): Promise<ProfileSummary> {
+  return fetchJson<ProfileSummary>('/profiles', { method: 'POST', body: params });
+}
+
+export async function updateProfile(
+  path: string,
+  params: UpdateProfileParams,
+): Promise<ProfileSummary> {
+  return fetchJson<ProfileSummary>(`/profiles/${encodeURIComponent(path)}`, {
+    method: 'PUT',
+    body: params,
+  });
+}
+
+export async function deleteProfile(path: string): Promise<void> {
+  await fetchJson(`/profiles/${encodeURIComponent(path)}`, { method: 'DELETE' });
+}
+
+export async function getEndpointProfiles(name: string): Promise<{ profiles: string[] }> {
+  return fetchJson<{ profiles: string[] }>(
+    `/endpoints/${encodeURIComponent(name)}/profiles`,
+  );
+}
