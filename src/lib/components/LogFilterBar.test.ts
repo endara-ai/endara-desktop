@@ -11,18 +11,23 @@ interface LogFilterState {
   activeLevels: Set<LogLevel>;
   searchText: string;
   selectedEndpoints: Set<string>; // empty = "All"
+  selectedProfiles?: Set<string>; // empty / undefined = "All"
   toolCallsOnly?: boolean;
 }
 
 function applyLogFilters(lines: ParsedLogLine[], state: LogFilterState): ParsedLogLine[] {
   const q = state.searchText.trim().toLowerCase();
   const hasEndpointFilter = state.selectedEndpoints.size > 0;
+  const hasProfileFilter = (state.selectedProfiles?.size ?? 0) > 0;
   const toolCallsOnly = state.toolCallsOnly === true;
   return lines.filter((line) => {
     if (!state.activeLevels.has(line.level)) return false;
     if (toolCallsOnly && !line.isToolCall) return false;
     if (hasEndpointFilter) {
       if (!line.endpoint || !state.selectedEndpoints.has(line.endpoint)) return false;
+    }
+    if (hasProfileFilter) {
+      if (!line.profile || !state.selectedProfiles!.has(line.profile)) return false;
     }
     if (q.length > 0 && !line.raw.toLowerCase().includes(q)) return false;
     return true;
@@ -150,6 +155,69 @@ describe('applyLogFilters', () => {
       selectedEndpoints: new Set(['github']),
     });
     expect(noMatch).toHaveLength(0);
+  });
+
+  // #8 — Profile filter shows only lines matching the selected profile(s).
+  // Mirrors the engineering-spec test matrix row "Log filter — profile" and
+  // exercises the multi-select dropdown locked decision (Desktop #5).
+  it('restricts to the selected profiles (empty set = All)', () => {
+    const lines: ParsedLogLine[] = [
+      parseLogLine('info', 'mcp_request{profile=work} endpoint{endpoint=gmail}: tools/list ok'),
+      parseLogLine('info', 'mcp_request{profile=work} endpoint{endpoint=linear}: tools/call ok'),
+      parseLogLine('info', 'mcp_request{profile=personal} endpoint{endpoint=gmail}: tools/list ok'),
+      parseLogLine('info', 'endpoint{endpoint=github}: Initialize handshake complete'),
+    ];
+
+    const justWork = applyLogFilters(lines, {
+      activeLevels: ALL_LEVELS,
+      searchText: '',
+      selectedEndpoints: new Set(),
+      selectedProfiles: new Set(['work']),
+    });
+    expect(justWork).toHaveLength(2);
+    expect(justWork.every((l) => l.profile === 'work')).toBe(true);
+
+    const workOrPersonal = applyLogFilters(lines, {
+      activeLevels: ALL_LEVELS,
+      searchText: '',
+      selectedEndpoints: new Set(),
+      selectedProfiles: new Set(['work', 'personal']),
+    });
+    expect(workOrPersonal).toHaveLength(3);
+    expect(workOrPersonal.every((l) => l.profile !== undefined)).toBe(true);
+
+    // Lines with no profile (the github init) are excluded when a profile
+    // filter is active — same shape as the endpoint filter's "All" semantics.
+    const noProfileless = workOrPersonal.find((l) => l.profile === undefined);
+    expect(noProfileless).toBeUndefined();
+
+    // Empty set = "All" — the profile-less line is kept alongside the rest.
+    const all = applyLogFilters(lines, {
+      activeLevels: ALL_LEVELS,
+      searchText: '',
+      selectedEndpoints: new Set(),
+      selectedProfiles: new Set(),
+    });
+    expect(all).toHaveLength(lines.length);
+
+    // Undefined selectedProfiles is also treated as "All".
+    const allUndefined = applyLogFilters(lines, {
+      activeLevels: ALL_LEVELS,
+      searchText: '',
+      selectedEndpoints: new Set(),
+    });
+    expect(allUndefined).toHaveLength(lines.length);
+
+    // AND-combines with the endpoint filter: work + gmail keeps just the one row.
+    const workAndGmail = applyLogFilters(lines, {
+      activeLevels: ALL_LEVELS,
+      searchText: '',
+      selectedEndpoints: new Set(['gmail']),
+      selectedProfiles: new Set(['work']),
+    });
+    expect(workAndGmail).toHaveLength(1);
+    expect(workAndGmail[0].profile).toBe('work');
+    expect(workAndGmail[0].endpoint).toBe('gmail');
   });
 
   // #16 — "Tool calls only" filter shows only isToolCall === true lines, and

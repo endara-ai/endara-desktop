@@ -10,6 +10,7 @@
     filteredCount: number;
     activeLevels: Set<LogLevel>;
     selectedEndpoints: Set<string>;
+    selectedProfiles: Set<string>;
     searchText: string;
     toolCallsOnly: boolean;
     onclear: () => void;
@@ -20,6 +21,7 @@
     filteredCount,
     activeLevels = $bindable(),
     selectedEndpoints = $bindable(),
+    selectedProfiles = $bindable(),
     searchText = $bindable(),
     toolCallsOnly = $bindable(),
     onclear,
@@ -29,6 +31,7 @@
   // the bindable `searchText` prop. 150ms matches the engineering spec.
   let searchInput = $state(searchText);
   let endpointMenuOpen = $state(false);
+  let profileMenuOpen = $state(false);
 
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
@@ -54,6 +57,12 @@
     return Array.from(set).sort();
   });
 
+  const allProfiles = $derived.by(() => {
+    const set = new Set<string>();
+    for (const line of lines) if (line.profile) set.add(line.profile);
+    return Array.from(set).sort();
+  });
+
   const toolCallCount = $derived.by(() => {
     let n = 0;
     for (const line of lines) if (line.isToolCall) n++;
@@ -76,6 +85,17 @@
 
   function selectAllEndpoints() {
     selectedEndpoints = new Set();
+  }
+
+  function toggleProfile(name: string) {
+    const next = new Set(selectedProfiles);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    selectedProfiles = next;
+  }
+
+  function selectAllProfiles() {
+    selectedProfiles = new Set();
   }
 
   function levelPillClass(level: LogLevel, active: boolean): string {
@@ -148,6 +168,44 @@
             </li>
           {:else}
             <li class="px-3 py-1.5 text-(--fg3) italic">No endpoints yet</li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+
+    <div class="relative">
+      <button
+        type="button"
+        class="btn-sec btn-sm"
+        aria-haspopup="listbox"
+        aria-expanded={profileMenuOpen}
+        onclick={() => (profileMenuOpen = !profileMenuOpen)}
+      >
+        Profile: {selectedProfiles.size === 0
+          ? 'All'
+          : selectedProfiles.size === 1
+            ? Array.from(selectedProfiles)[0]
+            : `${selectedProfiles.size} selected`} ▾
+      </button>
+      {#if profileMenuOpen}
+        <ul
+          role="listbox"
+          aria-multiselectable="true"
+          class="absolute right-0 mt-1 z-10 min-w-[12rem] max-h-64 overflow-y-auto rounded-md border border-(--border) bg-(--surface) shadow-lg text-sm"
+        >
+          <li>
+            <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-(--surface-hover)" onclick={selectAllProfiles}>
+              {selectedProfiles.size === 0 ? '✓ ' : '  '}All
+            </button>
+          </li>
+          {#each allProfiles as pr (pr)}
+            <li>
+              <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-(--surface-hover) font-mono" onclick={() => toggleProfile(pr)}>
+                {selectedProfiles.has(pr) ? '✓ ' : '  '}{pr}
+              </button>
+            </li>
+          {:else}
+            <li class="px-3 py-1.5 text-(--fg3) italic">No profiles yet</li>
           {/each}
         </ul>
       {/if}

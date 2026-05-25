@@ -22,6 +22,7 @@
   // Filter state — local, not persisted (engineering spec §2.2).
   let activeLevels = $state<Set<LogLevel>>(new Set(['error', 'warn', 'info', 'debug', 'trace']));
   let selectedEndpoints = $state<Set<string>>(new Set());
+  let selectedProfiles = $state<Set<string>>(new Set());
   let searchText = $state('');
   let toolCallsOnly = $state(false);
 
@@ -37,11 +38,15 @@
   const filteredLines = $derived.by(() => {
     const q = searchText.trim().toLowerCase();
     const hasEndpointFilter = selectedEndpoints.size > 0;
+    const hasProfileFilter = selectedProfiles.size > 0;
     return $relayLogLines.filter((line) => {
       if (!activeLevels.has(line.level)) return false;
       if (toolCallsOnly && !line.isToolCall) return false;
       if (hasEndpointFilter) {
         if (!line.endpoint || !selectedEndpoints.has(line.endpoint)) return false;
+      }
+      if (hasProfileFilter) {
+        if (!line.profile || !selectedProfiles.has(line.profile)) return false;
       }
       if (q.length > 0 && !line.raw.toLowerCase().includes(q)) return false;
       return true;
@@ -148,6 +153,7 @@
     filteredCount={filteredLines.length}
     bind:activeLevels
     bind:selectedEndpoints
+    bind:selectedProfiles
     bind:searchText
     bind:toolCallsOnly
     onclear={clearLogs}
