@@ -17,7 +17,7 @@ export function shouldShowReauthorizeButton(
   return REAUTH_NEEDED_STATUSES.includes(oauthStatus);
 }
 
-export type DetailTabId = 'tools' | 'logs' | 'config' | 'auth';
+export type DetailTabId = 'tools' | 'logs' | 'config' | 'auth' | 'profiles';
 
 export interface DetailTab {
   id: DetailTabId;
@@ -42,6 +42,7 @@ export function visibleTabs(transport: EndpointTransport, disabled: boolean): De
   if (transport === 'oauth') {
     tabs.push({ id: 'auth', label: 'Auth' });
   }
+  tabs.push({ id: 'profiles', label: 'Profiles' });
   return tabs;
 }
 

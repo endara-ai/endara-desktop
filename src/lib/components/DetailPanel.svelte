@@ -13,6 +13,7 @@
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
   import AuthTab from './AuthTab.svelte';
+  import ProfilesTab from './ProfilesTab.svelte';
   import {
     shouldShowRestartButton,
     shouldShowRefreshButton,
@@ -42,7 +43,7 @@
 
   $effect(() => {
     const ep = $selectedEndpointData;
-    if (ep?.disabled && ($activeTab === 'tools' || $activeTab === 'logs')) {
+    if (ep?.disabled && ($activeTab === 'tools' || $activeTab === 'logs' || $activeTab === 'profiles')) {
       activeTab.set('config');
     }
   });
@@ -226,6 +227,8 @@
         <LogsTab />
       {:else if $activeTab === 'auth' && ep.transport === 'oauth'}
         <AuthTab />
+      {:else if $activeTab === 'profiles' && !ep.disabled}
+        <ProfilesTab />
       {:else}
         <ConfigTab />
       {/if}

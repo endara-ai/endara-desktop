@@ -43,28 +43,31 @@ describe('shouldShowRefreshButton', () => {
 });
 
 describe('visibleTabs', () => {
-  it('returns tools, logs, config for stdio when enabled', () => {
+  it('returns tools, logs, config, profiles for stdio when enabled', () => {
     expect(visibleTabs('stdio', false)).toEqual([
       { id: 'tools', label: 'Tools' },
       { id: 'logs', label: 'Logs' },
       { id: 'config', label: 'Config' },
+      { id: 'profiles', label: 'Profiles' },
     ]);
   });
 
-  it('returns tools, logs, config for http when enabled', () => {
+  it('returns tools, logs, config, profiles for http when enabled', () => {
     expect(visibleTabs('http', false)).toEqual([
       { id: 'tools', label: 'Tools' },
       { id: 'logs', label: 'Logs' },
       { id: 'config', label: 'Config' },
+      { id: 'profiles', label: 'Profiles' },
     ]);
   });
 
-  it('returns tools, logs, config, auth for oauth when enabled', () => {
+  it('returns tools, logs, config, auth, profiles for oauth when enabled', () => {
     expect(visibleTabs('oauth', false)).toEqual([
       { id: 'tools', label: 'Tools' },
       { id: 'logs', label: 'Logs' },
       { id: 'config', label: 'Config' },
       { id: 'auth', label: 'Auth' },
+      { id: 'profiles', label: 'Profiles' },
     ]);
   });
 
@@ -79,12 +82,19 @@ describe('visibleTabs', () => {
     ]);
   });
 
+  it('omits profiles tab when disabled', () => {
+    for (const t of ['stdio', 'sse', 'http', 'oauth'] as const) {
+      const ids = visibleTabs(t, true).map((tab) => tab.id);
+      expect(ids).not.toContain('profiles');
+    }
+  });
+
   it('preserves stable tab order across transports when enabled', () => {
     const order = (t: EndpointTransport) => visibleTabs(t, false).map((tab) => tab.id);
-    expect(order('stdio')).toEqual(['tools', 'logs', 'config']);
-    expect(order('sse')).toEqual(['tools', 'logs', 'config']);
-    expect(order('http')).toEqual(['tools', 'logs', 'config']);
-    expect(order('oauth')).toEqual(['tools', 'logs', 'config', 'auth']);
+    expect(order('stdio')).toEqual(['tools', 'logs', 'config', 'profiles']);
+    expect(order('sse')).toEqual(['tools', 'logs', 'config', 'profiles']);
+    expect(order('http')).toEqual(['tools', 'logs', 'config', 'profiles']);
+    expect(order('oauth')).toEqual(['tools', 'logs', 'config', 'auth', 'profiles']);
   });
 });
 
