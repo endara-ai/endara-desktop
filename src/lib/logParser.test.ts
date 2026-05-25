@@ -111,6 +111,54 @@ describe('parseLogLine', () => {
   });
 });
 
+describe('parseLogLine — profile field (matrix row #7)', () => {
+  it('extracts profile from the mcp_request span', () => {
+    // Engineering Spec §7.1: the relay emits
+    // tracing::info_span!("mcp_request", profile = %profile_path).
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-25T10:30:15Z INFO mcp_request{profile="work"} endpoint{endpoint="gmail"}: Tool call completed tool=send_email status=ok duration_ms=234',
+    );
+    expect(parsed.profile).toBe('work');
+    expect(parsed.endpoint).toBe('gmail');
+    expect(parsed.tool).toBe('send_email');
+    expect(parsed.durationMs).toBe(234);
+  });
+
+  it('extracts profile from an unquoted span value', () => {
+    // The Compact tracing formatter omits the quotes around span values.
+    // The parser must handle both shapes per the recon §5 note.
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-25T10:30:15 INFO mcp_request{profile=work endpoint=gmail tool=send_email} completed duration_ms=234',
+    );
+    expect(parsed.profile).toBe('work');
+  });
+
+  it('falls back to any span carrying a profile field when mcp_request is absent', () => {
+    // Robustness to R3.E's exact span name: if the field shows up on a
+    // different span (e.g. `request{profile=work id=42}`), we still surface it.
+    const parsed = parseLogLine(
+      'info',
+      'request{method="tools/call" id=42 profile="personal"} endpoint{endpoint="slack"}: hello',
+    );
+    expect(parsed.profile).toBe('personal');
+  });
+
+  it('leaves profile undefined when no span carries the field', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github" transport="stdio"}: Initialize handshake complete',
+    );
+    expect(parsed.profile).toBeUndefined();
+  });
+
+  it('leaves profile undefined for lines with no span context', () => {
+    const parsed = parseLogLine('info', 'Relay listening on 127.0.0.1:47107');
+    expect(parsed.profile).toBeUndefined();
+  });
+});
+
 describe('parseLogLine — endpointOverride (Slice D.2)', () => {
   it('uses the override when provided, ignoring the parsed span value', () => {
     const parsed = parseLogLine(

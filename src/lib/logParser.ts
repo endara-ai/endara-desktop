@@ -20,6 +20,7 @@ export interface ParsedLogLine {
   tool?: string;
   status?: string;
   durationMs?: number;
+  profile?: string;
   message: string;
   raw: string;
   isToolCall: boolean;
@@ -123,6 +124,15 @@ export function parseLogLine(
       ? options.endpointOverride
       : parsedEndpoint;
 
+  // Per Engineering Spec §7.1 the relay emits `tracing::info_span!("mcp_request",
+  // profile = %profile_path)`, so the canonical span name is `mcp_request`.
+  // Fall back to scanning every captured span for a `profile` field so the
+  // parser stays robust to the exact span name R3.E ends up emitting (see
+  // Desktop recon §5 and the spec's "Recon findings — locked decisions"
+  // Desktop #6).
+  const profile =
+    spans.mcp_request?.profile ?? Object.values(spans).find((s) => s.profile)?.profile;
+
   return {
     timestamp,
     level: normalizeLevel(extractedLevel ?? level),
@@ -134,6 +144,7 @@ export function parseLogLine(
     tool,
     status,
     durationMs: durationMs !== undefined && !Number.isNaN(durationMs) ? durationMs : undefined,
+    profile,
     message: cleanedMessage,
     raw: message,
     isToolCall,
