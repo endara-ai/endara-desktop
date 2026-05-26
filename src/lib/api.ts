@@ -400,10 +400,10 @@ export interface ProfileSummary {
   name: string;
   path: string;
   endpoints: string[];
-  /** `null` = inherit from `RelayConfig::local_js_execution`. */
-  js_execution: boolean | null;
-  /** `null` = inherit from `RelayConfig::toon_output`. */
-  toon_output: boolean | null;
+  /** Per-profile JS-execution toggle. Always a concrete boolean. */
+  js_execution: boolean;
+  /** Per-profile TOON output toggle. Always a concrete boolean. */
+  toon_output: boolean;
   endpoint_count: number;
   tool_count: number;
 }
@@ -417,8 +417,10 @@ export interface CreateProfileParams {
   name: string;
   path: string;
   endpoints: string[];
-  js_execution?: boolean | null;
-  toon_output?: boolean | null;
+  /** Required; relay rejects requests that omit it. */
+  js_execution: boolean;
+  /** Required; relay rejects requests that omit it. */
+  toon_output: boolean;
 }
 
 export type UpdateProfileParams = CreateProfileParams;

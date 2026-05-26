@@ -66,9 +66,8 @@ export function isCreateProfileFormValid(name: string, path: string): boolean {
  *
  * The `js_execution` / `toon_output` toggles in `CreateProfileModal` are
  * seeded copy-on-write from the current global relay defaults at modal
- * open, so the payload always carries concrete booleans reflecting the
- * user's intent at create time. The relay still accepts `null` on the
- * wire (legacy "inherit from global"), but the desktop never produces it.
+ * open and the payload always carries concrete booleans — the relay
+ * rejects requests that omit either field.
  */
 export function buildCreateProfilePayload(input: {
   name: string;

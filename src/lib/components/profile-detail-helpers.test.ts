@@ -27,19 +27,13 @@ function makeDetail(overrides: Partial<ProfileDetail> = {}): ProfileDetail {
   };
 }
 
-// Default globals snapshot used by the form-loading copy-on-write contract.
-// Matches the production defaults in `stores.ts` so values feel realistic
-// when reading the tests, but the specific booleans are only meaningful in
-// tests that explicitly exercise the null→default resolution.
-const DEFAULTS = { jsExecution: false, toonOutput: true };
-
 describe('sortProfilesByName', () => {
   it('sorts by friendly name with path tiebreak', () => {
     const profiles: ProfileSummary[] = [
-      { name: 'Personal', path: 'personal', endpoints: [], js_execution: null, toon_output: null, endpoint_count: 0, tool_count: 0 },
-      { name: 'Work', path: 'work-a', endpoints: [], js_execution: null, toon_output: null, endpoint_count: 0, tool_count: 0 },
-      { name: 'Work', path: 'work-b', endpoints: [], js_execution: null, toon_output: null, endpoint_count: 0, tool_count: 0 },
-      { name: 'Apex', path: 'apex', endpoints: [], js_execution: null, toon_output: null, endpoint_count: 0, tool_count: 0 },
+      { name: 'Personal', path: 'personal', endpoints: [], js_execution: false, toon_output: true, endpoint_count: 0, tool_count: 0 },
+      { name: 'Work', path: 'work-a', endpoints: [], js_execution: false, toon_output: true, endpoint_count: 0, tool_count: 0 },
+      { name: 'Work', path: 'work-b', endpoints: [], js_execution: false, toon_output: true, endpoint_count: 0, tool_count: 0 },
+      { name: 'Apex', path: 'apex', endpoints: [], js_execution: false, toon_output: true, endpoint_count: 0, tool_count: 0 },
     ];
     expect(sortProfilesByName(profiles).map((p) => p.path)).toEqual([
       'apex',
@@ -51,8 +45,8 @@ describe('sortProfilesByName', () => {
 
   it('does not mutate the input array', () => {
     const profiles: ProfileSummary[] = [
-      { name: 'B', path: 'b', endpoints: [], js_execution: null, toon_output: null, endpoint_count: 0, tool_count: 0 },
-      { name: 'A', path: 'a', endpoints: [], js_execution: null, toon_output: null, endpoint_count: 0, tool_count: 0 },
+      { name: 'B', path: 'b', endpoints: [], js_execution: false, toon_output: true, endpoint_count: 0, tool_count: 0 },
+      { name: 'A', path: 'a', endpoints: [], js_execution: false, toon_output: true, endpoint_count: 0, tool_count: 0 },
     ];
     const before = profiles.map((p) => p.path);
     sortProfilesByName(profiles);
@@ -89,80 +83,78 @@ describe('toggleStagedEndpoint (matrix row #6 — checklist staging)', () => {
   });
 });
 
-describe('formFromDetail (copy-on-write from globals)', () => {
-  it('resolves stored null to the provided default for both toggles', () => {
-    const detail = makeDetail({ js_execution: null, toon_output: null });
-    const form = formFromDetail(detail, { jsExecution: true, toonOutput: false });
-    expect(form.jsExecution).toBe(true);
-    expect(form.toonOutput).toBe(false);
-  });
-
-  it('preserves stored true/false even when defaults differ', () => {
+describe('formFromDetail', () => {
+  it('copies the stored booleans verbatim', () => {
     const detail = makeDetail({ js_execution: false, toon_output: true });
-    const form = formFromDetail(detail, { jsExecution: true, toonOutput: false });
+    const form = formFromDetail(detail);
     expect(form.jsExecution).toBe(false);
     expect(form.toonOutput).toBe(true);
+  });
+
+  it('round-trips true/true', () => {
+    const detail = makeDetail({ js_execution: true, toon_output: true });
+    const form = formFromDetail(detail);
+    expect(form.jsExecution).toBe(true);
+    expect(form.toonOutput).toBe(true);
+  });
+
+  it('round-trips false/false', () => {
+    const detail = makeDetail({ js_execution: false, toon_output: false });
+    const form = formFromDetail(detail);
+    expect(form.jsExecution).toBe(false);
+    expect(form.toonOutput).toBe(false);
   });
 });
 
 describe('computeProfileIsDirty', () => {
   it('returns false when form is unchanged from detail', () => {
     const detail = makeDetail();
-    expect(computeProfileIsDirty(detail, formFromDetail(detail, DEFAULTS), DEFAULTS)).toBe(false);
+    expect(computeProfileIsDirty(detail, formFromDetail(detail))).toBe(false);
   });
 
   it('returns true when the name changes', () => {
     const detail = makeDetail();
-    const form = { ...formFromDetail(detail, DEFAULTS), name: 'Work Updated' };
-    expect(computeProfileIsDirty(detail, form, DEFAULTS)).toBe(true);
+    const form = { ...formFromDetail(detail), name: 'Work Updated' };
+    expect(computeProfileIsDirty(detail, form)).toBe(true);
   });
 
   it('returns true when the path changes', () => {
     const detail = makeDetail();
-    const form = { ...formFromDetail(detail, DEFAULTS), path: 'work-2' };
-    expect(computeProfileIsDirty(detail, form, DEFAULTS)).toBe(true);
+    const form = { ...formFromDetail(detail), path: 'work-2' };
+    expect(computeProfileIsDirty(detail, form)).toBe(true);
   });
 
   it('returns true when js_execution flips between booleans', () => {
     const detail = makeDetail({ js_execution: true });
-    const form = { ...formFromDetail(detail, DEFAULTS), jsExecution: false };
-    expect(computeProfileIsDirty(detail, form, DEFAULTS)).toBe(true);
+    const form = { ...formFromDetail(detail), jsExecution: false };
+    expect(computeProfileIsDirty(detail, form)).toBe(true);
   });
 
-  it('stored null + form matching default is NOT dirty (copy-on-write baseline)', () => {
-    const detail = makeDetail({ js_execution: null, toon_output: null });
-    const form = formFromDetail(detail, { jsExecution: true, toonOutput: false });
-    expect(
-      computeProfileIsDirty(detail, form, { jsExecution: true, toonOutput: false }),
-    ).toBe(false);
-  });
-
-  it('stored null + user toggles opposite of default IS dirty', () => {
-    const detail = makeDetail({ js_execution: null, toon_output: null });
-    const defaults = { jsExecution: true, toonOutput: false };
-    const form = { ...formFromDetail(detail, defaults), toonOutput: true };
-    expect(computeProfileIsDirty(detail, form, defaults)).toBe(true);
+  it('returns true when toon_output flips between booleans', () => {
+    const detail = makeDetail({ toon_output: true });
+    const form = { ...formFromDetail(detail), toonOutput: false };
+    expect(computeProfileIsDirty(detail, form)).toBe(true);
   });
 
   it('returns true when an endpoint is staged on', () => {
     const detail = makeDetail();
-    const form = formFromDetail(detail, DEFAULTS);
+    const form = formFromDetail(detail);
     form.endpoints = toggleStagedEndpoint(form.endpoints, 'Todoist');
-    expect(computeProfileIsDirty(detail, form, DEFAULTS)).toBe(true);
+    expect(computeProfileIsDirty(detail, form)).toBe(true);
   });
 
   it('returns true when an endpoint is staged off', () => {
     const detail = makeDetail();
-    const form = formFromDetail(detail, DEFAULTS);
+    const form = formFromDetail(detail);
     form.endpoints = toggleStagedEndpoint(form.endpoints, 'Gmail');
-    expect(computeProfileIsDirty(detail, form, DEFAULTS)).toBe(true);
+    expect(computeProfileIsDirty(detail, form)).toBe(true);
   });
 
   it('returns false when the endpoint set has the same members in different order', () => {
     const detail = makeDetail({ endpoints: ['Gmail', 'Linear'] });
-    const form = formFromDetail(detail, DEFAULTS);
+    const form = formFromDetail(detail);
     form.endpoints = new Set(['Linear', 'Gmail']);
-    expect(computeProfileIsDirty(detail, form, DEFAULTS)).toBe(false);
+    expect(computeProfileIsDirty(detail, form)).toBe(false);
   });
 });
 
@@ -170,7 +162,7 @@ describe('computeProfileIsDirty', () => {
 describe('buildUpdateProfileParams (matrix row #4 — save payload shape)', () => {
   it('emits the staged form as a UpdateProfileParams body', () => {
     const detail = makeDetail();
-    const form = formFromDetail(detail, DEFAULTS);
+    const form = formFromDetail(detail);
     form.name = 'Work Updated';
     form.endpoints = toggleStagedEndpoint(form.endpoints, 'Todoist');
     const params = buildUpdateProfileParams(form);
@@ -185,15 +177,13 @@ describe('buildUpdateProfileParams (matrix row #4 — save payload shape)', () =
 
   it('trims surrounding whitespace from the friendly name', () => {
     const detail = makeDetail();
-    const form = { ...formFromDetail(detail, DEFAULTS), name: '  Work  ' };
+    const form = { ...formFromDetail(detail), name: '  Work  ' };
     expect(buildUpdateProfileParams(form).name).toBe('Work');
   });
 
-  it('never emits null on js_execution / toon_output (copy-on-write resolves at load)', () => {
-    const detail = makeDetail({ js_execution: null, toon_output: null });
-    const params = buildUpdateProfileParams(
-      formFromDetail(detail, { jsExecution: false, toonOutput: true }),
-    );
+  it('always emits concrete booleans on js_execution / toon_output', () => {
+    const detail = makeDetail({ js_execution: false, toon_output: true });
+    const params = buildUpdateProfileParams(formFromDetail(detail));
     expect(typeof params.js_execution).toBe('boolean');
     expect(typeof params.toon_output).toBe('boolean');
     expect(params.js_execution).toBe(false);
@@ -293,7 +283,7 @@ describe('runSaveProfile (matrix row #4 — Save calls PUT /api/profiles/{path})
 describe('checklist staging + save (matrix row #6 — staged, then committed)', () => {
   it('toggling does not call updateProfile; only Save does', async () => {
     const detail = makeDetail({ endpoints: ['Gmail', 'Linear'] });
-    let form = formFromDetail(detail, DEFAULTS);
+    let form = formFromDetail(detail);
 
     const updateProfile = vi.fn(async () => ({
       ...detail,

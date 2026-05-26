@@ -1,9 +1,8 @@
 <script lang="ts">
   import type { ProfileDetail, ProfileSummary } from '$lib/api';
   import { getProfile, listProfiles, updateProfile, deleteProfile } from '$lib/api';
-  import { endpoints, relayPort, jsExecutionMode, toonOutput } from '$lib/stores';
+  import { endpoints, relayPort } from '$lib/stores';
   import { registerDirtyChecker } from '$lib/stores/unsavedChangesGuard';
-  import { get } from 'svelte/store';
   import { toast } from 'svelte-sonner';
   import ConfirmModal from './ConfirmModal.svelte';
   import TransportBadge from './TransportBadge.svelte';
@@ -30,14 +29,6 @@
 
   let detail = $state<ProfileDetail | null>(null);
   let form = $state<ProfileEditForm | null>(null);
-  // Snapshot of `{ jsExecution, toonOutput }` taken once when the form is
-  // built so copy-on-write seeding (and the dirty check that pairs with it)
-  // stays stable for the duration of the edit session. Reseeded only on the
-  // next load/revert.
-  let formDefaults = $state<{ jsExecution: boolean; toonOutput: boolean }>({
-    jsExecution: false,
-    toonOutput: true,
-  });
   let loading = $state(false);
   let saving = $state(false);
   let deleting = $state(false);
@@ -61,12 +52,7 @@
         // Bail if the user moved on while we were loading.
         if (selectedPath !== path) return;
         detail = d;
-        // Snapshot the current global defaults once at load time so
-        // copy-on-write resolution is stable for this edit session — if the
-        // user changes the global setting elsewhere while editing, the
-        // profile's seeded value doesn't shift under them.
-        formDefaults = { jsExecution: get(jsExecutionMode), toonOutput: get(toonOutput) };
-        form = formFromDetail(d, formDefaults);
+        form = formFromDetail(d);
       })
       .catch(() => {
         if (selectedPath !== path) return;
@@ -82,7 +68,7 @@
   let nameError = $derived(form ? validateProfileName(form.name) : null);
   let pathError = $derived(form ? validateProfilePath(form.path) : null);
   let isDirty = $derived(
-    detail && form ? computeProfileIsDirty(detail, form, formDefaults) : false,
+    detail && form ? computeProfileIsDirty(detail, form) : false,
   );
   let canSave = $derived(
     !!form && !nameError && !pathError && isDirty && !saving && !deleting,
@@ -128,7 +114,7 @@
             endpoint_count: summary.endpoint_count,
             tool_count: summary.tool_count,
           };
-          form = formFromDetail(detail, formDefaults);
+          form = formFromDetail(detail);
         }
       },
       toastSuccess: toast.success,
@@ -158,7 +144,7 @@
   }
 
   function handleRevert() {
-    if (detail) form = formFromDetail(detail, formDefaults);
+    if (detail) form = formFromDetail(detail);
   }
 
   // Connect-your-MCP-client snippet. Derived from the live relay port and the

@@ -21,8 +21,8 @@ function p(
     name,
     path,
     endpoints,
-    js_execution: null,
-    toon_output: null,
+    js_execution: false,
+    toon_output: true,
     endpoint_count: endpoints.length,
     tool_count: 0,
     ...overrides,
@@ -100,15 +100,15 @@ describe('buildToggleUpdatePayload', () => {
     expect(payload).toEqual(expected);
   });
 
-  it('preserves null inherit-sentinels for js_execution/toon_output (remove)', () => {
+  it('mirrors the profile booleans through unchanged on remove', () => {
     const profile = p('Personal', 'personal', ['gmail', 'github']);
     const payload = buildToggleUpdatePayload(profile, 'github', false);
     expect(payload).toEqual({
       name: 'Personal',
       path: 'personal',
       endpoints: ['gmail'],
-      js_execution: null,
-      toon_output: null,
+      js_execution: false,
+      toon_output: true,
     });
   });
 });
@@ -146,8 +146,8 @@ describe('ProfilesTab toggle round-trip', () => {
       name: 'Work',
       path: 'work',
       endpoints: ['github', 'slack'],
-      js_execution: null,
-      toon_output: null,
+      js_execution: false,
+      toon_output: true,
     });
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(toastError).not.toHaveBeenCalled();
