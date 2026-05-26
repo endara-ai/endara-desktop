@@ -12,22 +12,32 @@ export interface ProfileEditForm {
   name: string;
   path: string;
   endpoints: Set<string>;
-  jsExecution: boolean | null;
-  toonOutput: boolean | null;
+  jsExecution: boolean;
+  toonOutput: boolean;
 }
 
 /**
  * Seed the form from a freshly-loaded `ProfileDetail`. The membership set is
  * built from the relay's `endpoints` array so server-side ordering doesn't
  * leak into the form's identity. Used both on initial load and on revert.
+ *
+ * `defaults` provides the current global `jsExecution` / `toonOutput` values
+ * (typically read once from the `jsExecutionMode` / `toonOutput` stores). When
+ * the stored detail value is `null` — the legacy "inherit from global" marker
+ * the relay still emits on the wire — the form resolves to the matching
+ * default. This is a one-way copy-on-write: the next save persists a concrete
+ * boolean, so the `null` disappears on first edit-save.
  */
-export function formFromDetail(detail: ProfileDetail): ProfileEditForm {
+export function formFromDetail(
+  detail: ProfileDetail,
+  defaults: { jsExecution: boolean; toonOutput: boolean },
+): ProfileEditForm {
   return {
     name: detail.name,
     path: detail.path,
     endpoints: new Set(detail.endpoints),
-    jsExecution: detail.js_execution,
-    toonOutput: detail.toon_output,
+    jsExecution: detail.js_execution ?? defaults.jsExecution,
+    toonOutput: detail.toon_output ?? defaults.toonOutput,
   };
 }
 
@@ -50,12 +60,24 @@ export function toggleStagedEndpoint(staged: Set<string>, name: string): Set<str
  * Whether the form has uncommitted edits relative to the loaded detail.
  * Compares all four user-editable fields plus membership-as-a-set so order
  * differences in the underlying array don't register as dirty.
+ *
+ * `defaults` are the same global values used to seed the form in
+ * {@link formFromDetail} so we can recognise "user did nothing" on a profile
+ * that was loaded with stored `null`. The comparison is therefore against
+ * `detail.js_execution ?? defaults.jsExecution` (and same for toon): a
+ * profile loaded with stored `null` is dirty IFF the user toggles to the
+ * opposite of the global default. The first save then persists a concrete
+ * boolean and the `null` disappears from the stored config.
  */
-export function computeProfileIsDirty(detail: ProfileDetail, form: ProfileEditForm): boolean {
+export function computeProfileIsDirty(
+  detail: ProfileDetail,
+  form: ProfileEditForm,
+  defaults: { jsExecution: boolean; toonOutput: boolean },
+): boolean {
   if (form.name !== detail.name) return true;
   if (form.path !== detail.path) return true;
-  if (form.jsExecution !== detail.js_execution) return true;
-  if (form.toonOutput !== detail.toon_output) return true;
+  if (form.jsExecution !== (detail.js_execution ?? defaults.jsExecution)) return true;
+  if (form.toonOutput !== (detail.toon_output ?? defaults.toonOutput)) return true;
   const original = new Set(detail.endpoints);
   if (original.size !== form.endpoints.size) return true;
   for (const n of form.endpoints) {
@@ -68,7 +90,9 @@ export function computeProfileIsDirty(detail: ProfileDetail, form: ProfileEditFo
  * Build the `PUT /api/profiles/{path}` body from the current form snapshot.
  * `name` is trimmed (matches the create-profile modal) and `endpoints` is
  * emitted in stable alphabetical order so two semantically-equal saves
- * produce byte-identical bodies.
+ * produce byte-identical bodies. `js_execution` and `toon_output` are always
+ * emitted as concrete booleans — the relay still accepts `null` on the wire
+ * for backward compat but the desktop never produces it.
  */
 export function buildUpdateProfileParams(form: ProfileEditForm): UpdateProfileParams {
   return {

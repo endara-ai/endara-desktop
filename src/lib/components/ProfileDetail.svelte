@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { ProfileDetail, ProfileSummary } from '$lib/api';
   import { getProfile, listProfiles, updateProfile, deleteProfile } from '$lib/api';
-  import { endpoints, relayPort } from '$lib/stores';
+  import { endpoints, relayPort, jsExecutionMode, toonOutput } from '$lib/stores';
   import { registerDirtyChecker } from '$lib/stores/unsavedChangesGuard';
+  import { get } from 'svelte/store';
   import { toast } from 'svelte-sonner';
   import ConfirmModal from './ConfirmModal.svelte';
   import TransportBadge from './TransportBadge.svelte';
@@ -29,6 +30,14 @@
 
   let detail = $state<ProfileDetail | null>(null);
   let form = $state<ProfileEditForm | null>(null);
+  // Snapshot of `{ jsExecution, toonOutput }` taken once when the form is
+  // built so copy-on-write seeding (and the dirty check that pairs with it)
+  // stays stable for the duration of the edit session. Reseeded only on the
+  // next load/revert.
+  let formDefaults = $state<{ jsExecution: boolean; toonOutput: boolean }>({
+    jsExecution: false,
+    toonOutput: true,
+  });
   let loading = $state(false);
   let saving = $state(false);
   let deleting = $state(false);
@@ -52,7 +61,12 @@
         // Bail if the user moved on while we were loading.
         if (selectedPath !== path) return;
         detail = d;
-        form = formFromDetail(d);
+        // Snapshot the current global defaults once at load time so
+        // copy-on-write resolution is stable for this edit session — if the
+        // user changes the global setting elsewhere while editing, the
+        // profile's seeded value doesn't shift under them.
+        formDefaults = { jsExecution: get(jsExecutionMode), toonOutput: get(toonOutput) };
+        form = formFromDetail(d, formDefaults);
       })
       .catch(() => {
         if (selectedPath !== path) return;
@@ -68,7 +82,7 @@
   let nameError = $derived(form ? validateProfileName(form.name) : null);
   let pathError = $derived(form ? validateProfilePath(form.path) : null);
   let isDirty = $derived(
-    detail && form ? computeProfileIsDirty(detail, form) : false,
+    detail && form ? computeProfileIsDirty(detail, form, formDefaults) : false,
   );
   let canSave = $derived(
     !!form && !nameError && !pathError && isDirty && !saving && !deleting,
@@ -87,16 +101,6 @@
   function toggleEndpoint(name: string) {
     if (!form) return;
     form.endpoints = toggleStagedEndpoint(form.endpoints, name);
-  }
-
-  function setJsExecution(value: boolean | null) {
-    if (!form) return;
-    form.jsExecution = value;
-  }
-
-  function setToonOutput(value: boolean | null) {
-    if (!form) return;
-    form.toonOutput = value;
   }
 
   async function handleSave() {
@@ -124,7 +128,7 @@
             endpoint_count: summary.endpoint_count,
             tool_count: summary.tool_count,
           };
-          form = formFromDetail(detail);
+          form = formFromDetail(detail, formDefaults);
         }
       },
       toastSuccess: toast.success,
@@ -154,7 +158,7 @@
   }
 
   function handleRevert() {
-    if (detail) form = formFromDetail(detail);
+    if (detail) form = formFromDetail(detail, formDefaults);
   }
 
   // Connect-your-MCP-client snippet. Derived from the live relay port and the
@@ -315,52 +319,42 @@
           <div class="min-w-0">
             <div class="text-xs font-medium text-(--fg2)">JS Execution</div>
             <div class="text-[11px] text-(--fg3)">
-              {form.jsExecution === null
-                ? 'Inherit from relay default'
-                : form.jsExecution
-                  ? 'execute_tools sandbox enabled'
-                  : 'Direct tool calls only'}
+              {form.jsExecution
+                ? 'execute_tools sandbox enabled'
+                : 'Direct tool calls only'}
             </div>
           </div>
-          <select
-            class="px-2 py-1 text-xs rounded-lg border border-(--border) bg-(--surface) text-(--fg1)"
-            value={form.jsExecution === null ? 'inherit' : form.jsExecution ? 'on' : 'off'}
-            onchange={(e) => {
-              const v = (e.currentTarget as HTMLSelectElement).value;
-              setJsExecution(v === 'inherit' ? null : v === 'on');
-            }}
-            aria-label="JS execution mode"
+          <button
+            type="button"
+            class="shrink-0 relative w-10 h-5 rounded-full transition-colors {form.jsExecution ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+            onclick={() => { if (form) form.jsExecution = !form.jsExecution; }}
+            role="switch"
+            aria-checked={form.jsExecution}
+            aria-label="Toggle JS execution mode for this profile"
           >
-            <option value="on">On</option>
-            <option value="off">Off</option>
-            <option value="inherit">Inherit</option>
-          </select>
+            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {form.jsExecution ? 'translate-x-5' : ''}"></span>
+          </button>
         </div>
 
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0">
             <div class="text-xs font-medium text-(--fg2)">TOON Output</div>
             <div class="text-[11px] text-(--fg3)">
-              {form.toonOutput === null
-                ? 'Inherit from relay default'
-                : form.toonOutput
-                  ? 'Tool responses encoded as TOON'
-                  : 'Tool responses as raw JSON'}
+              {form.toonOutput
+                ? 'Tool responses encoded as TOON'
+                : 'Tool responses as raw JSON'}
             </div>
           </div>
-          <select
-            class="px-2 py-1 text-xs rounded-lg border border-(--border) bg-(--surface) text-(--fg1)"
-            value={form.toonOutput === null ? 'inherit' : form.toonOutput ? 'on' : 'off'}
-            onchange={(e) => {
-              const v = (e.currentTarget as HTMLSelectElement).value;
-              setToonOutput(v === 'inherit' ? null : v === 'on');
-            }}
-            aria-label="TOON output"
+          <button
+            type="button"
+            class="shrink-0 relative w-10 h-5 rounded-full transition-colors {form.toonOutput ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+            onclick={() => { if (form) form.toonOutput = !form.toonOutput; }}
+            role="switch"
+            aria-checked={form.toonOutput}
+            aria-label="Toggle TOON output for this profile"
           >
-            <option value="on">On</option>
-            <option value="off">Off</option>
-            <option value="inherit">Inherit</option>
-          </select>
+            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {form.toonOutput ? 'translate-x-5' : ''}"></span>
+          </button>
         </div>
       </div>
 

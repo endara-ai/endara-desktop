@@ -64,10 +64,11 @@ export function isCreateProfileFormValid(name: string, path: string): boolean {
  * whitespace), and seeds an empty endpoints list — server assignment
  * happens after creation in the right panel (Engineering Spec §9.3).
  *
- * The `js_execution` / `toon_output` toggles default to `true` per
- * Engineering Spec §9.3 ("toggle, defaults to on"). The relay's
- * `ProfileConfig` treats `null` as "inherit from global", so the modal
- * always sends an explicit boolean to make the user's intent durable.
+ * The `js_execution` / `toon_output` toggles in `CreateProfileModal` are
+ * seeded copy-on-write from the current global relay defaults at modal
+ * open, so the payload always carries concrete booleans reflecting the
+ * user's intent at create time. The relay still accepts `null` on the
+ * wire (legacy "inherit from global"), but the desktop never produces it.
  */
 export function buildCreateProfilePayload(input: {
   name: string;

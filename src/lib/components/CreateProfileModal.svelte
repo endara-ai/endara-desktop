@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createProfile, type ProfileSummary } from '$lib/api';
   import { focusTrap } from '$lib/actions/focusTrap';
+  import { jsExecutionMode, toonOutput as toonOutputStore } from '$lib/stores';
+  import { get } from 'svelte/store';
   import { toast } from 'svelte-sonner';
   import {
     buildCreateProfilePayload,
@@ -16,8 +18,11 @@
 
   let name = $state('');
   let path = $state('');
-  let jsExecution = $state(true);
-  let toonOutput = $state(true);
+  // Copy-on-write from the current global relay defaults, snapshotted once at
+  // modal open. If the user changes the global setting elsewhere while the
+  // modal is open, the toggles here don't shift under them.
+  let jsExecution = $state(get(jsExecutionMode));
+  let toonOutput = $state(get(toonOutputStore));
 
   let nameTouched = $state(false);
   let pathTouched = $state(false);
