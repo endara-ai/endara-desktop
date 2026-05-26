@@ -78,6 +78,9 @@
       No profiles yet — create one in the Profiles tab to namespace your servers.
     </div>
   {:else}
+    <p class="profile-description">
+      Enable this server in a profile to include its tools at <span class="mono">/mcp/{'{'}path{'}'}</span>. Disable to keep its tools out of that profile's endpoint.
+    </p>
     {#each rows as row (row.path)}
       {@const profile = allProfiles.find((p) => p.path === row.path)!}
       <label class="profile-row {togglingPath === row.path ? 'opacity-50' : ''}">
@@ -102,6 +105,16 @@
     height: 100%;
     overflow-y: auto;
     padding: 16px 20px;
+  }
+
+  .profile-description {
+    font-size: 12px;
+    color: var(--fg2);
+    margin-bottom: 12px;
+    line-height: 1.4;
+  }
+  .profile-description .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
   .profile-row {
