@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ProfileDetail, ProfileSummary } from '$lib/api';
   import { getProfile, listProfiles, updateProfile, deleteProfile } from '$lib/api';
-  import { endpoints } from '$lib/stores';
+  import { endpoints, relayPort } from '$lib/stores';
   import { registerDirtyChecker } from '$lib/stores/unsavedChangesGuard';
   import { toast } from 'svelte-sonner';
   import ConfirmModal from './ConfirmModal.svelte';
@@ -155,6 +155,44 @@
 
   function handleRevert() {
     if (detail) form = formFromDetail(detail);
+  }
+
+  // Connect-your-MCP-client snippet. Derived from the live relay port and the
+  // saved profile path so renaming the path (and saving) or changing the port
+  // in Settings updates both the URL and the JSON snippet immediately.
+  const profileMcpUrl = $derived(
+    detail ? `http://localhost:${$relayPort}/mcp/${detail.path}` : '',
+  );
+  const claudeConfigSnippet = $derived(
+    detail
+      ? `{
+  "mcpServers": {
+    "endara-${detail.path}": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:${$relayPort}/mcp/${detail.path}"
+      ]
+    }
+  }
+}`
+      : '',
+  );
+
+  // Independent copy-button state so the URL and JSON buttons don't flicker
+  // each other's checkmark when one is clicked.
+  let urlCopied = $state(false);
+  let jsonCopied = $state(false);
+  function copyUrl() {
+    navigator.clipboard.writeText(profileMcpUrl);
+    urlCopied = true;
+    setTimeout(() => (urlCopied = false), 2000);
+  }
+  function copyJson() {
+    navigator.clipboard.writeText(claudeConfigSnippet);
+    jsonCopied = true;
+    setTimeout(() => (jsonCopied = false), 2000);
   }
 </script>
 
@@ -357,6 +395,36 @@
             {/each}
           </div>
         {/if}
+      </div>
+
+      <div class="rounded-lg border border-(--border) bg-(--surface-alt) p-4 space-y-2">
+        <h3 class="text-sm font-semibold text-(--fg1)">Connect your MCP client</h3>
+        <p class="text-xs text-(--fg2)">
+          Point Claude Desktop or other MCP clients to this profile:
+        </p>
+        <div class="flex items-center gap-2">
+          <code class="flex-1 text-xs font-mono bg-(--surface) border border-(--border) rounded px-2 py-1.5 text-(--accent) truncate">
+            {profileMcpUrl}
+          </code>
+          <button
+            class="text-xs px-2 py-1.5 rounded border border-(--border) hover:bg-(--surface-hover) transition-colors"
+            onclick={copyUrl}
+          >
+            {urlCopied ? '✓' : 'Copy'}
+          </button>
+        </div>
+        <div class="flex items-start gap-2">
+          <pre class="flex-1 text-xs font-mono bg-(--surface) border border-(--border) rounded px-2 py-1.5 text-(--accent) overflow-x-auto whitespace-pre m-0"><code>{claudeConfigSnippet}</code></pre>
+          <button
+            class="text-xs px-2 py-1.5 rounded border border-(--border) hover:bg-(--surface-hover) transition-colors flex-shrink-0"
+            onclick={copyJson}
+          >
+            {jsonCopied ? '✓' : 'Copy'}
+          </button>
+        </div>
+        <p class="text-xs text-(--fg2)">
+          Drop this into <code class="font-mono text-(--accent)">claude_desktop_config.json</code>. For Cursor/HTTP-capable clients, paste the URL above directly.
+        </p>
       </div>
     </div>
 
