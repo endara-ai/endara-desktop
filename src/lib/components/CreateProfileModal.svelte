@@ -97,6 +97,10 @@
             oninput={() => { pathTouched = true; }}
             onblur={() => { pathTouched = true; }}
             placeholder="work"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            autocomplete="off"
             aria-invalid={!!pathError}
             class="flex-1 text-sm px-3 py-1.5 bg-transparent text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none"
           />

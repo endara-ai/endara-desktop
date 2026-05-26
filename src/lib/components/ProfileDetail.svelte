@@ -257,6 +257,10 @@
               id="profile-detail-path"
               type="text"
               bind:value={form.path}
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              autocomplete="off"
               class="flex-1 px-2.5 py-1.5 text-sm rounded-lg border bg-(--surface) text-(--fg1) border-(--border) focus:outline-none focus:border-(--accent) {pathError
                 ? 'border-(--offline)'
                 : ''}"
