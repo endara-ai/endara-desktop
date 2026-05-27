@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Listener, Manager, RunEvent, State, Window,
+    AppHandle, Emitter, Manager, RunEvent, State, Window,
 };
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_notification::NotificationExt;
@@ -1518,6 +1518,22 @@ async fn get_overlay_settings() -> Result<overlay::OverlaySettings, String> {
     Ok(read_overlay_settings_from_config())
 }
 
+/// App-managed handle to the tray menu's "Show MCP activity overlay" check
+/// item. Wrapping the `CheckMenuItem` in a newtype lets `apply_overlay_settings`
+/// look it up via [`Manager::try_state`] and keep the checkbox in sync
+/// without round-tripping through an event-bus listener. The clone stored
+/// here is cheap — Tauri's `CheckMenuItem` is internally `Arc`-wrapped.
+struct TrayOverlayToggle(CheckMenuItem<tauri::Wry>);
+
+/// Desired checked state for the tray's "Show MCP activity overlay" menu
+/// item given a set of `OverlaySettings`. Factored out so the contract
+/// ("tray.checked mirrors `settings.enabled`") is unit-testable independently
+/// of the Tauri runtime, and so the initial tray-menu construction and the
+/// `apply_overlay_settings` sync path can share a single source of truth.
+fn tray_overlay_checked_for(settings: &overlay::OverlaySettings) -> bool {
+    settings.enabled
+}
+
 /// Persist `new_settings` and apply the runtime delta against `prev`:
 ///
 ///   * `enabled` toggled on  → build a fresh overlay window (its renderer
@@ -1525,10 +1541,14 @@ async fn get_overlay_settings() -> Result<overlay::OverlaySettings, String> {
 ///   * `enabled` toggled off → abort the SSE bridge AND destroy the overlay
 ///     window so its renderer unmounts cleanly.
 ///   * `position` changed (still enabled) → call `reposition_overlay_window`.
-///   * Always emit `overlay:settings-changed` to the overlay window with the
-///     full sanitized settings so the renderer-side `overlaySettingsStore`
-///     and the toast store's opts (`auto_dismiss_ms`, `max_visible`,
-///     `show_profile`) stay in sync without a window rebuild.
+///   * Always `emit_to(OVERLAY_WINDOW_LABEL, "overlay:settings-changed", …)`
+///     so the overlay renderer's `overlaySettingsStore` and toast store opts
+///     (`auto_dismiss_ms`, `max_visible`, `show_profile`) stay in sync
+///     without a window rebuild. Window-scoped so the main window is not
+///     spuriously notified.
+///   * Sync the tray menu's "Show MCP activity overlay" checkbox directly
+///     via [`TrayOverlayToggle`] state (no event round-trip) so the tray
+///     UI stays consistent when the Settings UI flips `enabled`.
 ///
 /// Shared by the `set_overlay_settings` Tauri command and the tray-menu
 /// "Show MCP activity overlay" toggle so both surfaces stay consistent.
@@ -1576,11 +1596,27 @@ async fn apply_overlay_settings(
     }
 
     // Notify the overlay renderer (if mounted) so its store + opts mirror
-    // the new settings. Safe to emit even when the overlay window is gone —
-    // `emit` fans out to all current listeners; missing listeners are a
-    // no-op.
-    if let Err(e) = app.emit("overlay:settings-changed", new_settings) {
-        log::warn!("[overlay] settings-changed emit failed: {e}");
+    // the new settings. Scoped to the overlay window via `emit_to` so the
+    // main window is not spuriously notified. Safe to call even when the
+    // overlay window is gone — Tauri swallows the emit for a missing
+    // target label rather than erroring on it.
+    if let Err(e) = app.emit_to(
+        overlay::OVERLAY_WINDOW_LABEL,
+        "overlay:settings-changed",
+        new_settings,
+    ) {
+        log::warn!("[overlay] settings-changed emit_to failed: {e}");
+    }
+
+    // Keep the tray "Show MCP activity overlay" checkbox in sync. Both
+    // callers (the `set_overlay_settings` Tauri command and the tray
+    // toggle handler) flow through here, so this is the single place tray
+    // state has to track. `try_state` is `None` during early init / tests
+    // that don't register the toggle — silently skip in that case.
+    if let Some(toggle) = app.try_state::<TrayOverlayToggle>() {
+        if let Err(e) = toggle.0.set_checked(tray_overlay_checked_for(new_settings)) {
+            log::warn!("[overlay] tray set_checked failed: {e}");
+        }
     }
 
     Ok(())
@@ -2372,7 +2408,7 @@ pub fn run() {
                 "toggle_overlay",
                 "Show MCP activity overlay",
                 true,
-                overlay_cfg.enabled,
+                tray_overlay_checked_for(&overlay_cfg),
                 None::<&str>,
             )?;
             let update_item =
@@ -2390,20 +2426,12 @@ pub fn run() {
                 ],
             )?;
 
-            // Keep the checkbox in sync when the overlay is toggled from
-            // anywhere else (Settings UI → `set_overlay_settings` → emits
-            // `overlay:settings-changed`). The clone is cheap — Tauri's
-            // `CheckMenuItem` is internally `Arc`-wrapped.
-            let toggle_for_listener = overlay_toggle_item.clone();
-            app.listen("overlay:settings-changed", move |event| {
-                if let Ok(settings) =
-                    serde_json::from_str::<overlay::OverlaySettings>(event.payload())
-                {
-                    if let Err(e) = toggle_for_listener.set_checked(settings.enabled) {
-                        log::warn!("[overlay] tray set_checked failed: {e}");
-                    }
-                }
-            });
+            // Register the tray toggle as managed state so
+            // `apply_overlay_settings` can update its checked state directly
+            // without an event-bus round-trip. Both the Settings UI command
+            // path and the tray-click path call `apply_overlay_settings`,
+            // so this single registration keeps both surfaces in sync.
+            app.manage(TrayOverlayToggle(overlay_toggle_item.clone()));
 
             // Stash the status menu item as managed state so `set_tray_health`
             // can update its label when the frontend reports a new health
@@ -3769,5 +3797,61 @@ mod tray_label_tests {
             compose_tray_tooltip("degraded", Some("2 endpoints unhealthy")),
             "Endara Relay — 2 endpoints unhealthy"
         );
+    }
+}
+
+#[cfg(test)]
+mod tray_overlay_toggle_tests {
+    //! Locks in the contract that the tray "Show MCP activity overlay"
+    //! checkbox tracks [`overlay::OverlaySettings::enabled`] across both
+    //! the Settings UI invoke path (`set_overlay_settings` → `apply_overlay_settings`)
+    //! and the tray-click path (the "toggle_overlay" handler in `setup` →
+    //! `apply_overlay_settings`). Both call sites use
+    //! [`tray_overlay_checked_for`] to derive the checked state, so testing
+    //! the helper covers both paths.
+
+    use super::*;
+
+    #[test]
+    fn tray_checked_when_settings_enabled() {
+        let s = overlay::OverlaySettings {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(tray_overlay_checked_for(&s));
+    }
+
+    #[test]
+    fn tray_unchecked_when_settings_disabled() {
+        let s = overlay::OverlaySettings {
+            enabled: false,
+            ..Default::default()
+        };
+        assert!(!tray_overlay_checked_for(&s));
+    }
+
+    #[test]
+    fn tray_checked_ignores_non_enabled_fields() {
+        // Non-enabled settings fields (position, dismiss window, max visible,
+        // show_profile) must not influence the tray check state.
+        let base = overlay::OverlaySettings {
+            enabled: true,
+            ..Default::default()
+        };
+        let position_variant = overlay::OverlaySettings {
+            position: overlay::OverlayPosition::TopLeft,
+            ..base.clone()
+        };
+        let dismiss_variant = overlay::OverlaySettings {
+            auto_dismiss_ms: overlay::AUTO_DISMISS_MS_MAX,
+            ..base.clone()
+        };
+        let show_profile_variant = overlay::OverlaySettings {
+            show_profile: false,
+            ..base.clone()
+        };
+        assert!(tray_overlay_checked_for(&position_variant));
+        assert!(tray_overlay_checked_for(&dismiss_variant));
+        assert!(tray_overlay_checked_for(&show_profile_variant));
     }
 }

@@ -78,7 +78,11 @@
     <div class="tf-card-body">
       <div class="tf-row-1">
         <div class="tf-icon">
-          <svg width="16" height="16" viewBox="0 0 20 20" style="display:block;flex-shrink:0;">
+          <!--
+            Decorative server-type glyph; the adjacent `tf-tool` and `tf-server-type`
+            text content already labels the card for assistive tech.
+          -->
+          <svg width="16" height="16" viewBox="0 0 20 20" style="display:block;flex-shrink:0;" aria-hidden="true">
             {@html iconSvg}
           </svg>
         </div>
