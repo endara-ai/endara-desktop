@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay",
+  "description": "Capability for the always-on-top MCP activity overlay window. Scoped narrowly: the overlay only needs to receive Tauri events (tool-call-event) and call the overlay-control commands defined in the desktop app — no shell, dialog, updater, or other plugin access.",
+  "windows": ["overlay"],
+  "permissions": [
+    "core:default"
+  ]
+}

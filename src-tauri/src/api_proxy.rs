@@ -14,6 +14,7 @@
 //! name is already keyed on the user/session.
 
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Full};
@@ -21,8 +22,21 @@ use hyper::body::Bytes;
 use hyper::Request;
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Type alias for a duplex stream that can be used for either request/response
+/// or streaming bodies (SSE). Both the Unix-socket and named-pipe transports
+/// implement `AsyncRead + AsyncWrite`, so callers that need to parse a long-
+/// lived response (e.g. SSE frames) can dial the management API without
+/// going through `hyper`.
+pub type DuplexStream = Pin<Box<dyn DuplexIo + Send>>;
+
+/// Marker trait for a tokio duplex stream. Implemented for both the Unix
+/// socket and the Windows named-pipe client returned by [`connect_stream`].
+pub trait DuplexIo: AsyncRead + AsyncWrite {}
+impl<T: AsyncRead + AsyncWrite + ?Sized> DuplexIo for T {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse {
@@ -222,6 +236,34 @@ async fn connect(
 
 #[cfg(not(any(unix, windows)))]
 async fn connect(_path: &Path) -> Result<TokioIo<tokio::net::TcpStream>, String> {
+    Err("management API bridge is unsupported on this platform".to_string())
+}
+
+/// Open a raw duplex stream to the management API socket / pipe. Unlike
+/// [`send_request`], the caller is responsible for writing the HTTP request
+/// and parsing the response — used by the SSE event bridge so it can keep
+/// reading the response body for the lifetime of the subscription.
+#[cfg(unix)]
+pub async fn connect_stream(path: &Path) -> Result<DuplexStream, String> {
+    let stream = tokio::net::UnixStream::connect(path)
+        .await
+        .map_err(|e| format!("connect to {}: {e}", path.display()))?;
+    Ok(Box::pin(stream))
+}
+
+#[cfg(windows)]
+pub async fn connect_stream(path: &Path) -> Result<DuplexStream, String> {
+    let name = path
+        .to_str()
+        .ok_or_else(|| "non-utf8 pipe name".to_string())?;
+    let client = tokio::net::windows::named_pipe::ClientOptions::new()
+        .open(name)
+        .map_err(|e| format!("open pipe {name}: {e}"))?;
+    Ok(Box::pin(client))
+}
+
+#[cfg(not(any(unix, windows)))]
+pub async fn connect_stream(_path: &Path) -> Result<DuplexStream, String> {
     Err("management API bridge is unsupported on this platform".to_string())
 }
 
