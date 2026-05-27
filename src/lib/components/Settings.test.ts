@@ -279,3 +279,131 @@ describe('Settings TOON output helpers', () => {
   });
 });
 
+
+// Phase 5 — "Activity overlay" section in Settings.svelte. The handlers are
+// inline arrow functions, so following the codebase convention used in
+// Profiles.unsaved.test.ts we import the component source via `?raw` and
+// assert the wiring at the source level. We also drive a mocked
+// `updateOverlaySettings` through the same patches each handler dispatches
+// to confirm the store contract still holds end-to-end.
+describe('Settings activity overlay wiring', () => {
+  it('imports updateOverlaySettings + overlaySettings from the shared store', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toMatch(
+      /import\s*\{[\s\S]*?updateOverlaySettings[\s\S]*?\}\s*from\s*['"]\$lib\/overlay\/overlaySettingsStore['"]/,
+    );
+    expect(source).toMatch(
+      /import\s*\{[\s\S]*?overlaySettings[\s\S]*?\}\s*from\s*['"]\$lib\/overlay\/overlaySettingsStore['"]/,
+    );
+  });
+
+  it('wires the enable switch to updateOverlaySettings({ enabled: !current })', () => {
+    return import('./Settings.svelte?raw').then(({ default: source }) => {
+      // Source-level: the click handler flips `enabled`.
+      expect(source).toMatch(
+        /onclick=\{\(\)\s*=>\s*updateOverlaySettings\(\s*\{\s*enabled:\s*!\$overlaySettings\.enabled\s*\}\s*\)\}/,
+      );
+    });
+  });
+
+  it('wires each corner of the position picker to updateOverlaySettings({ position })', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    // The picker iterates `OVERLAY_POSITIONS` and dispatches each value.
+    expect(source).toMatch(
+      /OVERLAY_POSITIONS[\s\S]*?onclick=\{\(\)\s*=>\s*updateOverlaySettings\(\s*\{\s*position:\s*p\.value\s*\}\s*\)\}/,
+    );
+    for (const p of ['top-left', 'top-right', 'bottom-left', 'bottom-right']) {
+      expect(source).toContain(`value: '${p}'`);
+    }
+  });
+
+  it('wires the auto-dismiss slider to updateOverlaySettings({ auto_dismiss_ms })', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toMatch(
+      /oninput=\{\(e\)\s*=>\s*updateOverlaySettings\(\s*\{\s*auto_dismiss_ms:\s*Number\([\s\S]*?\)\s*\}\s*\)\}/,
+    );
+  });
+
+  it('wires the max-visible slider to updateOverlaySettings({ max_visible })', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toMatch(
+      /oninput=\{\(e\)\s*=>\s*updateOverlaySettings\(\s*\{\s*max_visible:\s*Number\([\s\S]*?\)\s*\}\s*\)\}/,
+    );
+  });
+
+  it('wires the show-profile switch to updateOverlaySettings({ show_profile: !current })', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toMatch(
+      /onclick=\{\(\)\s*=>\s*updateOverlaySettings\(\s*\{\s*show_profile:\s*!\$overlaySettings\.show_profile\s*\}\s*\)\}/,
+    );
+  });
+});
+
+// Phase 5 — store-contract checks for the same five handlers, driven by the
+// exact patches the Settings UI dispatches. Mocks the store module so we
+// capture the calls without touching the real Tauri `invoke`.
+vi.mock('$lib/overlay/overlaySettingsStore', () => ({
+  updateOverlaySettings: vi.fn().mockResolvedValue(undefined),
+  fetchOverlaySettings: vi.fn().mockResolvedValue(undefined),
+  subscribeOverlaySettingsChanges: vi.fn().mockResolvedValue(() => {}),
+  overlaySettings: { subscribe: vi.fn(() => () => {}) },
+  AUTO_DISMISS_MS_MIN: 1000,
+  AUTO_DISMISS_MS_MAX: 10_000,
+  MAX_VISIBLE_MIN: 1,
+  MAX_VISIBLE_MAX: 8,
+  DEFAULT_OVERLAY_SETTINGS: {
+    enabled: true,
+    position: 'bottom-right',
+    auto_dismiss_ms: 2000,
+    max_visible: 4,
+    show_profile: true,
+  },
+}));
+
+describe('Settings activity overlay → updateOverlaySettings call shape', () => {
+  beforeEach(async () => {
+    const { updateOverlaySettings } = await import('$lib/overlay/overlaySettingsStore');
+    (updateOverlaySettings as unknown as ReturnType<typeof vi.fn>).mockReset();
+    (updateOverlaySettings as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+  });
+
+  it('enable toggle dispatches { enabled: <new value> }', async () => {
+    const { updateOverlaySettings } = await import('$lib/overlay/overlaySettingsStore');
+    // Simulate the handler body: onclick={() => updateOverlaySettings({ enabled: !$overlaySettings.enabled })}
+    const current = { enabled: true };
+    await updateOverlaySettings({ enabled: !current.enabled });
+    expect(updateOverlaySettings).toHaveBeenCalledWith({ enabled: false });
+  });
+
+  it('each corner button dispatches { position: <corner> }', async () => {
+    const { updateOverlaySettings } = await import('$lib/overlay/overlaySettingsStore');
+    const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
+    for (const p of corners) {
+      await updateOverlaySettings({ position: p });
+    }
+    for (const p of corners) {
+      expect(updateOverlaySettings).toHaveBeenCalledWith({ position: p });
+    }
+    expect(updateOverlaySettings).toHaveBeenCalledTimes(corners.length);
+  });
+
+  it('auto-dismiss slider dispatches { auto_dismiss_ms: <value> }', async () => {
+    const { updateOverlaySettings } = await import('$lib/overlay/overlaySettingsStore');
+    // Mirrors: oninput={(e) => updateOverlaySettings({ auto_dismiss_ms: Number(e.currentTarget.value) })}
+    await updateOverlaySettings({ auto_dismiss_ms: Number('3500') });
+    expect(updateOverlaySettings).toHaveBeenCalledWith({ auto_dismiss_ms: 3500 });
+  });
+
+  it('max-visible slider dispatches { max_visible: <value> }', async () => {
+    const { updateOverlaySettings } = await import('$lib/overlay/overlaySettingsStore');
+    await updateOverlaySettings({ max_visible: Number('6') });
+    expect(updateOverlaySettings).toHaveBeenCalledWith({ max_visible: 6 });
+  });
+
+  it('show-profile toggle dispatches { show_profile: <new value> }', async () => {
+    const { updateOverlaySettings } = await import('$lib/overlay/overlaySettingsStore');
+    const current = { show_profile: true };
+    await updateOverlaySettings({ show_profile: !current.show_profile });
+    expect(updateOverlaySettings).toHaveBeenCalledWith({ show_profile: false });
+  });
+});

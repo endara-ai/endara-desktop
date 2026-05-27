@@ -765,6 +765,34 @@ mod tests {
     }
 
     #[test]
+    fn ensure_overlay_default_existing_install_no_desktop_block_disables_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config.toml");
+        // Pre-existing config that contains ONLY a `[relay]` block — no
+        // `[desktop]` table at all. The migration must still treat this as
+        // an upgrade (disable overlay by default) and stamp `[meta]`.
+        std::fs::write(&cfg, "[relay]\nport = 7777\n").unwrap();
+
+        let settings = ensure_overlay_default(&cfg, true).unwrap();
+        assert!(
+            !settings.enabled,
+            "upgrading install must default to disabled"
+        );
+
+        let table = read_table(&cfg);
+        let overlay = table["desktop"]["overlay"].as_table().unwrap();
+        assert_eq!(overlay["enabled"].as_bool(), Some(false));
+        // Unrelated `[relay]` table is untouched.
+        assert_eq!(table["relay"]["port"].as_integer(), Some(7777));
+        let meta = table["meta"].as_table().unwrap();
+        assert_eq!(
+            meta["schema_version"].as_integer(),
+            Some(CONFIG_SCHEMA_VERSION)
+        );
+        assert!(meta.contains_key("installed_at"));
+    }
+
+    #[test]
     fn ensure_overlay_default_honours_explicit_setting() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = dir.path().join("config.toml");
