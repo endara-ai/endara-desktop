@@ -6,10 +6,11 @@
 //! and is filled out in Phase 4; Phase 5 owns the persistent settings /
 //! migration that decides whether `overlay_enabled` is true on startup.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
 };
@@ -19,6 +20,27 @@ use tokio::task::JoinHandle;
 
 use crate::api_proxy;
 use crate::sse;
+
+/// Current schema version for the `[meta]` block. Bumped only when an
+/// incompatible config shape change ships; readers ignore unknown future
+/// versions and fall back to defaults.
+pub const CONFIG_SCHEMA_VERSION: i64 = 1;
+
+/// Default auto-dismiss window applied to overlay groups after the last
+/// in-flight request settles. Mirrors the toast store's `DEFAULT_OPTS`.
+pub const DEFAULT_AUTO_DISMISS_MS: u32 = 2000;
+
+/// Default maximum number of overlay cards rendered at once. Older groups
+/// collapse into a "+N earlier" affordance.
+pub const DEFAULT_MAX_VISIBLE: u8 = 4;
+
+/// Inclusive bounds enforced when persisting/loading the auto-dismiss window.
+pub const AUTO_DISMISS_MS_MIN: u32 = 1000;
+pub const AUTO_DISMISS_MS_MAX: u32 = 10_000;
+
+/// Inclusive bounds enforced when persisting/loading the max-visible count.
+pub const MAX_VISIBLE_MIN: u8 = 1;
+pub const MAX_VISIBLE_MAX: u8 = 8;
 
 /// Stable label for the overlay `WebviewWindow`. Used by capability scoping
 /// and by [`crate::lib::show_overlay`] / [`crate::lib::hide_overlay`].
@@ -37,12 +59,18 @@ const SSE_BACKOFF_INITIAL: Duration = Duration::from_millis(500);
 /// Hard cap for the exponential SSE reconnect backoff.
 const SSE_BACKOFF_MAX: Duration = Duration::from_secs(30);
 
-/// Compile-time configuration for the overlay window builder. Phase 5 will
-/// populate this from `config.toml`; Phase 2 hardcodes the default.
-#[derive(Debug, Clone)]
+/// Runtime configuration for the overlay window. Persisted under
+/// `[desktop.overlay]` in `config.toml`; the Phase 5 settings UI / tray
+/// toggle round-trip through this struct via the
+/// `get_overlay_settings` / `set_overlay_settings` Tauri commands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", default)]
 pub struct OverlaySettings {
     pub enabled: bool,
     pub position: OverlayPosition,
+    pub auto_dismiss_ms: u32,
+    pub max_visible: u8,
+    pub show_profile: bool,
 }
 
 impl Default for OverlaySettings {
@@ -50,12 +78,31 @@ impl Default for OverlaySettings {
         Self {
             enabled: true,
             position: OverlayPosition::BottomRight,
+            auto_dismiss_ms: DEFAULT_AUTO_DISMISS_MS,
+            max_visible: DEFAULT_MAX_VISIBLE,
+            show_profile: true,
         }
     }
 }
 
+impl OverlaySettings {
+    /// Clamp out-of-range numeric fields to the documented bounds. Called by
+    /// `set_overlay_settings` before persisting so a misbehaving renderer
+    /// can't write `auto_dismiss_ms = 0` (which would render the dismiss
+    /// timer immediately) or a `max_visible` value that the UI cannot
+    /// represent meaningfully.
+    pub fn sanitize(mut self) -> Self {
+        self.auto_dismiss_ms = self
+            .auto_dismiss_ms
+            .clamp(AUTO_DISMISS_MS_MIN, AUTO_DISMISS_MS_MAX);
+        self.max_visible = self.max_visible.clamp(MAX_VISIBLE_MIN, MAX_VISIBLE_MAX);
+        self
+    }
+}
+
 /// Four-corner positioning model for the overlay window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum OverlayPosition {
     BottomRight,
     BottomLeft,
@@ -91,6 +138,136 @@ impl OverlayPosition {
 #[derive(Default)]
 pub struct OverlaySubscriberState {
     pub task: Arc<Mutex<Option<JoinHandle<()>>>>,
+}
+
+/// Resolve the overlay's effective settings on startup, writing migration
+/// state to disk on first run / first upgrade.
+///
+/// Three cases (matching the spec's migration table):
+///
+///   1. **Fresh install** (`!file_existed_before`): seed a brand-new
+///      `config.toml` with `[desktop.overlay] enabled = true` plus a
+///      `[meta]` block, and return defaults with `enabled: true`.
+///   2. **Existing install upgrading** (file existed AND neither
+///      `[desktop.overlay].enabled` nor `[meta]` are present): write the
+///      `[desktop.overlay]` defaults with `enabled = false` (off-by-default
+///      for existing users) plus a `[meta]` block so subsequent runs know
+///      the migration ran. Return defaults with `enabled: false`.
+///   3. **Explicit setting** (file existed AND `[desktop.overlay].enabled`
+///      key is present): honour the persisted value verbatim — never
+///      overwrite a user choice, never re-stamp `[meta]` if it already
+///      exists.
+///
+/// `file_existed_before` MUST reflect the on-disk state captured BEFORE any
+/// other code path (in particular the relay sidecar) has had a chance to
+/// create or write `config.toml`. The desktop entry point in `lib.rs`
+/// captures it at the very top of `setup()` and threads it here.
+pub fn ensure_overlay_default(
+    cfg_path: &Path,
+    file_existed_before: bool,
+) -> Result<OverlaySettings, String> {
+    let mut table = if file_existed_before && cfg_path.exists() {
+        let contents = std::fs::read_to_string(cfg_path)
+            .map_err(|e| format!("read {}: {e}", cfg_path.display()))?;
+        contents
+            .parse::<toml::Table>()
+            .map_err(|e| format!("parse {}: {e}", cfg_path.display()))?
+    } else {
+        toml::Table::new()
+    };
+
+    // Case 3: explicit setting already on disk. Honour it as-is, don't
+    // re-stamp `[meta]`, don't rewrite the file.
+    if file_existed_before {
+        if let Some(existing) = read_overlay_section(&table) {
+            return Ok(existing.sanitize());
+        }
+    }
+
+    // Cases 1 & 2 both write the defaults block + `[meta]`. The only
+    // difference is the `enabled` flag.
+    let defaults = OverlaySettings {
+        enabled: !file_existed_before,
+        ..OverlaySettings::default()
+    };
+    write_overlay_section(&mut table, &defaults);
+    ensure_meta_block(&mut table);
+
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create config directory {}: {e}", parent.display()))?;
+    }
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(cfg_path, serialized)
+        .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+
+    Ok(defaults)
+}
+
+/// Extract `[desktop.overlay]` from the parsed config, returning `None` if
+/// either the `[desktop]` table or the `[desktop.overlay]` sub-table is
+/// missing or shaped wrong. A present table missing the `enabled` key is
+/// still treated as "not set" — the migration helper relies on this so an
+/// upgrading install with `[desktop]` (e.g. `update_channel = "stable"`) but
+/// no `overlay` sub-table still falls into case 2.
+fn read_overlay_section(table: &toml::Table) -> Option<OverlaySettings> {
+    let overlay = table
+        .get("desktop")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("overlay"))
+        .and_then(|v| v.as_table())?;
+    if !overlay.contains_key("enabled") {
+        return None;
+    }
+    let value = toml::Value::Table(overlay.clone());
+    value.try_into::<OverlaySettings>().ok()
+}
+
+/// Merge `settings` into the `[desktop.overlay]` sub-table, creating both
+/// the `[desktop]` and `[desktop.overlay]` tables when missing. Preserves
+/// any sibling keys already present under `[desktop]` (e.g.
+/// `update_channel`).
+fn write_overlay_section(table: &mut toml::Table, settings: &OverlaySettings) {
+    let desktop = table
+        .entry("desktop")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .expect("desktop entry just inserted as Table");
+    let overlay_value =
+        toml::Value::try_from(settings).expect("OverlaySettings serializes to a TOML table");
+    desktop.insert("overlay".to_string(), overlay_value);
+}
+
+/// Stamp a `[meta]` block onto the config if one is not already present.
+/// Idempotent: a config that already carries `[meta]` (from a prior
+/// migration run) is left untouched.
+fn ensure_meta_block(table: &mut toml::Table) {
+    if table.contains_key("meta") {
+        return;
+    }
+    let mut meta = toml::Table::new();
+    meta.insert(
+        "schema_version".to_string(),
+        toml::Value::Integer(CONFIG_SCHEMA_VERSION),
+    );
+    meta.insert(
+        "installed_at".to_string(),
+        toml::Value::String(now_rfc3339()),
+    );
+    table.insert("meta".to_string(), toml::Value::Table(meta));
+}
+
+/// Format the current UTC time as an RFC 3339 string, e.g.
+/// `"2026-05-27T07:21:03Z"`. Falls back to `"1970-01-01T00:00:00Z"` if the
+/// system clock predates the UNIX epoch (effectively impossible on a
+/// running desktop).
+fn now_rfc3339() -> String {
+    use time::format_description::well_known::Rfc3339;
+    use time::OffsetDateTime;
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
 /// Compute physical-pixel size + position for the overlay window on the
@@ -520,5 +697,137 @@ mod tests {
         let mut rest = String::new();
         r.read_line(&mut rest).await.unwrap();
         assert_eq!(rest, "body starts here");
+    }
+
+    // ---- Phase 5: migration helper tests --------------------------------
+
+    fn read_table(path: &Path) -> toml::Table {
+        let txt = std::fs::read_to_string(path).unwrap();
+        txt.parse::<toml::Table>().unwrap()
+    }
+
+    #[test]
+    fn ensure_overlay_default_fresh_install_enables_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config.toml");
+        // `file_existed_before` is false: the entry point captured the
+        // absence of `config.toml` before any other code ran.
+        let settings = ensure_overlay_default(&cfg, false).unwrap();
+        assert!(settings.enabled, "fresh install must enable overlay");
+        assert_eq!(settings.position, OverlayPosition::BottomRight);
+        assert_eq!(settings.auto_dismiss_ms, DEFAULT_AUTO_DISMISS_MS);
+        assert_eq!(settings.max_visible, DEFAULT_MAX_VISIBLE);
+        assert!(settings.show_profile);
+
+        let table = read_table(&cfg);
+        let overlay = table["desktop"]["overlay"].as_table().unwrap();
+        assert_eq!(overlay["enabled"].as_bool(), Some(true));
+        assert_eq!(overlay["position"].as_str(), Some("bottom-right"));
+        let meta = table["meta"].as_table().unwrap();
+        assert_eq!(
+            meta["schema_version"].as_integer(),
+            Some(CONFIG_SCHEMA_VERSION)
+        );
+        assert!(meta.contains_key("installed_at"));
+    }
+
+    #[test]
+    fn ensure_overlay_default_existing_install_disables_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config.toml");
+        // Pre-existing config that the relay (or a prior desktop version)
+        // wrote. No `[meta]`, no `[desktop.overlay]` — classic upgrade.
+        std::fs::write(
+            &cfg,
+            "[relay]\nport = 7777\n\n[desktop]\nupdate_channel = \"stable\"\n",
+        )
+        .unwrap();
+
+        let settings = ensure_overlay_default(&cfg, true).unwrap();
+        assert!(
+            !settings.enabled,
+            "upgrading install must default to disabled"
+        );
+        assert_eq!(settings.position, OverlayPosition::BottomRight);
+
+        let table = read_table(&cfg);
+        let overlay = table["desktop"]["overlay"].as_table().unwrap();
+        assert_eq!(overlay["enabled"].as_bool(), Some(false));
+        // Sibling `[desktop]` key must be preserved verbatim.
+        assert_eq!(table["desktop"]["update_channel"].as_str(), Some("stable"));
+        // Unrelated tables are untouched.
+        assert_eq!(table["relay"]["port"].as_integer(), Some(7777));
+        let meta = table["meta"].as_table().unwrap();
+        assert_eq!(
+            meta["schema_version"].as_integer(),
+            Some(CONFIG_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
+    fn ensure_overlay_default_honours_explicit_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config.toml");
+        // User had previously toggled the overlay on with a non-default
+        // position. `[meta]` already stamped from the prior migration.
+        std::fs::write(
+            &cfg,
+            r#"
+[meta]
+schema_version = 1
+installed_at = "2025-12-01T00:00:00Z"
+
+[desktop.overlay]
+enabled = true
+position = "top-left"
+auto_dismiss_ms = 3500
+max_visible = 6
+show_profile = false
+"#,
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(&cfg).unwrap();
+
+        let settings = ensure_overlay_default(&cfg, true).unwrap();
+        assert!(settings.enabled);
+        assert_eq!(settings.position, OverlayPosition::TopLeft);
+        assert_eq!(settings.auto_dismiss_ms, 3500);
+        assert_eq!(settings.max_visible, 6);
+        assert!(!settings.show_profile);
+
+        // File on disk must be byte-identical: we promise not to rewrite a
+        // user's explicit choice and not to re-stamp `installed_at`.
+        let after = std::fs::read_to_string(&cfg).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn ensure_overlay_default_clamps_out_of_range_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config.toml");
+        std::fs::write(
+            &cfg,
+            r#"
+[desktop.overlay]
+enabled = true
+position = "bottom-right"
+auto_dismiss_ms = 99999
+max_visible = 99
+show_profile = true
+"#,
+        )
+        .unwrap();
+        let s = ensure_overlay_default(&cfg, true).unwrap();
+        assert_eq!(s.auto_dismiss_ms, AUTO_DISMISS_MS_MAX);
+        assert_eq!(s.max_visible, MAX_VISIBLE_MAX);
+    }
+
+    #[test]
+    fn ensure_overlay_default_creates_parent_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("nested/sub/config.toml");
+        let s = ensure_overlay_default(&cfg, false).unwrap();
+        assert!(s.enabled);
+        assert!(cfg.exists());
     }
 }

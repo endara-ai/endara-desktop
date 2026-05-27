@@ -1,6 +1,18 @@
 <script lang="ts">
   import { theme, jsExecutionMode, toonOutput, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from '$lib/stores';
   import { autoStartEnabled, fetchAutoStart, toggleAutoStart } from '$lib/stores/autostart';
+  import {
+    AUTO_DISMISS_MS_MAX,
+    AUTO_DISMISS_MS_MIN,
+    MAX_VISIBLE_MAX,
+    MAX_VISIBLE_MIN,
+    fetchOverlaySettings,
+    overlaySettings,
+    subscribeOverlaySettingsChanges,
+    updateOverlaySettings,
+    type OverlayPosition,
+  } from '$lib/overlay/overlaySettingsStore';
+  import type { UnlistenFn } from '@tauri-apps/api/event';
   import type { Theme, RelayStatus } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { getStatus } from '$lib/api';
@@ -128,6 +140,8 @@
     return `${h}h ${m}m`;
   }
 
+  let overlaySettingsUnlisten: UnlistenFn | null = null;
+
   onMount(async () => {
     try {
       buildInfo = await invoke<BuildInfo>('get_build_info');
@@ -138,6 +152,10 @@
     fetchJsExecutionMode();
     fetchToonOutput();
     fetchAutoStart();
+    fetchOverlaySettings();
+    subscribeOverlaySettingsChanges()
+      .then((un) => { overlaySettingsUnlisten = un; })
+      .catch((e) => console.error('[overlay] subscribe failed:', e));
     fetchUpdateChannel();
     invoke('get_config_path_display').then((p: unknown) => {
       if (typeof p === 'string') configFilePath = p;
@@ -147,7 +165,18 @@
 
   onDestroy(() => {
     if (statusPollInterval) clearInterval(statusPollInterval);
+    if (overlaySettingsUnlisten) {
+      overlaySettingsUnlisten();
+      overlaySettingsUnlisten = null;
+    }
   });
+
+  const OVERLAY_POSITIONS: ReadonlyArray<{ value: OverlayPosition; label: string }> = [
+    { value: 'top-left', label: 'Top-left' },
+    { value: 'top-right', label: 'Top-right' },
+    { value: 'bottom-left', label: 'Bottom-left' },
+    { value: 'bottom-right', label: 'Bottom-right' },
+  ];
 
   const isGreen = $derived($relaySidecarStatus === 'running' && $relayConnected);
   const isAmber = $derived($relaySidecarStatus === 'failed' && $relayConnected);
@@ -320,6 +349,98 @@
       >
         <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$autoStartEnabled ? 'translate-x-5' : ''}"></span>
       </button>
+    </div>
+
+    <div class="pt-4 mt-4 border-t border-(--border)">
+      <div class="text-xs font-medium text-(--fg2) uppercase tracking-wide mb-3">Activity Overlay</div>
+
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <div class="text-sm font-medium">Show MCP activity overlay</div>
+          <div class="text-xs text-(--fg2) mt-0.5">Floating, click-through window that surfaces in-flight and recently-settled tool calls in real time.</div>
+        </div>
+        <button
+          class="shrink-0 relative w-10 h-5 rounded-full transition-colors {$overlaySettings.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+          onclick={() => updateOverlaySettings({ enabled: !$overlaySettings.enabled })}
+          role="switch"
+          aria-checked={$overlaySettings.enabled}
+          aria-label="Toggle MCP activity overlay"
+        >
+          <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$overlaySettings.enabled ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
+
+      <fieldset class="mt-4" disabled={!$overlaySettings.enabled} class:opacity-50={!$overlaySettings.enabled}>
+        <legend class="text-xs font-medium text-(--fg2) mb-2">Corner</legend>
+        <div class="grid grid-cols-2 gap-2">
+          {#each OVERLAY_POSITIONS as p (p.value)}
+            <button
+              type="button"
+              class="px-3 py-1.5 text-sm rounded-lg border transition-colors text-left
+                {$overlaySettings.position === p.value ? 'border-(--accent) bg-(--accent)/10 text-(--accent)' : 'border-(--border) hover:bg-(--surface-hover)'}"
+              onclick={() => updateOverlaySettings({ position: p.value })}
+              aria-pressed={$overlaySettings.position === p.value}
+            >
+              {p.label}
+            </button>
+          {/each}
+        </div>
+      </fieldset>
+
+      <div class="mt-4" class:opacity-50={!$overlaySettings.enabled}>
+        <label for="overlay-auto-dismiss" class="flex items-center justify-between text-xs font-medium text-(--fg2) mb-1">
+          <span>Auto-dismiss after</span>
+          <span class="text-(--fg1) tabular-nums">{($overlaySettings.auto_dismiss_ms / 1000).toFixed(1)}s</span>
+        </label>
+        <input
+          id="overlay-auto-dismiss"
+          type="range"
+          min={AUTO_DISMISS_MS_MIN}
+          max={AUTO_DISMISS_MS_MAX}
+          step="500"
+          disabled={!$overlaySettings.enabled}
+          value={$overlaySettings.auto_dismiss_ms}
+          oninput={(e) => updateOverlaySettings({ auto_dismiss_ms: Number((e.currentTarget as HTMLInputElement).value) })}
+          class="w-full accent-(--accent)"
+        />
+        <div class="text-xs text-(--fg2)/70 mt-1">Time a settled group stays on screen before fading out.</div>
+      </div>
+
+      <div class="mt-4" class:opacity-50={!$overlaySettings.enabled}>
+        <label for="overlay-max-visible" class="flex items-center justify-between text-xs font-medium text-(--fg2) mb-1">
+          <span>Maximum visible cards</span>
+          <span class="text-(--fg1) tabular-nums">{$overlaySettings.max_visible}</span>
+        </label>
+        <input
+          id="overlay-max-visible"
+          type="range"
+          min={MAX_VISIBLE_MIN}
+          max={MAX_VISIBLE_MAX}
+          step="1"
+          disabled={!$overlaySettings.enabled}
+          value={$overlaySettings.max_visible}
+          oninput={(e) => updateOverlaySettings({ max_visible: Number((e.currentTarget as HTMLInputElement).value) })}
+          class="w-full accent-(--accent)"
+        />
+        <div class="text-xs text-(--fg2)/70 mt-1">Older groups collapse into a "+N earlier" affordance.</div>
+      </div>
+
+      <div class="mt-4 flex items-start justify-between gap-4" class:opacity-50={!$overlaySettings.enabled}>
+        <div>
+          <div class="text-sm font-medium">Show profile name</div>
+          <div class="text-xs text-(--fg2) mt-0.5">Include the active relay profile on each overlay card.</div>
+        </div>
+        <button
+          class="shrink-0 relative w-10 h-5 rounded-full transition-colors {$overlaySettings.show_profile ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+          onclick={() => updateOverlaySettings({ show_profile: !$overlaySettings.show_profile })}
+          disabled={!$overlaySettings.enabled}
+          role="switch"
+          aria-checked={$overlaySettings.show_profile}
+          aria-label="Toggle profile name on overlay cards"
+        >
+          <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$overlaySettings.show_profile ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
     </div>
 
     <div class="pt-4 mt-4 border-t border-(--border)">

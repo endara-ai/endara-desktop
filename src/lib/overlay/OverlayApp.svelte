@@ -9,16 +9,28 @@
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { UnlistenFn } from '@tauri-apps/api/event';
   import { theme } from '$lib/stores';
   import { attachOverlayBridge } from './eventBridge';
   import { createToastStore } from './toastStore';
-  import { DEFAULT_OVERLAY_POSITION } from './overlay-helpers';
+  import {
+    DEFAULT_OVERLAY_SETTINGS,
+    fetchOverlaySettings,
+    overlaySettings,
+    subscribeOverlaySettingsChanges,
+  } from './overlaySettingsStore';
   import { overlayPointerEnter, overlayPointerLeave } from './overlay-actions';
   import ToastFeed from './ToastFeed.svelte';
   import './overlay.css';
 
-  // One store instance per overlay-window lifetime.
-  const store = createToastStore();
+  // One store instance per overlay-window lifetime. Seed with the persisted
+  // defaults so the first render uses the correct dismiss timer + visible
+  // window even before `fetchOverlaySettings` resolves.
+  const store = createToastStore({
+    dismissMs: DEFAULT_OVERLAY_SETTINGS.auto_dismiss_ms,
+    maxVisible: DEFAULT_OVERLAY_SETTINGS.max_visible,
+    showProfile: DEFAULT_OVERLAY_SETTINGS.show_profile,
+  });
 
   function applyTheme(t: 'light' | 'dark' | 'system') {
     const root = document.documentElement;
@@ -37,6 +49,23 @@
     // document, so re-apply here on mount + every subscription tick.
     const unsubTheme = theme.subscribe(applyTheme);
 
+    // Push overlay settings → toast store opts on every change. The Rust
+    // side broadcasts `overlay:settings-changed` after every successful
+    // write (Settings UI + tray toggle), and `fetchOverlaySettings` seeds
+    // the store on mount.
+    const unsubSettings = overlaySettings.subscribe((s) => {
+      store.setOpts({
+        dismissMs: s.auto_dismiss_ms,
+        maxVisible: s.max_visible,
+        showProfile: s.show_profile,
+      });
+    });
+    fetchOverlaySettings();
+    let settingsUnlisten: UnlistenFn | null = null;
+    subscribeOverlaySettingsChanges()
+      .then((un) => { settingsUnlisten = un; })
+      .catch((e) => console.warn('[overlay] settings subscribe failed:', e));
+
     let disposer: (() => Promise<void>) | null = null;
     attachOverlayBridge(store).then((d) => {
       disposer = d;
@@ -44,6 +73,8 @@
 
     return () => {
       unsubTheme();
+      unsubSettings();
+      if (settingsUnlisten) settingsUnlisten();
       if (disposer) disposer().catch((e) => console.warn('[overlay] disposer failed:', e));
     };
   });
@@ -60,7 +91,13 @@
   onpointerleave={overlayPointerLeave}
   role="presentation"
 >
-  <ToastFeed {store} position={DEFAULT_OVERLAY_POSITION} />
+  <ToastFeed
+    {store}
+    position={$overlaySettings.position}
+    maxVisible={$overlaySettings.max_visible}
+    dismissMs={$overlaySettings.auto_dismiss_ms}
+    showProfile={$overlaySettings.show_profile}
+  />
 </div>
 
 <style>
