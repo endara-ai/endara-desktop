@@ -1,0 +1,147 @@
+/* Toast Feed overlay styles. Ported from the prototype `<style>` block in
+ * ~/Downloads/desktop-visual-indicator-for-mcp-activity/project/Toast Feed.html
+ * Adapted for the always-on-top transparent Tauri window: no faux desktop
+ * background, no menubar, no simulator panel — just the feed + its cards. */
+
+:root {
+  --tf-card-bg: var(--cream-50);
+  --tf-card-bg-solid: var(--cream-50);
+  --tf-card-border: var(--border);
+  --tf-card-shadow: 0 6px 16px rgba(40, 30, 20, 0.1), 0 2px 4px rgba(40, 30, 20, 0.06);
+  --tf-card-shadow-hover: 0 10px 24px rgba(40, 30, 20, 0.16), 0 4px 6px rgba(40, 30, 20, 0.08);
+  --tf-muted-bg: rgba(0, 0, 0, 0.05);
+  --tf-muted-fg: var(--fg3);
+  --tf-warn-bg: rgba(250, 176, 5, 0.14);
+  --tf-warn-fg: #8a5d00;
+  --tf-danger-bg: rgba(250, 82, 82, 0.14);
+  --tf-danger-fg: #b42a2a;
+  --tf-chip-bg: rgba(0, 0, 0, 0.04);
+  --tf-icon-bg: rgba(0, 0, 0, 0.04);
+  --tf-progress-track: rgba(0, 0, 0, 0.06);
+  --tf-card-w: 340px;
+}
+
+[data-theme='dark'] {
+  --tf-card-bg: var(--slate-200);
+  --tf-card-bg-solid: var(--slate-200);
+  --tf-card-border: var(--slate-400);
+  --tf-card-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --tf-card-shadow-hover: 0 12px 32px rgba(0, 0, 0, 0.55), 0 4px 8px rgba(0, 0, 0, 0.4);
+  --tf-muted-bg: rgba(255, 255, 255, 0.06);
+  --tf-muted-fg: var(--slate-700);
+  --tf-warn-bg: rgba(252, 196, 25, 0.16);
+  --tf-warn-fg: #fcd34d;
+  --tf-danger-bg: rgba(255, 107, 107, 0.18);
+  --tf-danger-fg: #ff9b9b;
+  --tf-chip-bg: rgba(255, 255, 255, 0.05);
+  --tf-icon-bg: rgba(255, 255, 255, 0.06);
+  --tf-progress-track: rgba(255, 255, 255, 0.08);
+}
+
+@keyframes tfSpin { to { transform: rotate(360deg); } }
+@keyframes tfDismissFill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes tfCardIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.tf-feed {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  width: calc(var(--tf-card-w) + 40px);
+  max-height: calc(100vh - 40px);
+  display: flex;
+}
+.tf-feed[data-position='bottom-right'] {
+  right: 0; bottom: 0;
+  padding: 0 20px 20px 0;
+  align-items: flex-end; justify-content: flex-end;
+}
+.tf-feed[data-position='bottom-left'] {
+  left: 0; bottom: 0;
+  padding: 0 0 20px 20px;
+  align-items: flex-end; justify-content: flex-start;
+}
+.tf-feed[data-position='top-right'] {
+  right: 0; top: 0;
+  padding: 20px 20px 0 0;
+  align-items: flex-start; justify-content: flex-end;
+}
+.tf-feed[data-position='top-left'] {
+  left: 0; top: 0;
+  padding: 20px 0 0 20px;
+  align-items: flex-start; justify-content: flex-start;
+}
+
+.tf-feed-inner {
+  display: flex; flex-direction: column; gap: 8px;
+  width: var(--tf-card-w);
+  pointer-events: auto;
+  mask-image: linear-gradient(to bottom, transparent 0, black 60px, black 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 60px, black 100%);
+  padding-top: 24px;
+  overflow: hidden;
+  max-height: calc(100vh - 40px);
+}
+.tf-feed[data-position='top-right'] .tf-feed-inner,
+.tf-feed[data-position='top-left'] .tf-feed-inner {
+  mask-image: linear-gradient(to top, transparent 0, black 60px, black 100%);
+  -webkit-mask-image: linear-gradient(to top, transparent 0, black 60px, black 100%);
+  padding-top: 0; padding-bottom: 24px;
+  flex-direction: column-reverse;
+}
+
+.tf-more {
+  align-self: center;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--fg3); opacity: 0.7;
+  padding: 4px 0;
+}
+
+.tf-card-wrap { position: relative; opacity: 1; animation: tfCardIn 180ms var(--ease, ease-out); }
+.tf-card {
+  position: relative;
+  background: var(--tf-card-bg);
+  border: 1px solid var(--tf-card-border);
+  border-radius: 12px;
+  box-shadow: var(--tf-card-shadow);
+  overflow: hidden;
+  transition: transform 150ms var(--ease, ease-out), box-shadow 150ms var(--ease, ease-out);
+}
+.tf-card-ghost { position: absolute; inset: 0; background: var(--tf-card-bg); pointer-events: none; border: 1px solid var(--tf-card-border); border-radius: 12px; }
+.tf-card-ghost-2 { transform: translate(4px, 4px); opacity: 0.6; z-index: 0; }
+.tf-card-ghost-3 { transform: translate(8px, 8px); opacity: 0.35; z-index: -1; }
+.tf-card-front { position: relative; z-index: 1; cursor: pointer; background: var(--tf-card-bg); width: 100%; text-align: left; border: 1px solid var(--tf-card-border); border-radius: 12px; color: inherit; font: inherit; padding: 0; }
+.tf-card-front[data-clickable='false'] { cursor: default; }
+.tf-card-front:hover { transform: translateY(-1px); box-shadow: var(--tf-card-shadow-hover); }
+.tf-card-front:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tf-card-front[data-destructive='true'] { border-color: rgba(250, 82, 82, 0.35); }
+
+.tf-accent-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--offline); }
+.tf-card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.tf-card-front[data-destructive='true'] .tf-card-body { padding-left: 16px; }
+
+.tf-row-1 { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tf-icon { width: 28px; height: 28px; border-radius: 7px; background: var(--tf-icon-bg); display: flex; align-items: center; justify-content: center; color: var(--fg1); flex-shrink: 0; }
+.tf-tool { font-family: var(--font-mono); font-size: 13px; font-weight: 500; color: var(--fg1); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-row-1-end { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.tf-dur { font-family: var(--font-mono); font-size: 11px; color: var(--fg3); font-variant-numeric: tabular-nums; }
+.tf-counts { display: flex; gap: 4px; }
+
+.tf-row-2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; line-height: 1.35; padding-left: 38px; color: var(--fg2); }
+.tf-server-type { font-weight: 600; color: var(--fg1); }
+.tf-server-name { color: var(--fg2); }
+.tf-sep { color: var(--fg3); opacity: 0.6; }
+.tf-profile { font-family: var(--font-mono); font-size: 11px; color: var(--fg3); padding: 1px 5px; background: var(--tf-chip-bg); border-radius: 3px; }
+.tf-sub { font-size: 11px; color: var(--fg3); }
+
+.tf-hints { display: flex; gap: 4px; flex-wrap: wrap; padding-left: 38px; padding-top: 2px; }
+.tf-pill { display: inline-flex; align-items: center; height: 16px; padding: 0 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-family: var(--font-mono); border: 1px solid transparent; border-radius: 3px; white-space: nowrap; }
+.tf-pill[data-tone='muted'] { background: var(--tf-muted-bg); color: var(--tf-muted-fg); }
+.tf-pill[data-tone='warn'] { background: var(--tf-warn-bg); color: var(--tf-warn-fg); }
+.tf-pill[data-tone='danger'] { background: var(--tf-danger-bg); color: var(--tf-danger-fg); }
+.tf-chip { display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 6px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); background: var(--tf-chip-bg); border-radius: 3px; }
+
+.tf-dismiss-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--tf-progress-track); overflow: hidden; }
+.tf-dismiss-fill { height: 100%; width: 100%; transform-origin: left; animation-name: tfDismissFill; animation-timing-function: linear; animation-fill-mode: forwards; }
