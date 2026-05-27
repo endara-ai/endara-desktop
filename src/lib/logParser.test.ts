@@ -13,6 +13,34 @@ describe('parseLogLine', () => {
     expect(parsed.level).toBe('info');
   });
 
+  it('extracts a quoted span value containing whitespace without stray quotes', () => {
+    // Regression: the previous alternation tried the unquoted branch first
+    // and would capture `"Clement` (stopping at the inner space), leaking a
+    // leading quote into the endpoint dropdown.
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="Clement Whatsapp" transport="stdio"}: Initialize handshake complete',
+    );
+    expect(parsed.endpoint).toBe('Clement Whatsapp');
+    expect(parsed.transport).toBe('stdio');
+  });
+
+  it('extracts a quoted endpoint name with a space from a full relay log line', () => {
+    // Mirrors the Rust-side fixture in src-tauri/src/lib.rs
+    // (`parse_endpoint_from_span_tests::endpoint_present_in_span_returns_some`)
+    // so the JS parser stays in lockstep with the authoritative parser on the
+    // real Full-format wire shape — timestamp + level + quoted span fields.
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-20T10:00:00.000Z  INFO endpoint{endpoint="Clement Whatsapp" transport="stdio"}: Initialize handshake complete',
+    );
+    expect(parsed.endpoint).toBe('Clement Whatsapp');
+    expect(parsed.transport).toBe('stdio');
+    expect(parsed.timestamp.toISOString()).toBe('2026-05-20T10:00:00.000Z');
+    expect(parsed.level).toBe('info');
+    expect(parsed.message).toBe('Initialize handshake complete');
+  });
+
   it('extracts multiple span fields (endpoint, transport, server_type)', () => {
     const parsed = parseLogLine(
       'info',

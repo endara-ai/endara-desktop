@@ -27,7 +27,13 @@ export interface ParsedLogLine {
 }
 
 const SPAN_RE = /(\w+)\{([^}]+)\}/g;
-const FIELD_RE = /(\w+)=([^\s,}]+|"[^"]*")/g;
+// The quoted alternative must come first: regex alternation is leftmost-first,
+// not longest-match, so trying `[^\s,}]+` ahead of `"[^"]*"` would greedily
+// match `"Clement` and stop at the space inside `endpoint="Clement Whatsapp"`,
+// leaving a stray leading quote in the captured value.
+// Capture groups: 1 = field name, 2 = full value, 3 = inside-quotes (when
+// quoted), 4 = unquoted value.
+const FIELD_RE = /(\w+)=("([^"]*)"|([^\s,}]+))/g;
 const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?)\s+/;
 // Whole-word level token that the relay emits right after the timestamp. The
 // regex is case-sensitive because the relay always emits these upper-case;
@@ -88,7 +94,7 @@ export function parseLogLine(
     const [full, spanName, spanFields] = match;
     spans[spanName] = {};
     for (const fm of spanFields.matchAll(FIELD_RE)) {
-      spans[spanName][fm[1]] = fm[2].replace(/^"|"$/g, '');
+      spans[spanName][fm[1]] = fm[3] !== undefined ? fm[3] : fm[4];
     }
     cleanMessage = cleanMessage.replace(full, '');
   }
