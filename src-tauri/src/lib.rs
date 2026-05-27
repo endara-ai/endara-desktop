@@ -1,4 +1,6 @@
 mod api_proxy;
+mod overlay;
+mod sse;
 mod tray;
 mod webview_recovery;
 
@@ -11,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, RunEvent, State,
+    AppHandle, Emitter, Manager, RunEvent, State, Window,
 };
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_notification::NotificationExt;
@@ -1425,6 +1427,100 @@ async fn get_mgmt_api_socket_path() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn show_overlay(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window(overlay::OVERLAY_WINDOW_LABEL) {
+        w.show().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn hide_overlay(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window(overlay::OVERLAY_WINDOW_LABEL) {
+        w.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_overlay_ignore_cursor_events(app: AppHandle, ignore: bool) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window(overlay::OVERLAY_WINDOW_LABEL) {
+        w.set_ignore_cursor_events(ignore)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn reposition_overlay(app: AppHandle, position: String) -> Result<(), String> {
+    let pos = overlay::OverlayPosition::parse(&position)?;
+    overlay::reposition_overlay_window(&app, pos).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn subscribe_tool_call_events(
+    window: Window,
+    state: State<'_, overlay::OverlaySubscriberState>,
+) -> Result<(), String> {
+    let socket = api_proxy::resolve_api_socket_path(&data_dir()?);
+    overlay::spawn_sse_bridge(&state, socket, window).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn unsubscribe_tool_call_events(
+    state: State<'_, overlay::OverlaySubscriberState>,
+) -> Result<(), String> {
+    overlay::abort_sse_bridge(&state).await;
+    Ok(())
+}
+
+/// Payload emitted to the main window so its RelayLogs view can scroll the
+/// matching `request{id="..."}` row into view. Field name is camelCase to
+/// match the renderer event handler — Tauri serializes Serde structs with
+/// the default rename, and the front-end consumer expects `jsonrpcId`.
+#[derive(Serialize, Clone)]
+struct FocusLogPayload {
+    #[serde(rename = "jsonrpcId")]
+    jsonrpc_id: String,
+}
+
+/// Show + focus the main window and emit `overlay:focus-log` to it with the
+/// JSON-RPC id of the request the user clicked on in the overlay. The Phase
+/// 4 overlay card click handler is wired through here; Phase 3 ships the
+/// plumbing only.
+///
+/// On macOS we also restore the regular activation policy so the app
+/// reappears in the Dock + Cmd-Tab when the user clicks from an otherwise
+/// hidden / accessory-mode session — mirroring the tray "Open Endara"
+/// behaviour.
+#[tauri::command]
+async fn focus_main_window_on_log(app: AppHandle, jsonrpc_id: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    set_macos_activation_policy(true);
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|e| e.to_string())?;
+        window.unminimize().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+        window
+            .emit(
+                "overlay:focus-log",
+                FocusLogPayload {
+                    jsonrpc_id: jsonrpc_id.clone(),
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        log::info!(
+            "[overlay] focus_main_window_on_log emitted jsonrpc_id={}",
+            jsonrpc_id
+        );
+        Ok(())
+    } else {
+        Err("main window not available".to_string())
+    }
+}
+
+#[tauri::command]
 async fn set_relay_port(port: u16, state: State<'_, RelayState>) -> Result<(), String> {
     *state.port.lock().await = port;
 
@@ -2060,6 +2156,7 @@ pub fn run() {
         .manage(relay_state)
         .manage(pending_update)
         .manage(UpdaterBackoffState::default())
+        .manage(overlay::OverlaySubscriberState::default())
         .invoke_handler(tauri::generate_handler![
             start_relay,
             stop_relay,
@@ -2087,6 +2184,13 @@ pub fn run() {
             get_autostart,
             set_autostart,
             set_tray_health,
+            show_overlay,
+            hide_overlay,
+            set_overlay_ignore_cursor_events,
+            reposition_overlay,
+            subscribe_tool_call_events,
+            unsubscribe_tool_call_events,
+            focus_main_window_on_log,
         ])
         .setup(move |app| {
             log::info!(
@@ -2228,6 +2332,19 @@ pub fn run() {
                 log::warn!("[webview] main window missing at setup; crash-recovery not installed");
             }
 
+            // Build the overlay WebviewWindow. Phase 2 hardcodes the
+            // settings; Phase 5 wires this to `config.toml` + a UI toggle.
+            let overlay_cfg = overlay::OverlaySettings::default();
+            if overlay_cfg.enabled {
+                match overlay::build_overlay_window(app.handle(), &overlay_cfg) {
+                    Ok(_) => log::info!(
+                        "[overlay] window built label=overlay position={}",
+                        overlay_cfg.position.as_str()
+                    ),
+                    Err(e) => log::warn!("[overlay] failed to build overlay window error={e}"),
+                }
+            }
+
             // Handle autostarted launch: hide window and set accessory mode
             if is_autostarted() {
                 log::info!("autostart hide window=main accessory_mode=true");
@@ -2250,6 +2367,18 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // The overlay window is owned by the app lifecycle (toggled
+                // via the Settings tray); close-requested on it (e.g. via
+                // dev-tools) is a no-op rather than the "hide main + drop
+                // activation policy" path the main window uses.
+                if window.label() == overlay::OVERLAY_WINDOW_LABEL {
+                    log::info!(
+                        "window close requested label={} action=prevented",
+                        window.label()
+                    );
+                    api.prevent_close();
+                    return;
+                }
                 log::info!(
                     "window close requested label={} action=prevented_and_hidden",
                     window.label()

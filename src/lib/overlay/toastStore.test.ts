@@ -224,4 +224,34 @@ describe('toastStore', () => {
     vi.advanceTimersByTime(500);
     expect(get(store)).toHaveLength(1);
   });
+
+  it('persists jsonrpcId from started event onto the request', () => {
+    const store = createToastStore();
+    store.addStarted(started({ request_id: 'req-1', jsonrpc_id: '42' }));
+    const groups = get(store) as ToolCallGroup[];
+    expect(groups[0].requests[0].jsonrpcId).toBe('42');
+  });
+
+  it('defaults jsonrpcId to null when the relay event omits it', () => {
+    const store = createToastStore();
+    store.addStarted(started({ request_id: 'req-1' }));
+    const groups = get(store) as ToolCallGroup[];
+    expect(groups[0].requests[0].jsonrpcId).toBeNull();
+  });
+
+  it('settle backfills jsonrpcId when the started event lacked one', () => {
+    const store = createToastStore();
+    store.addStarted(started({ request_id: 'req-1' }));
+    store.settle({ ...completed('req-1'), jsonrpc_id: '7' });
+    const groups = get(store) as ToolCallGroup[];
+    expect(groups[0].requests[0].jsonrpcId).toBe('7');
+  });
+
+  it('settle never downgrades a known jsonrpcId back to null', () => {
+    const store = createToastStore();
+    store.addStarted(started({ request_id: 'req-1', jsonrpc_id: '42' }));
+    store.settle(completed('req-1'));
+    const groups = get(store) as ToolCallGroup[];
+    expect(groups[0].requests[0].jsonrpcId).toBe('42');
+  });
 });

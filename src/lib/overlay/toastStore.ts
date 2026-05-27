@@ -29,6 +29,11 @@ export type ToolCallRequest = {
   status: 'inflight' | 'success' | 'error';
   durationMs?: number;
   errorMessage?: string;
+  // JSON-RPC envelope id captured from the originating event's `jsonrpc_id`
+  // field. Surfaced on each request so the overlay card click handler can
+  // emit it to the main window to scroll the matching log row into view.
+  // `null` when the relay event had no `request` span on the stack.
+  jsonrpcId: string | null;
 };
 
 export type ToolCallGroup = {
@@ -127,6 +132,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       requestId: event.request_id,
       ts: event.ts,
       status: 'inflight',
+      jsonrpcId: event.jsonrpc_id ?? null,
     };
     if (existing) {
       cancelDismiss(id);
@@ -172,6 +178,12 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     req.status = isError ? 'error' : 'success';
     req.durationMs = event.duration_ms;
     if (event.kind === 'failed') req.errorMessage = event.error_message;
+    // Carry through the JSON-RPC id from the terminal event when the
+    // started event did not provide one (e.g. broadcast subscriber joined
+    // mid-request). Never downgrade a known id back to null.
+    if (req.jsonrpcId === null && event.jsonrpc_id != null) {
+      req.jsonrpcId = event.jsonrpc_id;
+    }
     g.inflight = Math.max(0, g.inflight - 1);
     if (isError) g.error += 1;
     else g.success += 1;

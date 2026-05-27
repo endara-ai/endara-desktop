@@ -467,3 +467,15 @@
 .animate-pulse-dot {
   animation: pulse-dot 2s ease-in-out infinite;
 }
+
+/* Fade-out highlight applied to a relay log row when an overlay card click
+   focuses it. Duration must match `HIGHLIGHT_DURATION_MS` in RelayLogs.svelte
+   (2000ms) so the visual fade ends as the parent removes the class. */
+@keyframes highlight-row-fade {
+  0%   { background-color: var(--accent-tint); }
+  100% { background-color: transparent; }
+}
+
+.highlight-row {
+  animation: highlight-row-fade 2s ease-out forwards;
+}

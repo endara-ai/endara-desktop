@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { relayLogLines, activeTopLevelTab } from '$lib/stores';
   import type { LogLevel } from '$lib/logParser';
   import { isAtBottom } from '$lib/scrollUtils';
   import LogFilterBar from './LogFilterBar.svelte';
   import LogRow from './LogRow.svelte';
-  import { toggleEndpointFilter } from './relay-logs-helpers';
+  import { findRequestRowIndex, toggleEndpointFilter } from './relay-logs-helpers';
+
+  /** Duration the matched row stays highlighted after an overlay:focus-log event. */
+  const HIGHLIGHT_DURATION_MS = 2000;
 
   type Props = {
     ongotoendpoint?: (name: string) => void;
@@ -18,6 +22,11 @@
 
   // Right-click "Go to endpoint" context menu state. `null` = no menu open.
   let contextMenu = $state<{ x: number; y: number; endpoint: string } | null>(null);
+
+  // JSON-RPC id of the row currently painted with the fade-out highlight.
+  // Set by the overlay:focus-log handler; cleared after HIGHLIGHT_DURATION_MS.
+  let highlightedRequestId = $state<string | null>(null);
+  let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Filter state — local, not persisted (engineering spec §2.2).
   let activeLevels = $state<Set<LogLevel>>(new Set(['error', 'warn', 'info', 'debug', 'trace']));
@@ -145,6 +154,59 @@
       window.removeEventListener('keydown', onKey);
     };
   });
+
+  // Handle the overlay:focus-log window event. The host (Rust) emits this
+  // from `focus_main_window_on_log` after focusing the main window. We:
+  //   1. switch to the relay-logs tab,
+  //   2. wait one tick so the scroll container is mounted + visible,
+  //   3. find the latest row whose `requestId === jsonrpcId`,
+  //   4. scroll it into view (centered) and paint the fade-out highlight.
+  //
+  // If the matching row is filtered out, scrollIntoView is a no-op — the
+  // user can clear filters and the toast can still be clicked again. We
+  // log a warning to surface the dropped target in dev-tools.
+  onMount(() => {
+    let unlisten: UnlistenFn | undefined;
+    listen<{ jsonrpcId: string }>('overlay:focus-log', async (event) => {
+      const { jsonrpcId } = event.payload;
+      if (!jsonrpcId) return;
+      activeTopLevelTab.set('relay-logs');
+      // Disable auto-scroll so scrollIntoView is not immediately undone by
+      // the bottom-pin effect when new log lines arrive mid-flight.
+      autoScroll = false;
+      await tick();
+      const idx = findRequestRowIndex(filteredLines, jsonrpcId);
+      if (idx === -1) {
+        console.warn(`[overlay] no log row found for jsonrpcId=${jsonrpcId}`);
+        return;
+      }
+      const container = scrollContainer;
+      if (!container) return;
+      const row = container.querySelector<HTMLElement>(
+        `[data-request-id="${CSS.escape(jsonrpcId)}"]:nth-of-type(${idx + 1})`,
+      );
+      // Fall back to the last matching row if :nth-of-type selector did not
+      // resolve (e.g. siblings other than the row grid intermixed). The
+      // helper already guarantees the newest occurrence is at `idx`.
+      const rows = container.querySelectorAll<HTMLElement>(
+        `[data-request-id="${CSS.escape(jsonrpcId)}"]`,
+      );
+      const target = row ?? rows[rows.length - 1];
+      target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      highlightedRequestId = jsonrpcId;
+      if (highlightTimer) clearTimeout(highlightTimer);
+      highlightTimer = setTimeout(() => {
+        highlightedRequestId = null;
+        highlightTimer = null;
+      }, HIGHLIGHT_DURATION_MS);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+      if (highlightTimer) clearTimeout(highlightTimer);
+    };
+  });
 </script>
 
 <div class="h-full flex flex-col">
@@ -184,6 +246,7 @@
           isActiveEndpoint={isActive}
           searchQuery={trimmedSearch}
           nowMs={now}
+          highlighted={highlightedRequestId !== null && line.requestId === highlightedRequestId}
           onEndpointClick={onEndpointClick}
           onEndpointContextMenu={onEndpointContextMenu}
         />

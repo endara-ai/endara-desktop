@@ -34,3 +34,25 @@ export function applyGoToEndpoint(name: string): void {
   selectedEndpoint.set(name);
   activeTopLevelTab.set('servers');
 }
+
+/**
+ * Find the index of the latest log row whose `request{id="..."}` span
+ * matches `jsonrpcId`. Used by the RelayLogs view to scroll to and
+ * highlight the row that the overlay card click selected.
+ *
+ * Scans newest-first so a JSON-RPC id reused across reconnections (the
+ * relay numbers from 0 on each fresh MCP session) resolves to the most
+ * recent occurrence rather than an earlier one that has scrolled off
+ * the user's attention.
+ *
+ * Returns `-1` when no row matches.
+ */
+export function findRequestRowIndex<T extends { requestId?: string }>(
+  lines: readonly T[],
+  jsonrpcId: string,
+): number {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].requestId === jsonrpcId) return i;
+  }
+  return -1;
+}

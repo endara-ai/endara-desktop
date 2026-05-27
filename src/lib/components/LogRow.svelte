@@ -16,6 +16,10 @@
     searchQuery?: string;
     /** Tick value (ms) for the hover tooltip's "Ns ago" relative time. */
     nowMs?: number;
+    /** When true, paints a temporary fade-out highlight on the row. Set by the
+     * RelayLogs parent in response to an `overlay:focus-log` window event so
+     * the row matching the overlay card click is visually identified. */
+    highlighted?: boolean;
     /** Click handler for the endpoint name. Omit to render a non-interactive label. */
     onEndpointClick?: (name: string) => void;
     /** Right-click handler for the endpoint name (context menu). */
@@ -27,6 +31,7 @@
     isActiveEndpoint = false,
     searchQuery = '',
     nowMs,
+    highlighted = false,
     onEndpointClick,
     onEndpointContextMenu,
   }: Props = $props();
@@ -78,9 +83,10 @@
 </script>
 
 <div
-  class="grid grid-cols-[auto_4rem_8rem_1fr] gap-3 pl-2 pr-3 py-0.5 hover:bg-(--surface-hover) items-baseline"
+  class="grid grid-cols-[auto_4rem_8rem_1fr] gap-3 pl-2 pr-3 py-0.5 hover:bg-(--surface-hover) items-baseline {highlighted ? 'highlight-row' : ''}"
   style={endpointStripeStyle(line.endpoint)}
   data-testid="log-row"
+  data-request-id={line.requestId ?? ''}
 >
   <span
     class="text-(--fg3) select-none tabular-nums"

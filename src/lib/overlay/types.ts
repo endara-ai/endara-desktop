@@ -25,6 +25,11 @@ export type StartedEvent = {
   server_type?: string | null;
   server_name?: string | null;
   profile?: string | null;
+  // JSON-RPC envelope id captured from the surrounding `request` span. Used by
+  // the overlay card click handler to focus the matching `request{id="..."}`
+  // log row in the main window. `None` when no `request` span was on the stack
+  // when the event was emitted (e.g. internal callers).
+  jsonrpc_id?: string | null;
   tool: string;
   annotations?: ToolCallAnnotations;
 };
@@ -35,6 +40,7 @@ export type CompletedEvent = {
   ts: string;
   duration_ms: number;
   status: 'ok' | 'error';
+  jsonrpc_id?: string | null;
 };
 
 export type FailedEvent = {
@@ -44,6 +50,7 @@ export type FailedEvent = {
   duration_ms: number;
   status: 'error';
   error_message?: string;
+  jsonrpc_id?: string | null;
 };
 
 export type ToolCallEvent = StartedEvent | CompletedEvent | FailedEvent;
