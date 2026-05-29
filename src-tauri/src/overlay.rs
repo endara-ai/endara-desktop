@@ -338,10 +338,14 @@ pub fn build_overlay_window(
     app: &AppHandle,
     cfg: &OverlaySettings,
 ) -> tauri::Result<WebviewWindow> {
-    // adapter-static prerenders the `/overlay` route to `build/overlay.html`
-    // (see `src/routes/overlay/+page.ts`); load it explicitly so we don't
-    // depend on Tauri's optional `.html` auto-suffix.
-    let url = WebviewUrl::App(PathBuf::from("overlay.html"));
+    // adapter-static prerenders the `/overlay` route to
+    // `build/overlay/index.html` because the route exports
+    // `trailingSlash = 'always'` (see `src/routes/overlay/+page.ts`).
+    // `WebviewUrl::App("overlay/")` resolves uniformly in both modes:
+    //   - dev:  `http://localhost:1420/overlay/` → SvelteKit/Vite serves the route
+    //   - prod: Tauri's asset protocol maps the directory path to its `index.html`
+    // Using `"overlay.html"` would 404 in dev (the dev server has no such file).
+    let url = WebviewUrl::App(PathBuf::from("overlay/"));
     let mut builder = tauri::WebviewWindowBuilder::new(app, OVERLAY_WINDOW_LABEL, url)
         .title("Endara Overlay")
         .decorations(false)
