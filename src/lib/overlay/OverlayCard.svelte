@@ -42,6 +42,14 @@
   const showDuration = $derived(state !== 'inflight' && avgMs != null);
   const hasSettled = $derived(group.success > 0 || group.error > 0);
   const clickable = $derived(canFocusLog(group));
+  // Collapse row 2's duplicate label when serverType and serverName are the
+  // same (e.g. `gmail · gmail · <profile>` → `gmail · <profile>`). Falls back
+  // to the unchanged two-label layout whenever either side is null or differs.
+  const sameServer = $derived(
+    group.serverType != null &&
+      group.serverName != null &&
+      group.serverType === group.serverName,
+  );
   const stateColor = $derived(
     state === 'inflight'
       ? 'var(--accent)'
@@ -122,8 +130,10 @@
 
       <div class="tf-row-2">
         <span class="tf-server-type">{group.serverType ?? 'unknown'}</span>
-        <span class="tf-sep">·</span>
-        <span class="tf-server-name">{group.serverName ?? '—'}</span>
+        {#if !sameServer}
+          <span class="tf-sep">·</span>
+          <span class="tf-server-name">{group.serverName ?? '—'}</span>
+        {/if}
         {#if showProfile && group.profile}
           <span class="tf-sep">·</span>
           <span class="tf-profile">{group.profile}</span>

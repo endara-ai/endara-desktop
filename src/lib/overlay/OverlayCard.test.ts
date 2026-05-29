@@ -170,3 +170,53 @@ describe('OverlayCard — dismiss progress', () => {
     expect(after.dismissStartedAt).not.toBeNull();
   });
 });
+
+// Row 2 collapses `<server-type> · <server-name>` to a single label when the
+// two values are identical (e.g. `gmail · gmail` → `gmail`). Vitest runs
+// without jsdom, so we (1) verify the `sameServer` predicate the component's
+// `$derived` mirrors and (2) source-grep `OverlayCard.svelte` to confirm the
+// `tf-server-name` span + its preceding separator are gated on `!sameServer`
+// while the profile suffix is not — i.e. the profile still renders alongside
+// the collapsed label.
+describe('OverlayCard — collapsed row 2 when serverType === serverName', () => {
+  // Mirrors the `$derived` in OverlayCard.svelte. Kept inline so the test
+  // exercises the exact predicate the template uses.
+  const sameServer = (group: ToolCallGroup) =>
+    group.serverType != null &&
+    group.serverName != null &&
+    group.serverType === group.serverName;
+
+  it('predicate is true when both sides are non-null and equal', () => {
+    expect(sameServer(g({ serverType: 'gmail', serverName: 'gmail' }))).toBe(true);
+  });
+
+  it('predicate is false when sides differ or either is null', () => {
+    expect(sameServer(g({ serverType: 'GitHub', serverName: 'repo' }))).toBe(false);
+    expect(sameServer(g({ serverType: null, serverName: 'gmail' }))).toBe(false);
+    expect(sameServer(g({ serverType: 'gmail', serverName: null }))).toBe(false);
+    // Case-sensitive: `Gmail` vs `gmail` must not collapse.
+    expect(sameServer(g({ serverType: 'Gmail', serverName: 'gmail' }))).toBe(false);
+  });
+
+  it('OverlayCard.svelte gates tf-server-name on {#if !sameServer} and leaves profile unconditional', async () => {
+    // `?raw` returns the component source as a string — same technique the
+    // ToastFeed overflow-mask test uses to assert markup without a DOM.
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+
+    // The `tf-server-name` span and its preceding `·` separator must live
+    // inside a `{#if !sameServer}` block.
+    expect(src).toMatch(
+      /\{#if !sameServer\}\s*<span class="tf-sep">·<\/span>\s*<span class="tf-server-name">/,
+    );
+
+    // Exactly one `tf-server-name` span exists in row 2 (so the gmail/gmail
+    // case renders one label, not two).
+    const serverNameMatches = src.match(/class="tf-server-name"/g) ?? [];
+    expect(serverNameMatches).toHaveLength(1);
+
+    // The profile suffix must still render alongside the collapsed label.
+    expect(src).toMatch(
+      /\{#if showProfile && group\.profile\}\s*<span class="tf-sep">·<\/span>\s*<span class="tf-profile">/,
+    );
+  });
+});
