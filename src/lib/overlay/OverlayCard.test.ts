@@ -82,6 +82,28 @@ describe('OverlayCard — visual state branches', () => {
     expect(groupVisualState(group)).toBe('inflight');
   });
 
+  it('keeps "N calls · Mms avg" visible while inflight if any call has settled', () => {
+    // Mirrors the OverlayCard.svelte predicate `stacked && hasSettled && avgMs != null`
+    // where `hasSettled = group.success > 0 || group.error > 0`. A new inflight call
+    // mid-burst must not hide the avg-text the burst already earned.
+    const group = g({
+      inflight: 1,
+      success: 2,
+      error: 0,
+      requests: [
+        req({ requestId: 'a', status: 'success', durationMs: 120 }),
+        req({ requestId: 'b', status: 'success', durationMs: 180 }),
+        req({ requestId: 'c', status: 'inflight' }),
+      ],
+    });
+    const hasSettled = group.success > 0 || group.error > 0;
+    expect(isStacked(group)).toBe(true);
+    expect(hasSettled).toBe(true);
+    expect(averageDurationMs(group)).toBe(150);
+    // Old behaviour gated on `state !== 'inflight'` would have hidden the avg-text here.
+    expect(groupVisualState(group)).toBe('inflight');
+  });
+
   it('destructive variant flips border + accent bar', () => {
     const group = g({ annotations: { destructive: true } });
     expect(isDestructive(group)).toBe(true);

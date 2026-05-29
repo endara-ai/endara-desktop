@@ -25,6 +25,7 @@
   import { cardClick } from './overlay-actions';
   import HintPill from './HintPill.svelte';
   import StateIcon from './StateIcon.svelte';
+  import { fade } from 'svelte/transition';
 
   type Props = {
     group: ToolCallGroup;
@@ -39,6 +40,7 @@
   const hints = $derived(hintsForAnnotations(group.annotations));
   const avgMs = $derived(averageDurationMs(group));
   const showDuration = $derived(state !== 'inflight' && avgMs != null);
+  const hasSettled = $derived(group.success > 0 || group.error > 0);
   const clickable = $derived(canFocusLog(group));
   const stateColor = $derived(
     state === 'inflight'
@@ -91,19 +93,19 @@
           {#if stacked}
             <div class="tf-counts">
               {#if group.inflight > 0}
-                <span class="tf-chip" data-kind="inflight" style:color="var(--accent)">
+                <span class="tf-chip" data-kind="inflight" style:color="var(--accent)" out:fade={{ duration: 150 }}>
                   <StateIcon state="inflight" color="var(--accent)" size={9} />
                   {group.inflight}
                 </span>
               {/if}
               {#if group.success > 0}
-                <span class="tf-chip" data-kind="success" style:color="var(--healthy)">
+                <span class="tf-chip" data-kind="success" style:color="var(--healthy)" out:fade={{ duration: 150 }}>
                   <StateIcon state="success" color="var(--healthy)" size={9} />
                   {group.success}
                 </span>
               {/if}
               {#if group.error > 0}
-                <span class="tf-chip" data-kind="fail" style:color="var(--offline)">
+                <span class="tf-chip" data-kind="fail" style:color="var(--offline)" out:fade={{ duration: 150 }}>
                   <StateIcon state="fail" color="var(--offline)" size={9} />
                   {group.error}
                 </span>
@@ -126,9 +128,11 @@
           <span class="tf-sep">·</span>
           <span class="tf-profile">{group.profile}</span>
         {/if}
-        {#if stacked && showDuration}
+        {#if stacked && hasSettled && avgMs != null}
           <span class="tf-sep">·</span>
-          <span class="tf-sub">{group.requests.length} calls · {avgMs}ms avg</span>
+          <span class="tf-sub" out:fade={{ duration: 150 }}
+            >{group.requests.length} calls · {avgMs}ms avg</span
+          >
         {/if}
       </div>
 
