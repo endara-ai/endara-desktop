@@ -119,16 +119,17 @@ describe('ToastFeed — overflow-gated top-edge mask', () => {
   });
 
   it('overlay.css scopes the top-edge mask on [data-overflow="true"]', async () => {
-    // `?raw` on a `.css` file goes through Vite's CSS pipeline and comes
-    // back empty in this test env, so we read the file via an
-    // `import.meta.glob` raw-text loader instead. The glob is resolved at
-    // build time so the path stays statically analyzable.
-    const mods = import.meta.glob('./overlay.css', {
-      query: '?raw',
-      import: 'default',
-      eager: true,
-    }) as Record<string, string>;
-    const src = mods['./overlay.css'] ?? '';
+    // Vite's CSS pipeline intercepts `.css` imports (even with `?raw`)
+    // and returns empty content in the vitest env, so we read the file
+    // directly from disk. `@ts-expect-error` because `@types/node` is
+    // not installed in this workspace; vitest runs in Node and resolves
+    // these at runtime.
+    // @ts-expect-error node builtin types not installed
+    const { readFileSync } = await import('node:fs');
+    // @ts-expect-error node builtin types not installed
+    const { fileURLToPath } = await import('node:url');
+    const cssPath = fileURLToPath(new URL('./overlay.css', import.meta.url));
+    const src = readFileSync(cssPath, 'utf8') as string;
     // The bottom-anchored variant.
     expect(src).toMatch(/\.tf-feed-inner\[data-overflow='true'\]\s*\{/);
     // The top-anchored variant.
