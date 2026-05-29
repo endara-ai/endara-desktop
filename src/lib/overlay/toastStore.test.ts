@@ -178,10 +178,11 @@ describe('toastStore', () => {
     expect(get(store)).toEqual([]);
   });
 
-  it('default opts: dismissMs=2000, maxVisible=4, showProfile=true', () => {
+  it('default opts: dismissMs=6000, maxVisible=4, showProfile=true', () => {
     const store = createToastStore();
     expect(store.getOpts()).toEqual({
-      dismissMs: 2000,
+      // Mirrors DEFAULT_OPTS in toastStore.ts.
+      dismissMs: 6000,
       maxVisible: 4,
       showProfile: true,
     });

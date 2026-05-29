@@ -58,7 +58,7 @@ export type ToastStoreOpts = {
 };
 
 const DEFAULT_OPTS: ToastStoreOpts = {
-  dismissMs: 2000,
+  dismissMs: 6000,
   maxVisible: 4,
   showProfile: true,
 };

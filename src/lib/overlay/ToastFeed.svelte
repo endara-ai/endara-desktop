@@ -26,7 +26,7 @@
     position = 'bottom-right',
     maxVisible = 7,
     cardWidth = 340,
-    dismissMs = 2000,
+    dismissMs = 6000,
     showProfile = true,
   }: Props = $props();
 
