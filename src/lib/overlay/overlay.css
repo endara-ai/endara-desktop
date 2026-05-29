@@ -78,18 +78,26 @@
   display: flex; flex-direction: column; gap: 8px;
   width: var(--tf-card-w);
   pointer-events: auto;
-  mask-image: linear-gradient(to bottom, transparent 0, black 60px, black 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 60px, black 100%);
   padding-top: 24px;
   overflow: hidden;
   max-height: calc(100vh - 40px);
 }
+/* Only apply the top-edge fade when the feed is overflowing — i.e. when
+ * the "+N earlier" pill is rendered. With <= maxVisible cards the
+ * topmost card stays fully visible instead of dying into the desktop. */
+.tf-feed-inner[data-overflow='true'] {
+  mask-image: linear-gradient(to bottom, transparent 0, black 60px, black 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 60px, black 100%);
+}
 .tf-feed[data-position='top-right'] .tf-feed-inner,
 .tf-feed[data-position='top-left'] .tf-feed-inner {
-  mask-image: linear-gradient(to top, transparent 0, black 60px, black 100%);
-  -webkit-mask-image: linear-gradient(to top, transparent 0, black 60px, black 100%);
   padding-top: 0; padding-bottom: 24px;
   flex-direction: column-reverse;
+}
+.tf-feed[data-position='top-right'] .tf-feed-inner[data-overflow='true'],
+.tf-feed[data-position='top-left'] .tf-feed-inner[data-overflow='true'] {
+  mask-image: linear-gradient(to top, transparent 0, black 60px, black 100%);
+  -webkit-mask-image: linear-gradient(to top, transparent 0, black 60px, black 100%);
 }
 
 .tf-more {

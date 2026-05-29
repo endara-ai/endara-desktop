@@ -376,8 +376,19 @@ pub fn build_overlay_window(
     }
 
     let window = builder.build()?;
-    // Click-through by default — Phase 4 will flip this per-card.
-    if let Err(e) = window.set_ignore_cursor_events(true) {
+    // Click-through by default — Phase 4 flips this per-card via the
+    // `overlayPointerEnter`/`overlayPointerLeave` actions wired in
+    // `OverlayApp.svelte`. In debug builds we skip the global
+    // click-through so the overlay window is fully interactive and
+    // right-click → Inspect works from devtools; production builds keep
+    // the original click-through behaviour so the overlay never steals
+    // input from the user's other windows.
+    if cfg!(debug_assertions) {
+        log::info!(
+            target: "overlay",
+            "debug build: overlay window is interactive (set_ignore_cursor_events skipped); right-click → Inspect to open devtools"
+        );
+    } else if let Err(e) = window.set_ignore_cursor_events(true) {
         log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
     }
     Ok(window)

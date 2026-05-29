@@ -89,3 +89,51 @@ describe('ToastFeed — position attribute', () => {
     expect(positions).toHaveLength(4);
   });
 });
+
+// Regression for the unconditional top-edge fade: `.tf-feed-inner`
+// previously applied `mask-image` always, so even a single card was
+// faded into the desktop. We now gate the mask on a `data-overflow`
+// attribute that mirrors `hidden > 0`. Because vitest runs without a
+// DOM (env=node), we exercise (1) the logical predicate that drives
+// the binding and (2) a source-level grep to guard against future
+// edits removing the attribute or the gated CSS selector.
+describe('ToastFeed — overflow-gated top-edge mask', () => {
+  it('hiddenGroupCount is 0 (data-overflow="false") when total <= maxVisible', () => {
+    expect(hiddenGroupCount(3, 7) > 0).toBe(false);
+    expect(hiddenGroupCount(7, 7) > 0).toBe(false);
+  });
+
+  it('hiddenGroupCount is > 0 (data-overflow="true") when total > maxVisible', () => {
+    expect(hiddenGroupCount(8, 7) > 0).toBe(true);
+    expect(hiddenGroupCount(20, 7) > 0).toBe(true);
+  });
+
+  it('ToastFeed.svelte binds data-overflow to {hidden > 0} on .tf-feed-inner', async () => {
+    // Vite's `?raw` query returns the source text as a string — works in
+    // the node test env without needing jsdom or @types/node. This guards
+    // against future edits silently dropping the attribute that gates the
+    // CSS mask rule below (the CSS side is verified by the matching
+    // selector check in this same suite).
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
+    expect(src).toMatch(/class="tf-feed-inner" data-overflow=\{hidden > 0\}/);
+  });
+
+  it('overlay.css scopes the top-edge mask on [data-overflow="true"]', async () => {
+    // `?raw` on a `.css` file goes through Vite's CSS pipeline and comes
+    // back empty in this test env, so we read the file via an
+    // `import.meta.glob` raw-text loader instead. The glob is resolved at
+    // build time so the path stays statically analyzable.
+    const mods = import.meta.glob('./overlay.css', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>;
+    const src = mods['./overlay.css'] ?? '';
+    // The bottom-anchored variant.
+    expect(src).toMatch(/\.tf-feed-inner\[data-overflow='true'\]\s*\{/);
+    // The top-anchored variant.
+    expect(src).toMatch(
+      /data-position='top-right'\] \.tf-feed-inner\[data-overflow='true'\]/,
+    );
+  });
+});

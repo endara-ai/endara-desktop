@@ -41,7 +41,7 @@
   data-testid="toast-feed"
   style:--tf-card-w="{cardWidth}px"
 >
-  <div class="tf-feed-inner">
+  <div class="tf-feed-inner" data-overflow={hidden > 0}>
     {#if hidden > 0}
       <div class="tf-more" data-testid="more-earlier">+{hidden} earlier</div>
     {/if}

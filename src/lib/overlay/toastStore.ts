@@ -108,20 +108,42 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
   }
 
   function scheduleDismiss(id: string) {
-    const g = groups.find((x) => x.id === id);
-    if (!g) return;
+    const exists = groups.some((g) => g.id === id);
+    if (!exists) return;
     clearDismissTimer(id);
-    g.dismissStartedAt = Date.now();
-    g.lastUpdatedAt = Date.now();
+    const now = Date.now();
+    // Copy-on-write: replace the group with a new object reference so
+    // Svelte 5 `$derived` expressions in OverlayCard re-run when only
+    // inner fields change. The `{#each groups as g (g.id)}` keyed block
+    // keeps the same component instance across updates, so we rely on a
+    // new prop identity to trigger a re-render.
+    groups = groups.map((g) =>
+      g.id === id ? { ...g, dismissStartedAt: now, lastUpdatedAt: now } : g,
+    );
     const tid = setTimeout(() => removeGroup(id), opts.dismissMs);
     dismissTimers.set(id, tid);
     publish();
   }
 
   function cancelDismiss(id: string) {
-    const g = groups.find((x) => x.id === id);
     clearDismissTimer(id);
-    if (g) g.dismissStartedAt = null;
+    let changed = false;
+    groups = groups.map((g) => {
+      if (g.id !== id || g.dismissStartedAt === null) return g;
+      changed = true;
+      return { ...g, dismissStartedAt: null };
+    });
+    // Publish so direct external callers (the `scheduleDismiss /
+    // cancelDismiss can be driven directly` test path, and any future
+    // UI code path) observe the cleared `dismissStartedAt` via
+    // `get(store)`. The previous in-place-mutation implementation got
+    // this for free because the published array shared object refs with
+    // `groups`; copy-on-write loses that, so we explicitly republish.
+    // `addStarted` calls `cancelDismiss` then publishes again after
+    // its own mutation — one redundant publish per repeat-start is
+    // acceptable; the alternative (skipping the publish here) breaks
+    // the direct-driver API.
+    if (changed) publish();
   }
 
   function addStarted(event: StartedEvent) {
@@ -136,17 +158,24 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     };
     if (existing) {
       cancelDismiss(id);
-      existing.inflight += 1;
-      existing.requests.push(req);
-      existing.lastUpdatedAt = now;
-      // Most recent values from the latest started event win.
-      existing.annotations = event.annotations ?? existing.annotations;
-      existing.profile = event.profile ?? null;
+      // Copy-on-write: build a fresh ToolCallGroup so OverlayCard's
+      // `group` prop changes identity and Svelte 5 re-runs its derived
+      // expressions. Mutating `existing` in place would leave the prop
+      // identity unchanged and the UI would not redraw.
+      const updated: ToolCallGroup = {
+        ...existing,
+        inflight: existing.inflight + 1,
+        requests: [...existing.requests, req],
+        lastUpdatedAt: now,
+        // Most recent values from the latest started event win.
+        annotations: event.annotations ?? existing.annotations,
+        profile: event.profile ?? null,
+        dismissStartedAt: null,
+      };
       // Move to end (newest position).
-      groups = groups.filter((g) => g.id !== id);
-      groups.push(existing);
+      groups = groups.filter((g) => g.id !== id).concat(updated);
     } else {
-      groups.push({
+      groups = groups.concat({
         id,
         serverType: event.server_type ?? null,
         serverName: event.server_name ?? null,
@@ -170,26 +199,44 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     // assume the started event was observed for this request — out-of-order
     // delivery (e.g. a settle for a request the SSE bridge missed the start
     // of, because the renderer subscribed late) is silently dropped.
-    const g = groups.find((grp) => grp.requests.some((r) => r.requestId === event.request_id));
-    if (!g) return;
-    const req = g.requests.find((r) => r.requestId === event.request_id);
-    if (!req || req.status !== 'inflight') return;
+    const target = groups.find((grp) =>
+      grp.requests.some((r) => r.requestId === event.request_id),
+    );
+    if (!target) return;
+    const existingReq = target.requests.find((r) => r.requestId === event.request_id);
+    if (!existingReq || existingReq.status !== 'inflight') return;
     const isError = event.kind === 'failed' || event.status === 'error';
-    req.status = isError ? 'error' : 'success';
-    req.durationMs = event.duration_ms;
-    if (event.kind === 'failed') req.errorMessage = event.error_message;
-    // Carry through the JSON-RPC id from the terminal event when the
-    // started event did not provide one (e.g. broadcast subscriber joined
-    // mid-request). Never downgrade a known id back to null.
-    if (req.jsonrpcId === null && event.jsonrpc_id != null) {
-      req.jsonrpcId = event.jsonrpc_id;
-    }
-    g.inflight = Math.max(0, g.inflight - 1);
-    if (isError) g.error += 1;
-    else g.success += 1;
-    g.lastUpdatedAt = Date.now();
+    // Build a fresh ToolCallRequest with the settled fields. Carry the
+    // JSON-RPC id from the terminal event when the started event lacked
+    // one (broadcast subscribers joining mid-request); never downgrade a
+    // known id back to null.
+    const settledReq: ToolCallRequest = {
+      ...existingReq,
+      status: isError ? 'error' : 'success',
+      durationMs: event.duration_ms,
+      ...(event.kind === 'failed' ? { errorMessage: event.error_message } : {}),
+      jsonrpcId:
+        existingReq.jsonrpcId === null && event.jsonrpc_id != null
+          ? event.jsonrpc_id
+          : existingReq.jsonrpcId,
+    };
+    // Copy-on-write: replace both the group and the matching request with
+    // fresh object references so OverlayCard sees a new `group` prop
+    // identity and Svelte 5 re-runs the derived expressions that read
+    // `group.inflight`, `group.success`, etc.
+    const updated: ToolCallGroup = {
+      ...target,
+      requests: target.requests.map((r) =>
+        r.requestId === event.request_id ? settledReq : r,
+      ),
+      inflight: Math.max(0, target.inflight - 1),
+      success: target.success + (isError ? 0 : 1),
+      error: target.error + (isError ? 1 : 0),
+      lastUpdatedAt: Date.now(),
+    };
+    groups = groups.map((g) => (g.id === target.id ? updated : g));
     publish();
-    if (g.inflight === 0) scheduleDismiss(g.id);
+    if (updated.inflight === 0) scheduleDismiss(updated.id);
   }
 
   function setOpts(next: Partial<ToastStoreOpts>) {

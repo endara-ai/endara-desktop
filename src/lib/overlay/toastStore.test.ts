@@ -254,4 +254,56 @@ describe('toastStore', () => {
     const groups = get(store) as ToolCallGroup[];
     expect(groups[0].requests[0].jsonrpcId).toBe('42');
   });
+
+  // Regression for the Phase 4 grouping bug: `OverlayCard` is keyed by
+  // `group.id`, so its `group` prop keeps the same identity across
+  // updates and Svelte 5 never re-runs the `$derived` expressions that
+  // read inner fields. The store MUST replace each mutated group with a
+  // new object reference so the card sees a fresh prop on every change.
+  describe('copy-on-write identity (regression: OverlayCard re-render)', () => {
+    it('addStarted on an existing key produces a fresh ToolCallGroup reference', () => {
+      const store = createToastStore();
+      store.addStarted(started({ request_id: 'req-1' }));
+      const first = (get(store) as ToolCallGroup[])[0];
+      store.addStarted(started({ request_id: 'req-2' }));
+      const second = (get(store) as ToolCallGroup[])[0];
+      expect(second).not.toBe(first);
+      expect(second.requests).not.toBe(first.requests);
+      expect(second.inflight).toBe(2);
+    });
+
+    it('settle produces a fresh ToolCallGroup AND a fresh ToolCallRequest reference', () => {
+      const store = createToastStore();
+      store.addStarted(started({ request_id: 'req-1' }));
+      const beforeGroup = (get(store) as ToolCallGroup[])[0];
+      const beforeReq = beforeGroup.requests[0];
+      store.settle(completed('req-1', 'ok'));
+      const afterGroup = (get(store) as ToolCallGroup[])[0];
+      const afterReq = afterGroup.requests[0];
+      expect(afterGroup).not.toBe(beforeGroup);
+      expect(afterReq).not.toBe(beforeReq);
+      expect(afterReq.status).toBe('success');
+    });
+
+    it('scheduleDismiss produces a fresh ToolCallGroup reference', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      const before = (get(store) as ToolCallGroup[])[0];
+      store.scheduleDismiss(before.id);
+      const after = (get(store) as ToolCallGroup[])[0];
+      expect(after).not.toBe(before);
+      expect(after.dismissStartedAt).not.toBeNull();
+    });
+
+    it('cancelDismiss produces a fresh ToolCallGroup reference when it clears state', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.scheduleDismiss('github|github|list_issues');
+      const scheduled = (get(store) as ToolCallGroup[])[0];
+      store.cancelDismiss('github|github|list_issues');
+      const cancelled = (get(store) as ToolCallGroup[])[0];
+      expect(cancelled).not.toBe(scheduled);
+      expect(cancelled.dismissStartedAt).toBeNull();
+    });
+  });
 });
