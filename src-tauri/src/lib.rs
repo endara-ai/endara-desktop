@@ -1475,29 +1475,6 @@ async fn unsubscribe_tool_call_events(
     Ok(())
 }
 
-/// Diagnostic bridge: the overlay renderer cannot reach devtools (the global
-/// `set_ignore_cursor_events(true)` swallows right-clicks), so it surfaces
-/// its own logs through this command into the dev terminal. Tagged
-/// `overlay-diag` so the whole diag set can be grepped / reverted together.
-///
-/// Gated to the overlay window label only so a misbehaving main-window
-/// renderer cannot spam the dev terminal.
-#[tauri::command]
-fn overlay_diag_log(window: Window, level: String, msg: String) -> Result<(), String> {
-    if window.label() != overlay::OVERLAY_WINDOW_LABEL {
-        return Err(format!(
-            "overlay_diag_log is only callable from the overlay window (got {:?})",
-            window.label()
-        ));
-    }
-    match level.as_str() {
-        "warn" => log::warn!(target: "overlay-diag", "{}", msg),
-        "error" => log::error!(target: "overlay-diag", "{}", msg),
-        _ => log::info!(target: "overlay-diag", "{}: {}", level, msg),
-    }
-    Ok(())
-}
-
 /// Read `[desktop.overlay]` from `config.toml`, falling back to defaults if
 /// the file is missing, malformed, or the section is absent. Used by the
 /// Settings UI and the tray menu to display the current state without
@@ -2380,7 +2357,6 @@ pub fn run() {
             reposition_overlay,
             subscribe_tool_call_events,
             unsubscribe_tool_call_events,
-            overlay_diag_log,
             get_overlay_settings,
             set_overlay_settings,
             focus_main_window_on_log,

@@ -12,7 +12,6 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { get } from 'svelte/store';
 import type {
   CompletedEvent,
   FailedEvent,
@@ -20,19 +19,6 @@ import type {
   ToolCallEvent,
 } from './types';
 import type { ToastStore } from './toastStore';
-
-/**
- * Temporary diagnostic hook: forward a one-line message to the Rust side so
- * it shows up in the `npm run tauri dev` terminal (tagged `overlay-diag`).
- * The overlay window cannot reach devtools because of the global
- * `set_ignore_cursor_events(true)`. Failures are intentionally swallowed —
- * this is debug instrumentation, not production telemetry.
- */
-function diagLog(level: 'info' | 'warn', msg: string): void {
-  void invoke('overlay_diag_log', { level, msg }).catch(() => {
-    /* dev-only instrumentation; do not surface errors */
-  });
-}
 
 /**
  * Attach the bridge: kicks off the host SSE subscription, listens for
@@ -43,37 +29,7 @@ export async function attachOverlayBridge(store: ToastStore): Promise<() => Prom
   let unlisten: UnlistenFn | null = null;
   try {
     unlisten = await listen<ToolCallEvent>('tool-call-event', (event) => {
-      // Diagnostic: log every event we receive BEFORE any routing logic so
-      // the dev terminal shows raw delivery (correlate against the Rust-side
-      // `overlay-bridge` lines and the SSE tap). Tagged `overlay-diag`.
-      const p = (event?.payload ?? null) as Record<string, unknown> | null;
-      const kind = (p?.kind as string | undefined) ?? '?';
-      const reqId = (p?.request_id as string | undefined) ?? '?';
-      const serverType = (p?.server_type as string | null | undefined) ?? '';
-      const serverName = (p?.server_name as string | null | undefined) ?? '';
-      const tool = (p?.tool as string | undefined) ?? '';
-      const key = `${serverType}|${serverName}|${tool}`;
-      diagLog('info', `recv ${kind} req=${reqId} key=${key}`);
-
       route(store, event.payload);
-
-      // Re-read the store snapshot after routing so we can see whether the
-      // mutation actually landed (groups.length, per-group requests.length).
-      try {
-        const groups = get(store);
-        const summary = groups
-          .map(
-            (g) =>
-              `${g.id}{req=${g.requests.length} infl=${g.inflight} suc=${g.success} err=${g.error}}`,
-          )
-          .join(',');
-        diagLog(
-          'info',
-          `route ${kind} req=${reqId} key=${key} groups.length=${groups.length} ${summary}`,
-        );
-      } catch (e) {
-        diagLog('warn', `route snapshot failed: ${String(e)}`);
-      }
     });
   } catch (e) {
     console.error('[overlay] failed to attach tool-call-event listener:', e);
