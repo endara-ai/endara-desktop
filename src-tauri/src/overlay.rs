@@ -453,13 +453,17 @@ async fn sse_bridge_loop(socket_path: std::path::PathBuf, window: tauri::Window)
                 // Server closed the stream cleanly — reconnect with the
                 // initial backoff so a transient relay restart recovers in
                 // <1s.
-                log::info!("[overlay] SSE stream closed cleanly; reconnecting");
+                log::info!(
+                    target: "overlay-bridge",
+                    "SSE disconnected (clean EOF); reconnecting immediately"
+                );
                 backoff.reset();
             }
             Err(e) => {
                 let delay = backoff.next_delay();
                 log::info!(
-                    "[overlay] SSE bridge error: {e}; reconnecting in {:?}",
+                    target: "overlay-bridge",
+                    "SSE disconnected with error={e}; reconnecting in {:?}",
                     delay
                 );
                 tokio::time::sleep(delay).await;
@@ -503,20 +507,55 @@ connection: keep-alive\r\n\
     }
     skip_response_headers(&mut reader).await?;
 
-    log::info!("[overlay] SSE stream connected");
+    log::info!(
+        target: "overlay-bridge",
+        "SSE subscribed to /api/events/tool-calls"
+    );
     loop {
         match sse::read_frame(&mut reader).await {
             Ok(Some(frame)) => {
                 if frame.event == "lagged" {
                     log::warn!(
-                        "[overlay] relay reported lagged subscriber; events may have been dropped"
+                        target: "overlay-bridge",
+                        "relay reported lagged subscriber; events may have been dropped"
                     );
                     continue;
                 }
                 match serde_json::from_str::<serde_json::Value>(&frame.data) {
                     Ok(json) => {
+                        // Diagnostic: tag every event we forward to the
+                        // overlay window so the dev terminal can show the
+                        // Rust-side delivery against the SSE tap. Tagged
+                        // `overlay-bridge` so the whole diag set can be
+                        // grepped / reverted together.
+                        let kind = json.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+                        let req_id = json
+                            .get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        let server_type = json
+                            .get("server_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let server_name = json
+                            .get("server_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let tool = json.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+                        log::info!(
+                            target: "overlay-bridge",
+                            "emit kind={} request_id={} key={}|{}|{}",
+                            kind,
+                            req_id,
+                            server_type,
+                            server_name,
+                            tool
+                        );
                         if let Err(e) = window.emit("tool-call-event", json) {
-                            log::warn!("[overlay] emit tool-call-event failed: {e}");
+                            log::warn!(
+                                target: "overlay-bridge",
+                                "emit tool-call-event failed: {e}"
+                            );
                         }
                     }
                     Err(e) => {
