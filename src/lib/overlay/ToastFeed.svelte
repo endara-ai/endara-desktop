@@ -12,7 +12,7 @@
     type OverlayPosition,
   } from './overlay-helpers';
   import OverlayCard from './OverlayCard.svelte';
-  import { fly, type TransitionConfig } from 'svelte/transition';
+  import { fly } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
 
   type Props = {
@@ -61,33 +61,18 @@
   const inX = $derived(reducedMotion ? 0 : slideDir * slidePx);
   const outX = $derived(reducedMotion ? 0 : slideDir * slidePx);
 
-  // Custom out-transition: combines a horizontal fly with a height +
-  // vertical-margin collapse so the dismissing card leaves the column
-  // flow as it slides out, letting the remaining cards re-flow without
-  // a visible gap. `t` is already eased; `u = 1 - t` so the slide
-  // distance grows as the card fades.
-  function slideCollapse(
-    node: HTMLElement,
-    { x, duration }: { x: number; duration: number },
-  ): TransitionConfig {
-    const style = getComputedStyle(node);
-    const height = node.offsetHeight;
-    const marginTop = parseFloat(style.marginTop) || 0;
-    const marginBottom = parseFloat(style.marginBottom) || 0;
-    return {
-      duration,
-      easing: quintOut,
-      css: (t: number, u: number) => `
-        transform: translateX(${u * x}px);
-        opacity: ${t};
-        max-height: ${t * height}px;
-        margin-top: ${t * marginTop}px;
-        margin-bottom: ${t * marginBottom}px;
-        overflow: hidden;
-        pointer-events: none;
-      `,
-    };
-  }
+  // Stock `fly` for the outro: translateX + opacity only, no
+  // simultaneous height collapse. An earlier custom `slideCollapse`
+  // combined translateX with a `max-height: t * height` collapse so the
+  // column gap closed during the slide — but with `quintOut` easing the
+  // height fell to ~17% in the first 60ms (vs ~59% at 20ms), and the
+  // remaining horizontal travel was promptly clipped by
+  // `.tf-feed-inner { overflow: hidden }` once translateX exceeded the
+  // inner column's 340px width. The combined collapse + clipping read
+  // as "vanish" rather than "slide". Dropping the max-height collapse
+  // keeps the card at full height for the whole 200ms so the slide and
+  // fade are visible; the trade-off is that the row gap closes
+  // instantly when the outro completes, not during it.
 </script>
 
 <div
@@ -104,7 +89,7 @@
       <div
         class="tf-card-slot"
         in:fly={{ x: inX, opacity: 0, duration: inDuration, easing: quintOut }}
-        out:slideCollapse={{ x: outX, duration: outDuration }}
+        out:fly={{ x: outX, opacity: 0, duration: outDuration, easing: quintOut }}
       >
         <OverlayCard group={g} {dismissMs} {showProfile} />
       </div>

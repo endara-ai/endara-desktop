@@ -101,15 +101,15 @@ describe('ToastFeed — position attribute', () => {
 });
 
 // Slide-in / slide-out animation driven by overlay corner. The card slot
-// wrapper rides Svelte's `in:fly` + a custom `out:slideCollapse`
-// transition; the slide direction must mirror the position prop so
-// right-anchored cards travel toward +x and left-anchored toward −x.
-// Both directives must live on the immediate keyed child of the each
-// block — if they sat on the root of `OverlayCard.svelte` instead,
-// Svelte would tear the component down synchronously and the outro
-// would never play (which was the original slide-out regression).
-// Vitest runs in node (no jsdom), so we source-grep the component for
-// the direction branch and the transition wiring.
+// wrapper rides Svelte's stock `in:fly` + `out:fly` transitions; the
+// slide direction must mirror the position prop so right-anchored cards
+// travel toward +x and left-anchored toward −x. Both directives must
+// live on the immediate keyed child of the each block — if they sat on
+// the root of `OverlayCard.svelte` instead, Svelte would tear the
+// component down synchronously and the outro would never play (which
+// was the original slide-out regression). Vitest runs in node (no
+// jsdom), so we source-grep the component for the direction branch and
+// the transition wiring.
 describe('ToastFeed — position-driven slide direction', () => {
   it('right-anchored positions slide toward +x, left-anchored toward −x', () => {
     // Mirrors the `$derived` in ToastFeed.svelte: `position.endsWith('right')
@@ -121,10 +121,10 @@ describe('ToastFeed — position-driven slide direction', () => {
     expect(dirFor('top-left')).toBe(-1);
   });
 
-  it('ToastFeed.svelte wires in:fly + out:slideCollapse on the each-block child', async () => {
+  it('ToastFeed.svelte wires in:fly + out:fly on the each-block child', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
     expect(src).toMatch(/in:fly=\{\{ x: inX,/);
-    expect(src).toMatch(/out:slideCollapse=\{\{ x: outX,/);
+    expect(src).toMatch(/out:fly=\{\{ x: outX,/);
   });
 
   it('places in:/out: directives on the immediate keyed child of {#each}, not inside OverlayCard', async () => {
@@ -137,7 +137,7 @@ describe('ToastFeed — position-driven slide direction', () => {
     const eachIdx = feedSrc.indexOf('{#each visible as g (g.id)}');
     expect(eachIdx).toBeGreaterThan(-1);
     const inFlyIdx = feedSrc.indexOf('in:fly=', eachIdx);
-    const outIdx = feedSrc.indexOf('out:slideCollapse=', eachIdx);
+    const outIdx = feedSrc.indexOf('out:fly=', eachIdx);
     const cardIdx = feedSrc.indexOf('<OverlayCard', eachIdx);
     expect(inFlyIdx).toBeGreaterThan(eachIdx);
     expect(outIdx).toBeGreaterThan(eachIdx);
@@ -150,7 +150,6 @@ describe('ToastFeed — position-driven slide direction', () => {
     // And OverlayCard.svelte itself must NOT redeclare an outro on its
     // root element — that would re-introduce the synchronous-unmount bug.
     const cardSrc = (await import('./OverlayCard.svelte?raw')).default as string;
-    expect(cardSrc).not.toMatch(/out:slideCollapse=/);
     expect(cardSrc).not.toMatch(/out:fly=/);
   });
 
