@@ -28,7 +28,6 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     error: 0,
     requests: [],
     lastUpdatedAt: 0,
-    dismissStartedAt: null,
     ...over,
   };
 }

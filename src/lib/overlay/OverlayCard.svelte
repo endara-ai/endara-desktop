@@ -4,8 +4,10 @@
     - row 1: server icon, tool name, state indicator (spinner / counts / duration)
     - row 2: server-type · server-name · profile (· "N calls · Mms avg" when stacked & resolved)
     - row 3: hint pills derived from `group.annotations`
-    - dismiss progress bar pinned to `dismissStartedAt`
-    - ghost "stacked" peek cards behind when more than one request
+
+  Dismissal is feed-level (see `toastStore`'s idle timer + `ToastFeed`'s
+  group-level slide-out), so the card itself no longer renders a per-card
+  dismiss progress bar or ghost-stack peek cards behind it.
 
   Click invokes `focusLogForRequest(latest.jsonrpcId)`; if the latest request
   has no jsonrpc_id the card is rendered non-clickable (cursor: default) and
@@ -29,12 +31,10 @@
 
   type Props = {
     group: ToolCallGroup;
-    dismissMs: number;
     showProfile?: boolean;
   };
   let {
     group,
-    dismissMs,
     showProfile = true,
   }: Props = $props();
 
@@ -73,13 +73,6 @@
   data-state={state}
   data-testid="overlay-card"
 >
-  {#if stacked}
-    <div class="tf-card tf-card-ghost tf-card-ghost-2" aria-hidden="true"></div>
-    {#if group.requests.length > 2}
-      <div class="tf-card tf-card-ghost tf-card-ghost-3" aria-hidden="true"></div>
-    {/if}
-  {/if}
-
   <button
     type="button"
     class="tf-card tf-card-front"
@@ -162,13 +155,5 @@
         </div>
       {/if}
     </div>
-
-    {#if group.dismissStartedAt != null}
-      {#key group.dismissStartedAt}
-        <div class="tf-dismiss-bar" data-testid="dismiss-bar">
-          <div class="tf-dismiss-fill" style:animation-duration="{dismissMs}ms" style:background={stateColor}></div>
-        </div>
-      {/key}
-    {/if}
   </button>
 </div>

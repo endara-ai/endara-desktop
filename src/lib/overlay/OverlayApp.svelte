@@ -24,6 +24,19 @@
   import ToastFeed from './ToastFeed.svelte';
   import './overlay.css';
 
+  // Pointer enter/leave wrappers that combine the existing Tauri
+  // ignore-cursor-events toggle with the feed-level idle dismiss
+  // pause: hovering over the overlay must freeze the dismiss timer
+  // so a stack the user is actively reading doesn't slide out.
+  function onPointerEnter() {
+    void overlayPointerEnter();
+    store.pauseDismiss();
+  }
+  function onPointerLeave() {
+    void overlayPointerLeave();
+    store.resumeDismiss();
+  }
+
   // One store instance per overlay-window lifetime. Seed with the persisted
   // defaults so the first render uses the correct dismiss timer + visible
   // window even before `fetchOverlaySettings` resolves.
@@ -94,15 +107,14 @@
 
 <div
   class="overlay-root"
-  onpointerenter={overlayPointerEnter}
-  onpointerleave={overlayPointerLeave}
+  onpointerenter={onPointerEnter}
+  onpointerleave={onPointerLeave}
   role="presentation"
 >
   <ToastFeed
     {store}
     position={$overlaySettings.position}
     maxVisible={$overlaySettings.max_visible}
-    dismissMs={$overlaySettings.auto_dismiss_ms}
     showProfile={$overlaySettings.show_profile}
   />
 </div>

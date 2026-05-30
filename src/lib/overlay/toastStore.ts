@@ -1,19 +1,18 @@
 // Typed Svelte writable-store fed by the `tool-call-event` Tauri stream.
 //
-// Behaviour mirrors the prototype `makeStore` in
-// `~/Downloads/desktop-visual-indicator-for-mcp-activity/project/toast-feed.jsx`
-// (lines 168–245) but operates on the typed `ToolCallEvent` objects from the
-// relay event bus rather than synthetic log lines:
-//
-//   - groups by `(server_type | server_name | tool)` — same key shape the
-//     overlay UI will use to dedupe a flurry of repeats into one stacked card;
+// Group-level model (overlay redesign):
+//   - groups by `(server_type | server_name | tool)` to dedupe a flurry of
+//     repeats into one stacked card;
 //   - tracks per-group `{ inflight, success, error }` counters AND the
-//     individual `requests` list (so a Phase 4 card can render a mini state
-//     breakdown);
-//   - schedules a dismiss-timer after the last in-flight request of a group
-//     settles; a new `started` event for the same key cancels the timer and
-//     moves the group to the end of the list (newest position);
-//   - `clear()` cancels every timer; `setOpts({...})` shallow-merges options.
+//     individual `requests` list so the card can render a state breakdown;
+//   - dismissal is FEED-LEVEL, not per-card. A single idle timer ticks
+//     `dismissMs` from the last push/update. Any `addStarted` or `settle`
+//     resets it; when it fires, the whole feed is cleared at once and the
+//     `ToastFeed` plays a single group-level slide-out;
+//   - hover-pause: `pauseDismiss()` cancels the timer (call on overlay
+//     pointer-enter), `resumeDismiss()` re-arms it (call on pointer-leave);
+//   - `clear()` cancels the timer and empties the store; `setOpts({...})`
+//     shallow-merges options.
 
 import { writable, type Readable } from 'svelte/store';
 import type {
@@ -48,7 +47,6 @@ export type ToolCallGroup = {
   error: number;
   requests: ToolCallRequest[];
   lastUpdatedAt: number;
-  dismissStartedAt: number | null;
 };
 
 export type ToastStoreOpts = {
@@ -66,8 +64,8 @@ const DEFAULT_OPTS: ToastStoreOpts = {
 export type ToastStore = Readable<ToolCallGroup[]> & {
   addStarted: (event: StartedEvent) => void;
   settle: (event: CompletedEvent | FailedEvent) => void;
-  scheduleDismiss: (groupId: string) => void;
-  cancelDismiss: (groupId: string) => void;
+  pauseDismiss: () => void;
+  resumeDismiss: () => void;
   setOpts: (opts: Partial<ToastStoreOpts>) => void;
   getOpts: () => ToastStoreOpts;
   clear: () => void;
@@ -85,65 +83,44 @@ function groupKey(event: StartedEvent): string {
 export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore {
   let groups: ToolCallGroup[] = [];
   let opts: ToastStoreOpts = { ...DEFAULT_OPTS, ...initial };
-  const dismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Single feed-level idle timer. Arms on every addStarted/settle, fires
+  // after `dismissMs` of inactivity, and clears the whole feed at once.
+  let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+  let paused = false;
   const inner = writable<ToolCallGroup[]>(groups);
 
   function publish() {
     inner.set(groups.slice());
   }
 
-  function clearDismissTimer(id: string) {
-    const t = dismissTimers.get(id);
-    if (t !== undefined) {
-      clearTimeout(t);
-      dismissTimers.delete(id);
+  function clearDismissTimer() {
+    if (dismissTimer !== null) {
+      clearTimeout(dismissTimer);
+      dismissTimer = null;
     }
   }
 
-  function removeGroup(id: string) {
-    clearDismissTimer(id);
-    const before = groups.length;
-    groups = groups.filter((g) => g.id !== id);
-    if (groups.length !== before) publish();
+  function armDismissTimer() {
+    clearDismissTimer();
+    if (paused) return;
+    if (groups.length === 0) return;
+    dismissTimer = setTimeout(() => {
+      dismissTimer = null;
+      groups = [];
+      publish();
+    }, opts.dismissMs);
   }
 
-  function scheduleDismiss(id: string) {
-    const exists = groups.some((g) => g.id === id);
-    if (!exists) return;
-    clearDismissTimer(id);
-    const now = Date.now();
-    // Copy-on-write: replace the group with a new object reference so
-    // Svelte 5 `$derived` expressions in OverlayCard re-run when only
-    // inner fields change. The `{#each groups as g (g.id)}` keyed block
-    // keeps the same component instance across updates, so we rely on a
-    // new prop identity to trigger a re-render.
-    groups = groups.map((g) =>
-      g.id === id ? { ...g, dismissStartedAt: now, lastUpdatedAt: now } : g,
-    );
-    const tid = setTimeout(() => removeGroup(id), opts.dismissMs);
-    dismissTimers.set(id, tid);
-    publish();
+  function pauseDismiss() {
+    if (paused) return;
+    paused = true;
+    clearDismissTimer();
   }
 
-  function cancelDismiss(id: string) {
-    clearDismissTimer(id);
-    let changed = false;
-    groups = groups.map((g) => {
-      if (g.id !== id || g.dismissStartedAt === null) return g;
-      changed = true;
-      return { ...g, dismissStartedAt: null };
-    });
-    // Publish so direct external callers (the `scheduleDismiss /
-    // cancelDismiss can be driven directly` test path, and any future
-    // UI code path) observe the cleared `dismissStartedAt` via
-    // `get(store)`. The previous in-place-mutation implementation got
-    // this for free because the published array shared object refs with
-    // `groups`; copy-on-write loses that, so we explicitly republish.
-    // `addStarted` calls `cancelDismiss` then publishes again after
-    // its own mutation — one redundant publish per repeat-start is
-    // acceptable; the alternative (skipping the publish here) breaks
-    // the direct-driver API.
-    if (changed) publish();
+  function resumeDismiss() {
+    if (!paused) return;
+    paused = false;
+    armDismissTimer();
   }
 
   function addStarted(event: StartedEvent) {
@@ -157,7 +134,6 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       jsonrpcId: event.jsonrpc_id ?? null,
     };
     if (existing) {
-      cancelDismiss(id);
       // Copy-on-write: build a fresh ToolCallGroup so OverlayCard's
       // `group` prop changes identity and Svelte 5 re-runs its derived
       // expressions. Mutating `existing` in place would leave the prop
@@ -170,7 +146,6 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         // Most recent values from the latest started event win.
         annotations: event.annotations ?? existing.annotations,
         profile: event.profile ?? null,
-        dismissStartedAt: null,
       };
       // Move to end (newest position).
       groups = groups.filter((g) => g.id !== id).concat(updated);
@@ -187,12 +162,11 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         error: 0,
         requests: [req],
         lastUpdatedAt: now,
-        dismissStartedAt: null,
       });
     }
     publish();
+    armDismissTimer();
   }
-
 
   function settle(event: CompletedEvent | FailedEvent) {
     // Find the group containing a request with this request_id. We do not
@@ -236,7 +210,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     };
     groups = groups.map((g) => (g.id === target.id ? updated : g));
     publish();
-    if (updated.inflight === 0) scheduleDismiss(updated.id);
+    armDismissTimer();
   }
 
   function setOpts(next: Partial<ToastStoreOpts>) {
@@ -248,8 +222,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
   }
 
   function clear() {
-    for (const tid of dismissTimers.values()) clearTimeout(tid);
-    dismissTimers.clear();
+    clearDismissTimer();
     groups = [];
     publish();
   }
@@ -258,8 +231,8 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     subscribe: inner.subscribe,
     addStarted,
     settle,
-    scheduleDismiss,
-    cancelDismiss,
+    pauseDismiss,
+    resumeDismiss,
     setOpts,
     getOpts,
     clear,

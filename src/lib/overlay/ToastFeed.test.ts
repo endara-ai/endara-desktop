@@ -89,28 +89,25 @@ describe('ToastFeed — position attribute', () => {
     expect(positions).toHaveLength(4);
   });
 
-  it('uses the `position` prop to drive the slide direction at the each-block wrapper', async () => {
+  it('uses the `position` prop to drive the slide direction on the feed-inner wrapper', async () => {
     // The slide-in / slide-out direction is computed in ToastFeed from
     // `position` — right-anchored positions slide toward +x, left-anchored
-    // toward −x. The directives live on the wrapper around `<OverlayCard>`
-    // (the immediate keyed child of `{#each}`), not inside the card itself,
-    // so the outro plays on dismiss.
+    // toward −x. With the group-level redesign the directives live on the
+    // `.tf-feed-inner` container, gated by `{#if visible.length > 0}`,
+    // so the whole stack slides in/out as one unit.
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
     expect(src).toMatch(/slideDir = \$derived\(position\.endsWith\('right'\) \? 1 : -1\)/);
   });
 });
 
-// Slide-in / slide-out animation driven by overlay corner. The card slot
-// wrapper rides Svelte's stock `in:fly` + `out:fly` transitions; the
-// slide direction must mirror the position prop so right-anchored cards
-// travel toward +x and left-anchored toward −x. Both directives must
-// live on the immediate keyed child of the each block — if they sat on
-// the root of `OverlayCard.svelte` instead, Svelte would tear the
-// component down synchronously and the outro would never play (which
-// was the original slide-out regression). Vitest runs in node (no
-// jsdom), so we source-grep the component for the direction branch and
-// the transition wiring.
-describe('ToastFeed — position-driven slide direction', () => {
+// Group-level slide-in / slide-out: the whole `.tf-feed-inner` container
+// rides Svelte's stock `in:fly` + `out:fly` transitions, gated by
+// `{#if visible.length > 0}` so the stack mounts/unmounts as one unit
+// on 0 ↔ N transitions. Per-card slots use a short `in:fade` only (no
+// outro) so cards 1 → N fade in subtly without re-triggering the
+// horizontal slide. Vitest runs in node (no jsdom), so we source-grep
+// the component for the directives and the {#if} gate.
+describe('ToastFeed — group-level slide direction + container gate', () => {
   it('right-anchored positions slide toward +x, left-anchored toward −x', () => {
     // Mirrors the `$derived` in ToastFeed.svelte: `position.endsWith('right')
     // ? 1 : -1`. Kept inline so the test exercises the exact predicate.
@@ -121,34 +118,37 @@ describe('ToastFeed — position-driven slide direction', () => {
     expect(dirFor('top-left')).toBe(-1);
   });
 
-  it('ToastFeed.svelte wires in:fly + out:fly on the each-block child', async () => {
+  it('ToastFeed.svelte wires in:fly + out:fly on the .tf-feed-inner container', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
     expect(src).toMatch(/in:fly=\{\{ x: inX,/);
     expect(src).toMatch(/out:fly=\{\{ x: outX,/);
   });
 
-  it('places in:/out: directives on the immediate keyed child of {#each}, not inside OverlayCard', async () => {
-    // Svelte plays an `out:` transition only when it sits on the keyed
-    // child of the `{#each}` block. The wrapping `<div>` must therefore
-    // appear in source order BEFORE `<OverlayCard>` and carry both
-    // directives; if the previous attempt at this feature put them on
-    // OverlayCard's root element, the dismissal would be instant.
-    const feedSrc = (await import('./ToastFeed.svelte?raw')).default as string;
-    const eachIdx = feedSrc.indexOf('{#each visible as g (g.id)}');
-    expect(eachIdx).toBeGreaterThan(-1);
-    const inFlyIdx = feedSrc.indexOf('in:fly=', eachIdx);
-    const outIdx = feedSrc.indexOf('out:fly=', eachIdx);
-    const cardIdx = feedSrc.indexOf('<OverlayCard', eachIdx);
-    expect(inFlyIdx).toBeGreaterThan(eachIdx);
-    expect(outIdx).toBeGreaterThan(eachIdx);
-    expect(cardIdx).toBeGreaterThan(eachIdx);
-    // Wrapper-then-card ordering: both directives must appear before the
-    // `<OverlayCard>` tag so they sit on the surrounding `<div>`.
-    expect(inFlyIdx).toBeLessThan(cardIdx);
-    expect(outIdx).toBeLessThan(cardIdx);
+  it('gates the container on {#if visible.length > 0} so it mounts/unmounts on 0 ↔ N', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
+    expect(src).toMatch(/\{#if visible\.length > 0\}/);
+    // The fly directives sit inside the gated `.tf-feed-inner` block.
+    const ifIdx = src.indexOf('{#if visible.length > 0}');
+    const innerIdx = src.indexOf('class="tf-feed-inner"', ifIdx);
+    const inFlyIdx = src.indexOf('in:fly=', ifIdx);
+    const outFlyIdx = src.indexOf('out:fly=', ifIdx);
+    expect(ifIdx).toBeGreaterThan(-1);
+    expect(innerIdx).toBeGreaterThan(ifIdx);
+    expect(inFlyIdx).toBeGreaterThan(innerIdx);
+    expect(outFlyIdx).toBeGreaterThan(innerIdx);
+  });
 
+  it('per-card slot uses a short in:fade only (no per-card outro)', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
+    // `.tf-card-slot` wrapper carries an `in:fade` for the 1 → N fade-in.
+    expect(src).toMatch(/<div class="tf-card-slot" in:fade=\{\{ duration: 120 \}\}>/);
+    // No `out:` transition on the per-card slot — the outro is feed-level.
+    const slotIdx = src.indexOf('class="tf-card-slot"');
+    const eachEndIdx = src.indexOf('{/each}', slotIdx);
+    const slotBlock = src.slice(slotIdx, eachEndIdx);
+    expect(slotBlock).not.toMatch(/out:/);
     // And OverlayCard.svelte itself must NOT redeclare an outro on its
-    // root element — that would re-introduce the synchronous-unmount bug.
+    // root element either — feed-level dismissal is the only outro.
     const cardSrc = (await import('./OverlayCard.svelte?raw')).default as string;
     expect(cardSrc).not.toMatch(/out:fly=/);
   });
@@ -172,12 +172,12 @@ describe('ToastFeed — position-driven slide direction', () => {
 
 // The horizontal slide-out was previously clipped by
 // `.tf-feed-inner { overflow: hidden }` immediately after dismissal —
-// the card's slot would translate past the 340px-wide inner column and
+// the container would translate past the 340px-wide inner column and
 // disappear without any visible motion. The fix is to split clipping
 // by axis: keep `overflow-y: hidden` so the column stays bounded
 // vertically (and the `[data-overflow='true']` mask-image top-edge
 // fade still works), but switch the horizontal axis to
-// `overflow-x: visible` so the card can slide out of the inner column.
+// `overflow-x: visible` so the container can slide out of view.
 describe('ToastFeed — overlay.css splits inner overflow by axis', () => {
   it('.tf-feed-inner uses overflow-x: visible and overflow-y: hidden', async () => {
     // @ts-expect-error node builtin types not installed
@@ -221,7 +221,7 @@ describe('ToastFeed — overflow-gated top-edge mask', () => {
     // CSS mask rule below (the CSS side is verified by the matching
     // selector check in this same suite).
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).toMatch(/class="tf-feed-inner" data-overflow=\{hidden > 0\}/);
+    expect(src).toMatch(/class="tf-feed-inner"\s+data-overflow=\{hidden > 0\}/);
   });
 
   it('overlay.css scopes the top-edge mask on [data-overflow="true"]', async () => {
@@ -251,24 +251,18 @@ describe('ToastFeed — overflow-gated top-edge mask', () => {
 // `.overlay-root { overflow: clip; clip-path: inset(0) }` plus the
 // `::-webkit-scrollbar { display: none }` / `scrollbar-width: none`
 // rules in `OverlayApp.svelte`. The `.tf-feed` container itself must
-// NOT clip — cards slide horizontally past the inner column on
-// dismiss (`.tf-feed-inner { overflow-x: visible }`), so any clip at
-// this level chops the slide-out animation off on the left/right
-// edges.
+// NOT clip — the inner container slides horizontally past the inner
+// column on dismiss (`.tf-feed-inner { overflow-x: visible }`), so any
+// clip at this level chops the slide-out animation off on the
+// left/right edges.
 describe('Overlay window — no scrollbar during slide', () => {
-  it('overlay.css does NOT clip .tf-feed (the card slide-out must be able to escape)', async () => {
+  it('overlay.css does NOT clip .tf-feed (the container slide-out must be able to escape)', async () => {
     // @ts-expect-error node builtin types not installed
     const { readFileSync } = await import('node:fs');
     // @ts-expect-error node builtin types not installed
     const { fileURLToPath } = await import('node:url');
     const cssPath = fileURLToPath(new URL('./overlay.css', import.meta.url));
     const src = readFileSync(cssPath, 'utf8') as string;
-    // Neither `overflow: clip` nor `overflow: hidden` may sit on
-    // `.tf-feed` — both would crop the card's horizontal slide-out
-    // animation on the left/right edges (where the container is only
-    // 20px wider than the card itself). The scrollbar suppression
-    // lives one level up, on `.overlay-root` (see the OverlayApp
-    // assertions below).
     expect(src).not.toMatch(/\.tf-feed\s*\{[^}]*\soverflow:\s*clip;[^}]*\}/);
     expect(src).not.toMatch(/\.tf-feed\s*\{[^}]*\soverflow:\s*hidden;[^}]*\}/);
   });
@@ -284,14 +278,6 @@ describe('Overlay window — no scrollbar during slide', () => {
     expect(src).not.toMatch(/\.overlay-root\s*\{[^}]*\soverflow:\s*hidden;[^}]*\}/);
   });
 
-  // Defense-in-depth on top of `overflow: clip`: a `clip-path: inset(0)`
-  // paint-time crop on `.overlay-root` has no scroll-container semantics
-  // and no overflow-axis interaction, so it cannot surface a scrollbar
-  // even if a WKWebView quirk ignores `overflow: clip` on some path.
-  // Pair it with `::-webkit-scrollbar { display: none }` and
-  // `scrollbar-width: none` to hide the OS/webview scrollbar gutter
-  // itself across WebKit and Gecko/Blink — the overlay is not supposed
-  // to scroll anyway.
   it('OverlayApp.svelte applies clip-path: inset(0) on .overlay-root', async () => {
     const src = (await import('./OverlayApp.svelte?raw')).default as string;
     expect(src).toMatch(/\.overlay-root\s*\{[^}]*clip-path:\s*inset\(0\);[^}]*\}/);
@@ -299,11 +285,38 @@ describe('Overlay window — no scrollbar during slide', () => {
 
   it('OverlayApp.svelte hides webkit + gecko/blink scrollbars', async () => {
     const src = (await import('./OverlayApp.svelte?raw')).default as string;
-    // WebKit / WKWebView scrollbar gutter.
     expect(src).toMatch(/:global\(::-webkit-scrollbar\)\s*\{[^}]*display:\s*none;[^}]*\}/);
-    // Gecko / Blink scrollbar gutter on html + body.
     expect(src).toMatch(
       /:global\(html\),\s*:global\(body\)\s*\{[^}]*scrollbar-width:\s*none;[^}]*\}/,
     );
+  });
+});
+
+// Ghost-stack "paper" peek cards (`.tf-card-ghost*`) and the per-card
+// dismiss progress bar are gone in the group-level redesign. Lock
+// removal at the source level so future regressions are caught.
+describe('Overlay redesign — ghost stack + dismiss bar removed', () => {
+  it('OverlayCard.svelte does NOT render .tf-card-ghost peek cards', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    expect(src).not.toMatch(/tf-card-ghost/);
+  });
+
+  it('OverlayCard.svelte does NOT render the per-card dismiss bar', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    expect(src).not.toMatch(/tf-dismiss-bar/);
+    expect(src).not.toMatch(/tf-dismiss-fill/);
+  });
+
+  it('overlay.css drops .tf-card-ghost*, .tf-dismiss-bar/.tf-dismiss-fill and the tfDismissFill keyframes', async () => {
+    // @ts-expect-error node builtin types not installed
+    const { readFileSync } = await import('node:fs');
+    // @ts-expect-error node builtin types not installed
+    const { fileURLToPath } = await import('node:url');
+    const cssPath = fileURLToPath(new URL('./overlay.css', import.meta.url));
+    const src = readFileSync(cssPath, 'utf8') as string;
+    expect(src).not.toMatch(/\.tf-card-ghost/);
+    expect(src).not.toMatch(/\.tf-dismiss-bar/);
+    expect(src).not.toMatch(/\.tf-dismiss-fill/);
+    expect(src).not.toMatch(/tfDismissFill/);
   });
 });

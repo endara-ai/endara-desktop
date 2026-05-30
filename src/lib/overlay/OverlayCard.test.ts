@@ -33,7 +33,6 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     error: 0,
     requests: [],
     lastUpdatedAt: 0,
-    dismissStartedAt: null,
     ...over,
   };
 }
@@ -67,7 +66,7 @@ describe('OverlayCard — visual state branches', () => {
     expect(isStacked(group)).toBe(true);
   });
 
-  it('stacked variant shows ghost peek + counts', () => {
+  it('stacked variant reports inflight visual state when any request is in flight', () => {
     const group = g({
       success: 1,
       error: 1,
@@ -159,15 +158,6 @@ describe('OverlayCard — click handler', () => {
 
     await cardClick(group);
     expect(mockInvoke).not.toHaveBeenCalled();
-  });
-});
-
-describe('OverlayCard — dismiss progress', () => {
-  it('mounts the dismiss bar only when dismissStartedAt is set', () => {
-    const before = g({ dismissStartedAt: null });
-    const after = g({ dismissStartedAt: Date.now() });
-    expect(before.dismissStartedAt).toBeNull();
-    expect(after.dismissStartedAt).not.toBeNull();
   });
 });
 

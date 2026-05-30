@@ -15,7 +15,6 @@
   --tf-danger-fg: #b42a2a;
   --tf-chip-bg: rgba(0, 0, 0, 0.04);
   --tf-icon-bg: rgba(0, 0, 0, 0.04);
-  --tf-progress-track: rgba(0, 0, 0, 0.06);
   --tf-card-w: 340px;
 }
 
@@ -31,17 +30,15 @@
   --tf-danger-fg: #ff9b9b;
   --tf-chip-bg: rgba(255, 255, 255, 0.05);
   --tf-icon-bg: rgba(255, 255, 255, 0.06);
-  --tf-progress-track: rgba(255, 255, 255, 0.08);
 }
 
 @keyframes tfSpin { to { transform: rotate(360deg); } }
-@keyframes tfDismissFill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-/* Card enter / exit animations live in `ToastFeed.svelte` on the
- * per-card slot wrapper via Svelte's stock `in:fly` + `out:fly`
- * transitions (translateX toward the anchor edge with opacity fade,
- * no height collapse). The directives sit on the slot wrapper rather
- * than inside `OverlayCard.svelte` so Svelte plays the outro on
- * dismissal instead of unmounting the child synchronously. */
+/* Feed-level slide-in / slide-out live in `ToastFeed.svelte` as Svelte
+ * `in:fly` + `out:fly` directives on the `.tf-feed-inner` container,
+ * gated by `{#if visible.length > 0}` so the whole stack slides as one
+ * unit on 0 ↔ N transitions. Per-card slots use a short `in:fade` only
+ * (no per-card outro) so additional cards 1 → N fade in subtly while
+ * the stack already on screen stays put. */
 
 .tf-feed {
   position: fixed;
@@ -50,13 +47,13 @@
   width: calc(var(--tf-card-w) + 40px);
   max-height: calc(100vh - 40px);
   display: flex;
-  /* Intentionally NO overflow clip here. Cards slide horizontally past
-   * the inner column on dismiss (see `.tf-feed-inner { overflow-x:
-   * visible }` below) and any clip at this level would chop that
-   * slide-out animation off on the left/right edges. Scrollbar
-   * suppression for the slide-in/out lives one level up, on
-   * `.overlay-root` (see `OverlayApp.svelte`: paint-time crop +
-   * WebKit/Gecko scrollbar hiding). */
+  /* Intentionally NO overflow clip here. The `.tf-feed-inner`
+   * container slides horizontally past this box on group-level
+   * dismissal, and any clip at this level would chop that slide-out
+   * animation off on the left/right edges. Scrollbar suppression for
+   * the slide-in/out lives one level up, on `.overlay-root` (see
+   * `OverlayApp.svelte`: paint-time crop + WebKit/Gecko scrollbar
+   * hiding). */
 }
 .tf-feed[data-position='bottom-right'] {
   right: 0; bottom: 0;
@@ -86,8 +83,8 @@
   padding-top: 24px;
   /* Split clipping by axis: keep vertical containment (and the
    * `mask-image` top-edge fade on [data-overflow='true']), but let
-   * cards slide horizontally past the 340px-wide inner column on
-   * dismiss without being clipped from the edge. */
+   * the container slide horizontally past the 340px-wide inner
+   * column on dismiss without being clipped from the edge. */
   overflow-x: visible;
   overflow-y: hidden;
   max-height: calc(100vh - 40px);
@@ -126,9 +123,6 @@
   overflow: hidden;
   transition: transform 150ms var(--ease, ease-out);
 }
-.tf-card-ghost { position: absolute; inset: 0; background: var(--tf-card-bg); pointer-events: none; border: 1px solid var(--tf-card-border); border-radius: 12px; }
-.tf-card-ghost-2 { transform: translate(4px, 4px); opacity: 0.6; z-index: 0; }
-.tf-card-ghost-3 { transform: translate(8px, 8px); opacity: 0.35; z-index: -1; }
 .tf-card-front { position: relative; z-index: 1; cursor: pointer; background: var(--tf-card-bg); width: 100%; text-align: left; border: 1px solid var(--tf-card-border); border-radius: 12px; color: inherit; font: inherit; padding: 0; }
 .tf-card-front[data-clickable='false'] { cursor: default; }
 .tf-card-front:hover { transform: translateY(-1px); }
@@ -159,6 +153,3 @@
 .tf-pill[data-tone='warn'] { background: var(--tf-warn-bg); color: var(--tf-warn-fg); }
 .tf-pill[data-tone='danger'] { background: var(--tf-danger-bg); color: var(--tf-danger-fg); }
 .tf-chip { display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 6px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); background: var(--tf-chip-bg); border-radius: 3px; }
-
-.tf-dismiss-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--tf-progress-track); overflow: hidden; }
-.tf-dismiss-fill { height: 100%; width: 100%; transform-origin: left; animation-name: tfDismissFill; animation-timing-function: linear; animation-fill-mode: forwards; }
