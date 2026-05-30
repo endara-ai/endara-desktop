@@ -394,6 +394,42 @@ pub fn build_overlay_window(
     }
 
     let window = builder.build()?;
+
+    // Disable native window dragging on macOS. `NSWindow` defaults to
+    // `isMovable = true`, which lets the user drag the entire overlay
+    // window by clicking-and-holding anywhere on it (including
+    // transparent regions) — wrong for an overlay that must stay
+    // anchored to its computed corner. Tauri 2's `WebviewWindowBuilder`
+    // does not expose this knob, so call `setMovable:` on the
+    // underlying `NSWindow` directly. Done pre-`show()` so the window
+    // can never appear in a draggable state.
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        match window.ns_window() {
+            Ok(ptr) if !ptr.is_null() => {
+                // SAFETY: `ns_window()` returns the live `NSWindow`
+                // pointer owned by AppKit. `build_overlay_window` runs
+                // on the macOS main thread (Tauri's `setup` hook), and
+                // we only borrow the pointer for the duration of a
+                // single Obj-C message send.
+                let ns_window = ptr as *mut AnyObject;
+                unsafe {
+                    let _: () = msg_send![&*ns_window, setMovable: false];
+                }
+            }
+            Ok(_) => log::warn!(
+                target: "overlay",
+                "ns_window() returned null; overlay window remains draggable"
+            ),
+            Err(e) => log::warn!(
+                target: "overlay",
+                "ns_window() failed: {e}; overlay window remains draggable"
+            ),
+        }
+    }
+
     // Click-through by default — Phase 4 flips this per-card via the
     // `overlayPointerEnter`/`overlayPointerLeave` actions wired in
     // `OverlayApp.svelte`. In debug builds we skip the global
