@@ -20,6 +20,7 @@
   import { initRelayLogListener } from '$lib/logListener';
   import { applyGoToEndpoint } from '$lib/components/relay-logs-helpers';
   import { getActiveTopLevelTab, getVisibleTopLevelTabs, shouldShowRelayStartupFailure, shouldSkipEndpointPolling } from '$lib/relaySidecarUi';
+  import { deriveTrayHealth, describeTrayHealthIssue, createTrayHealthDispatcher } from '$lib/tray-health';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
 
@@ -62,6 +63,28 @@
     if (getActiveTopLevelTab($activeTopLevelTab, $relaySidecarStatus) !== $activeTopLevelTab) {
       activeTopLevelTab.set('settings');
     }
+  });
+
+  // Tray icon color follows the same store chain as the in-app status pill.
+  // Dedupe via createTrayHealthDispatcher so we only IPC to Rust on real
+  // transitions (test matrix #16/#17). Failures (e.g. non-Tauri test/SSR
+  // environments) are swallowed at debug level by the dispatcher.
+  const trayHealthDispatcher = createTrayHealthDispatcher(invoke);
+  $effect(() => {
+    const health = deriveTrayHealth(
+      $relaySidecarStatus,
+      $relayConnected,
+      $endpoints,
+      $oauthStatuses,
+    );
+    const detail = describeTrayHealthIssue(
+      $relaySidecarStatus,
+      $relaySidecarError,
+      $relayConnected,
+      $endpoints,
+      $oauthStatuses,
+    );
+    trayHealthDispatcher.dispatch(health, detail);
   });
 
   async function pollEndpoints() {
