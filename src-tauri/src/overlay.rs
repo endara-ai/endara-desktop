@@ -401,22 +401,38 @@ pub fn build_overlay_window(
     // transparent regions) — wrong for an overlay that must stay
     // anchored to its computed corner. Tauri 2's `WebviewWindowBuilder`
     // does not expose this knob, so call `setMovable:` on the
-    // underlying `NSWindow` directly. Done pre-`show()` so the window
-    // can never appear in a draggable state.
+    // underlying `NSWindow` directly. Dispatch onto the macOS main
+    // thread because `build_overlay_window` can be invoked from a
+    // Tauri command worker thread (`set_overlay_settings` → enable
+    // overlay from Settings) where calling AppKit selectors directly
+    // aborts the process. The window is built hidden (`visible(false)`
+    // above) and only revealed via the `overlay-render-ready` event /
+    // 500ms safety net below, both of which themselves go through the
+    // main thread, so the `setMovable:` message lands before the
+    // window can appear in a draggable state.
     #[cfg(target_os = "macos")]
     {
         use objc2::msg_send;
         use objc2::runtime::AnyObject;
         match window.ns_window() {
             Ok(ptr) if !ptr.is_null() => {
-                // SAFETY: `ns_window()` returns the live `NSWindow`
-                // pointer owned by AppKit. `build_overlay_window` runs
-                // on the macOS main thread (Tauri's `setup` hook), and
-                // we only borrow the pointer for the duration of a
-                // single Obj-C message send.
-                let ns_window = ptr as *mut AnyObject;
-                unsafe {
-                    let _: () = msg_send![&*ns_window, setMovable: false];
+                // Raw pointers are not `Send`; smuggle the `NSWindow`
+                // address across the closure boundary as a `usize`.
+                let ns_window_addr = ptr as usize;
+                if let Err(e) = app.run_on_main_thread(move || {
+                    let ns_window = ns_window_addr as *mut AnyObject;
+                    // SAFETY: `ns_window()` returned the live
+                    // `NSWindow` pointer owned by AppKit; we only
+                    // borrow it for a single Obj-C message send,
+                    // dispatched on the macOS main thread.
+                    unsafe {
+                        let _: () = msg_send![&*ns_window, setMovable: false];
+                    }
+                }) {
+                    log::warn!(
+                        target: "overlay",
+                        "run_on_main_thread for setMovable failed: {e}; overlay window remains draggable"
+                    );
                 }
             }
             Ok(_) => log::warn!(
