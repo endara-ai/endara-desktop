@@ -247,25 +247,27 @@ describe('ToastFeed — overflow-gated top-edge mask', () => {
 
 // The horizontal slide-out (80px past the inner column's right/left
 // edge) previously caused a faint horizontal scrollbar in the overlay
-// window during slide-in/out. The webview was creating a scroll
-// container on the fixed-width `.tf-feed` (and as a belt-and-suspenders
-// on `html`/`body` + `.overlay-root`) because `overflow: visible`
-// (the default) lets the card extend past the container and
-// `overflow: hidden` creates a scroll container. The fix is
-// `overflow: clip`, which clips visually like `hidden` but never
-// creates a scroll container — so no scrollbar can appear.
+// window during slide-in/out. The fix clips the scroll container at
+// the document root only — `html`/`body` + `.overlay-root` — using
+// `overflow: clip` (which clips visually like `hidden` but never
+// creates a scroll container). An earlier attempt also clipped
+// `.tf-feed`, but the card sits flush against `.tf-feed`'s padding
+// edge at rest and WKWebView clipped it entirely, hiding cards. So
+// `.tf-feed` must NOT carry `overflow: clip` — intermediate
+// containers are left at the default `visible`.
 describe('Overlay window — no scrollbar during slide', () => {
-  it('overlay.css sets .tf-feed { overflow: clip } so the slide cannot surface a scrollbar', async () => {
+  it('overlay.css does NOT set overflow: clip on .tf-feed (would hide cards in WKWebView)', async () => {
     // @ts-expect-error node builtin types not installed
     const { readFileSync } = await import('node:fs');
     // @ts-expect-error node builtin types not installed
     const { fileURLToPath } = await import('node:url');
     const cssPath = fileURLToPath(new URL('./overlay.css', import.meta.url));
     const src = readFileSync(cssPath, 'utf8') as string;
-    // The `.tf-feed` block must declare `overflow: clip`. Match the
-    // declaration anywhere inside the block.
-    expect(src).toMatch(/\.tf-feed\s*\{[^}]*\soverflow:\s*clip;[^}]*\}/);
-    // And it must NOT regress to `overflow: hidden` (which would
+    // The `.tf-feed` block must NOT declare `overflow: clip` — that
+    // regressed card visibility because the resting card sits at the
+    // padding edge and was clipped entirely.
+    expect(src).not.toMatch(/\.tf-feed\s*\{[^}]*\soverflow:\s*clip;[^}]*\}/);
+    // And it must also NOT regress to `overflow: hidden` (which would
     // create a scroll container at this fixed-width fixed-position
     // element and produce the faint horizontal scrollbar).
     expect(src).not.toMatch(/\.tf-feed\s*\{[^}]*\soverflow:\s*hidden;[^}]*\}/);
