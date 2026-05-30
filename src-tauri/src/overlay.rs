@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::webview::Color;
+use tauri::webview::{Color, PageLoadEvent};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
 };
@@ -351,6 +351,14 @@ pub fn build_overlay_window(
     // first frame before our CSS loads is transparent rather than white
     // (covers Windows; macOS webview layer ignores this per Tauri docs, but
     // `transparent(true)` + the CSS handle that path).
+    // Build hidden and reveal after the webview's `load` event fires so the
+    // OS never paints the native window's white background before our
+    // transparent canvas exists. `background_color(transparent)` alone is
+    // insufficient on macOS/Windows where the OS shows the window chrome
+    // before the first webview frame. The renderer-invoke variant (Phase 4
+    // first attempt) was unreliable in dev when capabilities/hydration
+    // races left the window hidden forever; driving the reveal from the
+    // Tauri runtime side via `on_page_load` decouples it from JS.
     let mut builder = tauri::WebviewWindowBuilder::new(app, OVERLAY_WINDOW_LABEL, url)
         .title("Endara Overlay")
         .decorations(false)
@@ -359,9 +367,17 @@ pub fn build_overlay_window(
         .resizable(false)
         .focusable(false)
         .shadow(false)
-        .visible(true)
+        .visible(false)
         .background_color(Color(0, 0, 0, 0))
-        .accept_first_mouse(true);
+        .accept_first_mouse(true)
+        .on_page_load(|window, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                log::info!(target: "overlay", "page loaded — showing window");
+                if let Err(e) = window.show() {
+                    log::warn!("[overlay] show on page_load failed: {e}");
+                }
+            }
+        });
 
     // `transparent` requires the `macos-private-api` Cargo feature on macOS
     // (we enable it in `Cargo.toml`) and `app.macOSPrivateApi = true` in
@@ -397,6 +413,20 @@ pub fn build_overlay_window(
     } else if let Err(e) = window.set_ignore_cursor_events(true) {
         log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
     }
+
+    // Safety net: if the `on_page_load` hook somehow never fires (renderer
+    // crash, dev server stall, etc.), reveal the window unconditionally
+    // after ~500ms so it never stays hidden forever. `show()` is idempotent
+    // — calling it after the page-load hook has already shown the window
+    // is a no-op.
+    let safety = window.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Err(e) = safety.show() {
+            log::warn!("[overlay] safety-net show failed: {e}");
+        }
+    });
+
     Ok(window)
 }
 
