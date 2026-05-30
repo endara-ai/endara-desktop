@@ -54,16 +54,6 @@
   width: calc(var(--tf-card-w) + 40px);
   max-height: calc(100vh - 40px);
   display: flex;
-  /* No `overflow` declaration here (defaults to `visible`). An earlier
-   * attempt set `overflow: clip` on this fixed-width container to hide
-   * the slide-overshoot, but that clipped the card entirely in
-   * WKWebView — the card sits flush against `.tf-feed`'s right padding
-   * edge at rest and was being clipped at the padding box.
-   * Scrollbar suppression lives at the document root instead: html,
-   * body, and `.overlay-root` all set `overflow: clip` (see
-   * `OverlayApp.svelte`), which prevents a scroll container at the
-   * viewport while leaving intermediate containers free to render
-   * their children. */
 }
 .tf-feed[data-position='bottom-right'] {
   right: 0; bottom: 0;
