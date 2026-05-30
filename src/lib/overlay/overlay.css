@@ -157,11 +157,15 @@
 .tf-pill[data-tone='danger'] { background: var(--tf-danger-bg); color: var(--tf-danger-fg); }
 .tf-chip { display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 6px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); background: var(--tf-chip-bg); border-radius: 3px; }
 
-/* Feed-level dismiss progress bar. Lives at the bottom of `.tf-feed-inner`,
- * spans the full inner column, fills left → right over `opts.dismissMs`
- * (the same idle window the store schedules). `width` is animated rather
- * than `transform: scaleX` so the fill grows from the container's left
- * edge without a transform-origin gotcha. The 6px margin-bottom keeps the
- * bar from crowding the screen edge below the last card. */
-.tf-dismiss-bar { width: 100%; height: 3px; margin-bottom: 6px; background: var(--tf-progress-track); border-radius: 2px; overflow: hidden; }
+/* Feed-level dismiss progress bar. The timer LOGIC stays feed-level
+ * (see `toastStore`'s idle timer + `ToastFeed`'s plumbing), but the bar
+ * is rendered inside `OverlayCard` on the visually-bottommost card so
+ * it sits flush against that card's bottom edge — fused to the card,
+ * not floating below it with a gap. The card's `border-radius: 12px` +
+ * `overflow: hidden` (on `.tf-card`) clip the bar's bottom corners so
+ * it inherits the card's bottom shape; top corners stay square so it
+ * abuts the card body cleanly. `width` is animated rather than
+ * `transform: scaleX` so the fill grows from the card's left edge
+ * without a transform-origin gotcha. */
+.tf-dismiss-bar { width: 100%; height: 3px; background: var(--tf-progress-track); overflow: hidden; }
 .tf-dismiss-fill { display: block; height: 100%; width: 0%; background: var(--accent); animation-name: tfDismissFill; animation-timing-function: linear; animation-fill-mode: forwards; }

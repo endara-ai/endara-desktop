@@ -35,13 +35,17 @@
   const hidden = $derived(hiddenGroupCount(groups.length, maxVisible));
 
   // Feed-level dismiss progress bar state. The store bumps `dismissReset`
-  // every time the idle timer is (re)armed; we key the fill element off
-  // `tick` so Svelte re-mounts it and the CSS keyframe restarts at 0%.
+  // every time the idle timer is (re)armed; we pipe `tick` into the
+  // bottommost card so Svelte's `{#key dismissTick}` inside that card
+  // re-mounts the fill and the CSS keyframe restarts at 0%.
   // `dismissPaused` flips on overlay hover and freezes the fill via
   // `animation-play-state: paused`. `durationMs` is captured at arm time
   // in the store, so it stays aligned with the timer that will fire.
   // Wrapped in `$derived` to satisfy Svelte 5's runes warning about
-  // capturing `store` only on initial render.
+  // capturing `store` only on initial render. The bar itself is rendered
+  // inside `OverlayCard` (gated by `showDismissBar`) so it sits flush
+  // against the bottom edge of the bottommost card; the timer LOGIC
+  // stays here / in the store and is not duplicated per-card.
   const dismissReset = $derived(store.dismissReset);
   const dismissPaused = $derived(store.dismissPaused);
   const dismissTick = $derived($dismissReset.tick);
@@ -96,28 +100,27 @@
       {#if hidden > 0}
         <div class="tf-more" data-testid="more-earlier">+{hidden} earlier</div>
       {/if}
-      {#each visible as g (g.id)}
+      {#each visible as g, i (g.id)}
+        <!--
+          `showDismissBar={i === visible.length - 1}` always lands the
+          single feed-level dismiss bar on the visually-bottommost card
+          (closest to the screen corner): for `bottom-*` anchors that is
+          the LAST DOM child; for `top-*` anchors `flex-direction:
+          column-reverse` on `.tf-feed-inner` puts the LAST DOM child at
+          the visual bottom too. Either way the bar sits flush against
+          the outermost card's bottom edge.
+        -->
         <div class="tf-card-slot" in:fade={{ duration: 120 }}>
-          <OverlayCard group={g} {showProfile} />
+          <OverlayCard
+            group={g}
+            {showProfile}
+            showDismissBar={i === visible.length - 1}
+            {dismissTick}
+            {dismissDurationMs}
+            dismissPaused={dismissPausedNow}
+          />
         </div>
       {/each}
-      <!--
-        Single feed-level dismiss progress bar. Lives inside the
-        `{#if visible.length > 0}` gate so it mounts/unmounts with the
-        feed and rides the same group-level `out:fly` on dismissal.
-        `{#key dismissTick}` re-mounts the fill on every idle-timer
-        reset so the CSS keyframe restarts cleanly at 0% width.
-      -->
-      <div class="tf-dismiss-bar" data-testid="dismiss-bar">
-        {#key dismissTick}
-          <div
-            class="tf-dismiss-fill"
-            data-testid="dismiss-fill"
-            style:animation-duration="{dismissDurationMs}ms"
-            style:animation-play-state={dismissPausedNow ? 'paused' : 'running'}
-          ></div>
-        {/key}
-      </div>
     </div>
   {/if}
 </div>
