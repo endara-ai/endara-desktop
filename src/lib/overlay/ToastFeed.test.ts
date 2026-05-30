@@ -89,24 +89,30 @@ describe('ToastFeed — position attribute', () => {
     expect(positions).toHaveLength(4);
   });
 
-  it('forwards the `position` prop to each rendered OverlayCard', async () => {
-    // The slide-in / slide-out direction is computed per-card from
-    // `position` — the feed must pass the prop through so cards anchored
-    // to the right slide off-screen to the right and vice versa.
+  it('uses the `position` prop to drive the slide direction at the each-block wrapper', async () => {
+    // The slide-in / slide-out direction is computed in ToastFeed from
+    // `position` — right-anchored positions slide toward +x, left-anchored
+    // toward −x. The directives live on the wrapper around `<OverlayCard>`
+    // (the immediate keyed child of `{#each}`), not inside the card itself,
+    // so the outro plays on dismiss.
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).toMatch(/<OverlayCard[^>]*\{position\}/);
+    expect(src).toMatch(/slideDir = \$derived\(position\.endsWith\('right'\) \? 1 : -1\)/);
   });
 });
 
-// Slide-in / slide-out animation driven by overlay corner. The card
+// Slide-in / slide-out animation driven by overlay corner. The card slot
 // wrapper rides Svelte's `in:fly` + a custom `out:slideCollapse`
 // transition; the slide direction must mirror the position prop so
 // right-anchored cards travel toward +x and left-anchored toward −x.
+// Both directives must live on the immediate keyed child of the each
+// block — if they sat on the root of `OverlayCard.svelte` instead,
+// Svelte would tear the component down synchronously and the outro
+// would never play (which was the original slide-out regression).
 // Vitest runs in node (no jsdom), so we source-grep the component for
 // the direction branch and the transition wiring.
-describe('OverlayCard — position-driven slide direction', () => {
+describe('ToastFeed — position-driven slide direction', () => {
   it('right-anchored positions slide toward +x, left-anchored toward −x', () => {
-    // Mirrors the `$derived` in OverlayCard.svelte: `position.endsWith('right')
+    // Mirrors the `$derived` in ToastFeed.svelte: `position.endsWith('right')
     // ? 1 : -1`. Kept inline so the test exercises the exact predicate.
     const dirFor = (p: OverlayPosition) => (p.endsWith('right') ? 1 : -1);
     expect(dirFor('bottom-right')).toBe(1);
@@ -115,19 +121,41 @@ describe('OverlayCard — position-driven slide direction', () => {
     expect(dirFor('top-left')).toBe(-1);
   });
 
-  it('OverlayCard.svelte derives slideDir from position.endsWith(\'right\')', async () => {
-    const src = (await import('./OverlayCard.svelte?raw')).default as string;
-    expect(src).toMatch(/slideDir = \$derived\(position\.endsWith\('right'\) \? 1 : -1\)/);
-  });
-
-  it('OverlayCard.svelte wires in:fly + out:slideCollapse on the wrapper', async () => {
-    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+  it('ToastFeed.svelte wires in:fly + out:slideCollapse on the each-block child', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
     expect(src).toMatch(/in:fly=\{\{ x: inX,/);
     expect(src).toMatch(/out:slideCollapse=\{\{ x: outX,/);
   });
 
-  it('OverlayCard.svelte honours prefers-reduced-motion', async () => {
-    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+  it('places in:/out: directives on the immediate keyed child of {#each}, not inside OverlayCard', async () => {
+    // Svelte plays an `out:` transition only when it sits on the keyed
+    // child of the `{#each}` block. The wrapping `<div>` must therefore
+    // appear in source order BEFORE `<OverlayCard>` and carry both
+    // directives; if the previous attempt at this feature put them on
+    // OverlayCard's root element, the dismissal would be instant.
+    const feedSrc = (await import('./ToastFeed.svelte?raw')).default as string;
+    const eachIdx = feedSrc.indexOf('{#each visible as g (g.id)}');
+    expect(eachIdx).toBeGreaterThan(-1);
+    const inFlyIdx = feedSrc.indexOf('in:fly=', eachIdx);
+    const outIdx = feedSrc.indexOf('out:slideCollapse=', eachIdx);
+    const cardIdx = feedSrc.indexOf('<OverlayCard', eachIdx);
+    expect(inFlyIdx).toBeGreaterThan(eachIdx);
+    expect(outIdx).toBeGreaterThan(eachIdx);
+    expect(cardIdx).toBeGreaterThan(eachIdx);
+    // Wrapper-then-card ordering: both directives must appear before the
+    // `<OverlayCard>` tag so they sit on the surrounding `<div>`.
+    expect(inFlyIdx).toBeLessThan(cardIdx);
+    expect(outIdx).toBeLessThan(cardIdx);
+
+    // And OverlayCard.svelte itself must NOT redeclare an outro on its
+    // root element — that would re-introduce the synchronous-unmount bug.
+    const cardSrc = (await import('./OverlayCard.svelte?raw')).default as string;
+    expect(cardSrc).not.toMatch(/out:slideCollapse=/);
+    expect(cardSrc).not.toMatch(/out:fly=/);
+  });
+
+  it('ToastFeed.svelte honours prefers-reduced-motion', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
     expect(src).toMatch(/prefers-reduced-motion: reduce/);
   });
 });
