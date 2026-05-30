@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tauri::async_runtime;
 use tauri::webview::{Color, PageLoadEvent};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
@@ -419,8 +420,15 @@ pub fn build_overlay_window(
     // after ~500ms so it never stays hidden forever. `show()` is idempotent
     // — calling it after the page-load hook has already shown the window
     // is a no-op.
+    // Use `tauri::async_runtime::spawn` rather than `tokio::spawn` here:
+    // `build_overlay_window` runs from Tauri's `setup` hook on the macOS
+    // main thread during `did_finish_launching`, where no tokio runtime is
+    // active. `tokio::spawn` would panic; the panic cannot unwind across
+    // the Objective-C delegate boundary, which aborts the process.
+    // `tauri::async_runtime` is runtime-agnostic and always available at
+    // setup time (it's tokio-backed, so `tokio::time::sleep` still works).
     let safety = window.clone();
-    tokio::spawn(async move {
+    async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(500)).await;
         if let Err(e) = safety.show() {
             log::warn!("[overlay] safety-net show failed: {e}");
