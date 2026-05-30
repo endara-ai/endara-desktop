@@ -20,7 +20,6 @@
     subscribeOverlaySettingsChanges,
   } from './overlaySettingsStore';
   import { overlayPointerEnter, overlayPointerLeave } from './overlay-actions';
-  import { showOverlayAfterPaint } from './showOverlayAfterPaint';
   import ToastFeed from './ToastFeed.svelte';
   import './overlay.css';
 
@@ -71,11 +70,6 @@
     attachOverlayBridge(store).then((d) => {
       disposer = d;
     });
-
-    // The Rust builder creates the overlay window with `.visible(false)`.
-    // Reveal it after the first paint so users never see a white flash
-    // before the transparent CSS applies.
-    showOverlayAfterPaint();
 
     return () => {
       unsubTheme();
