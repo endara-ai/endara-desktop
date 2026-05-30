@@ -142,15 +142,60 @@ export interface AddEndpointParams {
   server_type_override?: string;
 }
 
-export async function addEndpoint(params: AddEndpointParams): Promise<void> {
-  await invoke('add_endpoint', { args: params });
-  // Best-effort reload — relay may not be running yet during onboarding
+/**
+ * Surface a relay management-API error as a `throw`-able `Error` with the
+ * server-provided `detail` / `error` message when the body parses as JSON,
+ * otherwise fall back to the raw body and status.
+ */
+function mgmtError(res: ApiResponse): Error {
+  let detail: string | undefined;
   try {
-    await new Promise((r) => setTimeout(r, 200));
-    await reloadConfig();
+    const data = JSON.parse(res.body);
+    detail = data?.detail || data?.error;
   } catch {
-    // Relay not reachable; it will pick up config changes on next start
+    // body not JSON
   }
+  return new Error(detail || `HTTP ${res.status}: ${res.body}`);
+}
+
+/**
+ * POST any non-empty OAuth credentials to the relay's
+ * `/api/endpoints/{name}/credentials` endpoint so the secret lands in the DCR
+ * file (chmod 0600) instead of `config.toml`. No-ops when neither `client_id`
+ * nor `client_secret` is supplied.
+ */
+async function postEndpointCredentials(
+  name: string,
+  fields: { client_id?: string; client_secret?: string; oauth_server_url?: string },
+): Promise<void> {
+  const body: Record<string, string> = {};
+  if (fields.client_id) body.client_id = fields.client_id;
+  if (fields.client_secret) body.client_secret = fields.client_secret;
+  if (fields.oauth_server_url) body.oauth_server_url = fields.oauth_server_url;
+  if (!body.client_id && !body.client_secret) return;
+  const res = await mgmtRequest(
+    'POST',
+    `/endpoints/${encodeURIComponent(name)}/credentials`,
+    body,
+  );
+  if (res.status < 200 || res.status >= 300) {
+    throw mgmtError(res);
+  }
+}
+
+export async function addEndpoint(params: AddEndpointParams): Promise<void> {
+  // Body excludes the write-only client_secret; credentials are persisted via
+  // the separate /credentials endpoint below (DCR file, chmod 0600).
+  const { client_secret, ...body } = params;
+  const res = await mgmtRequest('POST', '/endpoints', body);
+  if (res.status < 200 || res.status >= 300) {
+    throw mgmtError(res);
+  }
+  await postEndpointCredentials(params.name, {
+    client_id: params.client_id,
+    client_secret,
+    oauth_server_url: params.oauth_server_url,
+  });
 }
 
 export async function disableEndpoint(name: string): Promise<void> {
@@ -291,14 +336,23 @@ export async function refreshOAuth(name: string): Promise<void> {
 }
 
 export async function updateEndpoint(params: UpdateEndpointParams): Promise<void> {
-  await invoke('update_endpoint', { args: params });
-  // Best-effort reload — relay may not be running
-  try {
-    await new Promise((r) => setTimeout(r, 200));
-    await reloadConfig();
-  } catch {
-    // Relay not reachable; it will pick up config changes on next start
+  // Body mirrors the POST `/api/endpoints` shape: `original_name` moves to the
+  // path, and `client_secret` is excluded so it is persisted out-of-band via
+  // /credentials (DCR file, chmod 0600) rather than stored in `config.toml`.
+  const { original_name, client_secret, ...body } = params;
+  const res = await mgmtRequest(
+    'PUT',
+    `/endpoints/${encodeURIComponent(original_name)}`,
+    body,
+  );
+  if (res.status < 200 || res.status >= 300) {
+    throw mgmtError(res);
   }
+  await postEndpointCredentials(params.name, {
+    client_id: params.client_id,
+    client_secret,
+    oauth_server_url: params.oauth_server_url,
+  });
 }
 
 // ---------------------------------------------------------------------------

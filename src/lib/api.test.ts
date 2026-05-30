@@ -132,26 +132,77 @@ describe('api', () => {
   });
 
   describe('addEndpoint', () => {
-    it('calls invoke with correct command and params', async () => {
+    it('POSTs the endpoint to the relay management API', async () => {
       const { addEndpoint } = await import('./api');
-      // First call: add_endpoint succeeds; second call: reloadConfig (mgmt_api_request) fails best-effort.
-      vi.mocked(invoke)
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error('relay not running'));
+      mockOk(null);
 
       const params = { name: 'new-ep', transport: 'stdio' as const, command: '/usr/bin/my-mcp' };
       await addEndpoint(params);
 
-      expect(invoke).toHaveBeenCalledWith('add_endpoint', { args: params });
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({ method: 'POST', path: '/api/endpoints', body: params }),
+      );
+    });
+
+    it('surfaces the relay error detail when the POST fails', async () => {
+      const { addEndpoint } = await import('./api');
+      mockHttpError(409, JSON.stringify({ detail: "endpoint 'new-ep' already exists" }));
+
+      await expect(
+        addEndpoint({ name: 'new-ep', transport: 'stdio', command: '/usr/bin/my-mcp' }),
+      ).rejects.toThrow("endpoint 'new-ep' already exists");
+    });
+
+    it('omits client_secret from the create body and POSTs it to /credentials', async () => {
+      const { addEndpoint } = await import('./api');
+      vi.mocked(invoke)
+        // POST /api/endpoints
+        .mockResolvedValueOnce({ status: 201, body: '' })
+        // POST /api/endpoints/{name}/credentials
+        .mockResolvedValueOnce({ status: 204, body: '' });
+
+      const params = {
+        name: 'gmail',
+        transport: 'oauth' as const,
+        url: 'https://gmail.example.com/mcp',
+        client_id: 'cid',
+        client_secret: 'csecret',
+        oauth_server_url: 'https://auth.example.com',
+      };
+      await addEndpoint(params);
+
+      const { client_secret: _unused, ...expectedBody } = params;
+      expect(invoke).toHaveBeenNthCalledWith(
+        1,
+        'mgmt_api_request',
+        expect.objectContaining({
+          method: 'POST',
+          path: '/api/endpoints',
+          body: expectedBody,
+        }),
+      );
+      expect(invoke).toHaveBeenNthCalledWith(
+        2,
+        'mgmt_api_request',
+        expect.objectContaining({
+          method: 'POST',
+          path: '/api/endpoints/gmail/credentials',
+          body: {
+            client_id: 'cid',
+            client_secret: 'csecret',
+            oauth_server_url: 'https://auth.example.com',
+          },
+        }),
+      );
     });
   });
 
   describe('addEndpoint with env vars', () => {
-    it('passes env vars through to invoke', async () => {
+    it('passes env vars through to the management API body', async () => {
       const { addEndpoint } = await import('./api');
-      vi.mocked(invoke)
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error('relay not running'));
+      mockOk(null);
 
       const params = {
         name: 'github-server',
@@ -162,9 +213,71 @@ describe('api', () => {
       };
       await addEndpoint(params);
 
-      expect(invoke).toHaveBeenCalledWith('add_endpoint', { args: params });
-      const passedArgs = vi.mocked(invoke).mock.calls[0][1] as { args: typeof params };
-      expect(passedArgs.args.env).toEqual({ GITHUB_TOKEN: '$GITHUB_TOKEN', PLAIN_VAL: 'hello' });
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({ method: 'POST', path: '/api/endpoints', body: params }),
+      );
+      const passedArgs = vi.mocked(invoke).mock.calls[0][1] as { body: typeof params };
+      expect(passedArgs.body.env).toEqual({ GITHUB_TOKEN: '$GITHUB_TOKEN', PLAIN_VAL: 'hello' });
+    });
+  });
+
+  describe('updateEndpoint', () => {
+    it('PUTs to /api/endpoints/{original_name} without original_name or client_secret in the body', async () => {
+      const { updateEndpoint } = await import('./api');
+      mockOk(null);
+
+      const params = {
+        original_name: 'old-ep',
+        name: 'new-ep',
+        transport: 'stdio' as const,
+        command: '/usr/bin/my-mcp',
+        client_secret: 'csecret',
+      };
+      await updateEndpoint(params);
+
+      const callBody = (vi.mocked(invoke).mock.calls[0][1] as { body: Record<string, unknown> }).body;
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({ method: 'PUT', path: '/api/endpoints/old-ep' }),
+      );
+      expect(callBody).not.toHaveProperty('original_name');
+      expect(callBody).not.toHaveProperty('client_secret');
+      expect(callBody.name).toBe('new-ep');
+    });
+
+    it('encodes special characters in original_name in the path', async () => {
+      const { updateEndpoint } = await import('./api');
+      mockOk(null);
+
+      await updateEndpoint({
+        original_name: 'old ep/with space',
+        name: 'new ep/with space',
+        transport: 'stdio',
+        command: '/usr/bin/my-mcp',
+      });
+
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({
+          method: 'PUT',
+          path: '/api/endpoints/old%20ep%2Fwith%20space',
+        }),
+      );
+    });
+
+    it('surfaces the relay error detail when the PUT fails', async () => {
+      const { updateEndpoint } = await import('./api');
+      mockHttpError(404, JSON.stringify({ detail: "endpoint 'old-ep' not found" }));
+
+      await expect(
+        updateEndpoint({
+          original_name: 'old-ep',
+          name: 'old-ep',
+          transport: 'stdio',
+          command: '/usr/bin/my-mcp',
+        }),
+      ).rejects.toThrow("endpoint 'old-ep' not found");
     });
   });
 
