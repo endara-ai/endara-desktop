@@ -54,6 +54,12 @@
   width: calc(var(--tf-card-w) + 40px);
   max-height: calc(100vh - 40px);
   display: flex;
+  /* `overflow: clip` (not `hidden`) so the fixed-width feed never
+   * renders a scroll container as cards translate 80px past its
+   * right/left edge during slide-in/out. `hidden` would surface a
+   * faint horizontal scrollbar mid-animation; `clip` clips visually
+   * without creating a scroll container. */
+  overflow: clip;
 }
 .tf-feed[data-position='bottom-right'] {
   right: 0; bottom: 0;
