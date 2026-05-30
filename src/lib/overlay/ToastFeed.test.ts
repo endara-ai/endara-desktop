@@ -281,4 +281,27 @@ describe('Overlay window — no scrollbar during slide', () => {
     expect(src).toMatch(/\.overlay-root\s*\{[^}]*\soverflow:\s*clip;[^}]*\}/);
     expect(src).not.toMatch(/\.overlay-root\s*\{[^}]*\soverflow:\s*hidden;[^}]*\}/);
   });
+
+  // Defense-in-depth on top of `overflow: clip`: a `clip-path: inset(0)`
+  // paint-time crop on `.overlay-root` has no scroll-container semantics
+  // and no overflow-axis interaction, so it cannot surface a scrollbar
+  // even if a WKWebView quirk ignores `overflow: clip` on some path.
+  // Pair it with `::-webkit-scrollbar { display: none }` and
+  // `scrollbar-width: none` to hide the OS/webview scrollbar gutter
+  // itself across WebKit and Gecko/Blink — the overlay is not supposed
+  // to scroll anyway.
+  it('OverlayApp.svelte applies clip-path: inset(0) on .overlay-root', async () => {
+    const src = (await import('./OverlayApp.svelte?raw')).default as string;
+    expect(src).toMatch(/\.overlay-root\s*\{[^}]*clip-path:\s*inset\(0\);[^}]*\}/);
+  });
+
+  it('OverlayApp.svelte hides webkit + gecko/blink scrollbars', async () => {
+    const src = (await import('./OverlayApp.svelte?raw')).default as string;
+    // WebKit / WKWebView scrollbar gutter.
+    expect(src).toMatch(/:global\(::-webkit-scrollbar\)\s*\{[^}]*display:\s*none;[^}]*\}/);
+    // Gecko / Blink scrollbar gutter on html + body.
+    expect(src).toMatch(
+      /:global\(html\),\s*:global\(body\)\s*\{[^}]*scrollbar-width:\s*none;[^}]*\}/,
+    );
+  });
 });

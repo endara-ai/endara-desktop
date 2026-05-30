@@ -108,23 +108,38 @@
 </div>
 
 <style>
-  /* `overflow: clip` (not `hidden`) so these ancestors never create a
-   * scroll container. Card slide-in/out translates 80px past the
-   * `.tf-feed` right/left edge; with `overflow: hidden` the webview
-   * would render a faint horizontal scrollbar on the overlay window
-   * during the transition. `clip` clips visually like `hidden` but
-   * suppresses the scroll container, so no scrollbar can appear. */
+  /* Defense-in-depth against a faint horizontal scrollbar appearing
+   * during card slide-in/out (cards translate 80px past the `.tf-feed`
+   * right/left edge):
+   *   1. `overflow: clip` on html/body + `.overlay-root` — clips
+   *      visually like `hidden` but never creates a scroll container,
+   *      unlike `overflow: hidden`.
+   *   2. `clip-path: inset(0)` on `.overlay-root` — a paint-time crop
+   *      with no scroll-container semantics, no overflow-axis
+   *      interaction, no WKWebView quirks. Anything outside the box
+   *      is invisible AND cannot generate scrollbars.
+   *   3. `::-webkit-scrollbar { display: none }` + `scrollbar-width:
+   *      none` — hides the OS/webview scrollbar gutter itself across
+   *      WebKit (WKWebView) and Gecko/Blink. The overlay never needs
+   *      to scroll, so this is safe.
+   * Any one of these would likely suffice; together they cannot
+   * produce a scrollbar by construction. */
   :global(html),
   :global(body) {
     margin: 0;
     padding: 0;
     background: transparent !important;
     overflow: clip;
+    scrollbar-width: none;
+  }
+  :global(::-webkit-scrollbar) {
+    display: none;
   }
   .overlay-root {
     position: fixed;
     inset: 0;
     background: transparent;
     overflow: clip;
+    clip-path: inset(0);
   }
 </style>
