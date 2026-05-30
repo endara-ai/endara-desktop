@@ -1,4 +1,5 @@
 mod api_proxy;
+mod tray;
 mod webview_recovery;
 
 use std::collections::HashMap;
@@ -2309,6 +2310,94 @@ fn is_autostarted() -> bool {
     std::env::args().any(|arg| arg == "--autostarted")
 }
 
+/// Tauri-managed wrapper around the tray menu's first item ("status"). The
+/// inner `MenuItem` already handles main-thread dispatch internally and is
+/// `Send + Sync` (it's an `Arc<Inner>`), so no extra mutex is needed.
+/// Hardcoded to `tauri::Wry` because the default runtime is the only one in
+/// use for this app.
+pub struct TrayStatusItem(pub tauri::menu::MenuItem<tauri::Wry>);
+
+/// Compose the tray menu label for a given health `state` and optional
+/// frontend-provided `detail`. When `detail` is present it is rendered as
+/// `"Endara — {detail}"`; otherwise we fall back to the per-state defaults.
+fn compose_tray_menu_label(state: &str, detail: Option<&str>) -> String {
+    if let Some(d) = detail.map(str::trim).filter(|s| !s.is_empty()) {
+        return format!("Endara — {d}");
+    }
+    match state {
+        "healthy" => "Endara — Running".to_string(),
+        "degraded" => "Endara — Issue detected".to_string(),
+        "down" => "Endara — Relay not running".to_string(),
+        _ => "Endara".to_string(),
+    }
+}
+
+/// Compose the tray tooltip for a given health `state` and optional
+/// frontend-provided `detail`. When `detail` is present it is rendered as
+/// `"Endara Relay — {detail}"`; otherwise we fall back to the per-state
+/// defaults from spec §5.
+fn compose_tray_tooltip(state: &str, detail: Option<&str>) -> String {
+    if let Some(d) = detail.map(str::trim).filter(|s| !s.is_empty()) {
+        return format!("Endara Relay — {d}");
+    }
+    match state {
+        "healthy" => "Endara Relay — all systems healthy".to_string(),
+        "degraded" => "Endara Relay — some endpoints need attention".to_string(),
+        "down" => "Endara Relay — relay is not running".to_string(),
+        _ => "Endara Relay".to_string(),
+    }
+}
+
+/// Update the tray icon, tooltip, and status menu item to reflect the latest
+/// aggregated health state computed on the frontend. Unknown `state` values
+/// fall back to the monochrome template icon so the menu bar stays in a
+/// sensible default. `detail` is an optional short description (≤ ~50 chars)
+/// supplied by the frontend so the menu line and tooltip surface the specific
+/// problem instead of a generic per-state label.
+#[tauri::command]
+fn set_tray_health(app: AppHandle, state: &str, detail: Option<String>) {
+    let Some(icons) = app.try_state::<tray::TrayIcons>() else {
+        log::warn!("[tray] set_tray_health called before TrayIcons state is managed");
+        return;
+    };
+    let (icon_data, is_template) = match state {
+        "healthy" => (&icons.healthy, false),
+        "degraded" => (&icons.degraded, false),
+        "down" => (&icons.down, false),
+        _ => (&icons.base, true),
+    };
+    let detail_ref = detail.as_deref();
+    let tooltip = compose_tray_tooltip(state, detail_ref);
+    let menu_label = compose_tray_menu_label(state, detail_ref);
+    let Some(tray_icon) = app.tray_by_id("main") else {
+        log::warn!("[tray] set_tray_health: main tray icon not found");
+        return;
+    };
+    match tauri::image::Image::from_bytes(icon_data) {
+        Ok(image) => {
+            if let Err(e) = tray_icon.set_icon(Some(image)) {
+                log::warn!("[tray] failed to set tray icon state={state} error={e}");
+            }
+        }
+        Err(e) => {
+            log::warn!("[tray] failed to decode tray icon state={state} error={e}");
+        }
+    }
+    if let Err(e) = tray_icon.set_icon_as_template(is_template) {
+        log::warn!("[tray] failed to set icon_as_template state={state} error={e}");
+    }
+    if let Err(e) = tray_icon.set_tooltip(Some(&tooltip)) {
+        log::warn!("[tray] failed to set tooltip state={state} error={e}");
+    }
+    if let Some(status_item) = app.try_state::<TrayStatusItem>() {
+        if let Err(e) = status_item.0.set_text(&menu_label) {
+            log::warn!("[tray] failed to set status menu label state={state} error={e}");
+        }
+    } else {
+        log::warn!("[tray] set_tray_health called before TrayStatusItem state is managed");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let default_port = if is_dev_mode() {
@@ -2404,6 +2493,7 @@ pub fn run() {
             show_update_notification,
             get_autostart,
             set_autostart,
+            set_tray_health,
         ])
         .setup(move |app| {
             log::info!(
@@ -2426,10 +2516,19 @@ pub fn run() {
             let menu =
                 Menu::with_items(app, &[&status_item, &open_item, &update_item, &quit_item])?;
 
-            let _tray = TrayIconBuilder::new()
-                .icon(tauri::image::Image::from_bytes(include_bytes!(
-                    "../icons/tray-icon-template.png"
-                ))?)
+            // Stash the status menu item as managed state so `set_tray_health`
+            // can update its label when the frontend reports a new health
+            // detail (e.g. "Endara — Sign in required for github-mcp").
+            app.manage(TrayStatusItem(status_item.clone()));
+
+            // Pre-build the colored tray-icon variants from the base template
+            // and stash them as managed state so `set_tray_health` can swap
+            // them on demand without redoing the PNG decode/encode work.
+            const TRAY_ICON_TEMPLATE: &[u8] = include_bytes!("../icons/tray-icon-template.png");
+            app.manage(tray::build_tray_icons(TRAY_ICON_TEMPLATE));
+
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(tauri::image::Image::from_bytes(TRAY_ICON_TEMPLATE)?)
                 .icon_as_template(true)
                 .menu(&menu)
                 .show_menu_on_left_click(true)
@@ -3856,5 +3955,71 @@ mod parse_level_from_line_tests {
         // handles this case, but the helper itself stays strict.
         let line = "2026-05-20T17:54:47.123Z something happened: an error occurred mid-body";
         assert_eq!(parse_level_from_line(line), None);
+    }
+}
+
+#[cfg(test)]
+mod tray_label_tests {
+    use super::*;
+
+    #[test]
+    fn menu_label_falls_back_to_per_state_default_when_no_detail() {
+        assert_eq!(compose_tray_menu_label("healthy", None), "Endara — Running");
+        assert_eq!(
+            compose_tray_menu_label("degraded", None),
+            "Endara — Issue detected"
+        );
+        assert_eq!(
+            compose_tray_menu_label("down", None),
+            "Endara — Relay not running"
+        );
+    }
+
+    #[test]
+    fn menu_label_uses_detail_when_present() {
+        assert_eq!(
+            compose_tray_menu_label("degraded", Some("Sign in required for github-mcp")),
+            "Endara — Sign in required for github-mcp"
+        );
+        assert_eq!(
+            compose_tray_menu_label("down", Some("Relay stopped")),
+            "Endara — Relay stopped"
+        );
+    }
+
+    #[test]
+    fn menu_label_treats_empty_or_whitespace_detail_as_no_detail() {
+        assert_eq!(
+            compose_tray_menu_label("healthy", Some("")),
+            "Endara — Running"
+        );
+        assert_eq!(
+            compose_tray_menu_label("healthy", Some("   ")),
+            "Endara — Running"
+        );
+    }
+
+    #[test]
+    fn tooltip_falls_back_to_spec_5_defaults_when_no_detail() {
+        assert_eq!(
+            compose_tray_tooltip("healthy", None),
+            "Endara Relay — all systems healthy"
+        );
+        assert_eq!(
+            compose_tray_tooltip("degraded", None),
+            "Endara Relay — some endpoints need attention"
+        );
+        assert_eq!(
+            compose_tray_tooltip("down", None),
+            "Endara Relay — relay is not running"
+        );
+    }
+
+    #[test]
+    fn tooltip_uses_detail_when_present() {
+        assert_eq!(
+            compose_tray_tooltip("degraded", Some("2 endpoints unhealthy")),
+            "Endara Relay — 2 endpoints unhealthy"
+        );
     }
 }

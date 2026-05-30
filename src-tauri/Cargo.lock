@@ -1121,6 +1121,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "image",
  "libc",
  "log",
  "objc2",
