@@ -13,6 +13,7 @@
   import { theme } from '$lib/stores';
   import { attachOverlayBridge } from './eventBridge';
   import { createToastStore } from './toastStore';
+  import { emitRenderReady } from './emitRenderReady';
   import {
     DEFAULT_OVERLAY_SETTINGS,
     fetchOverlaySettings,
@@ -70,6 +71,12 @@
     attachOverlayBridge(store).then((d) => {
       disposer = d;
     });
+
+    // Signal Rust that the renderer has actually painted a frame so the
+    // window can be revealed without the brief white flash that the
+    // `on_page_load` reveal produced. See `emitRenderReady.ts` for the
+    // handshake details; the Rust side still has a 500ms safety net.
+    emitRenderReady();
 
     return () => {
       unsubTheme();

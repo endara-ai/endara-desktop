@@ -12,9 +12,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime;
-use tauri::webview::{Color, PageLoadEvent};
+use tauri::webview::Color;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindow,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
@@ -352,14 +353,16 @@ pub fn build_overlay_window(
     // first frame before our CSS loads is transparent rather than white
     // (covers Windows; macOS webview layer ignores this per Tauri docs, but
     // `transparent(true)` + the CSS handle that path).
-    // Build hidden and reveal after the webview's `load` event fires so the
-    // OS never paints the native window's white background before our
-    // transparent canvas exists. `background_color(transparent)` alone is
-    // insufficient on macOS/Windows where the OS shows the window chrome
-    // before the first webview frame. The renderer-invoke variant (Phase 4
-    // first attempt) was unreliable in dev when capabilities/hydration
-    // races left the window hidden forever; driving the reveal from the
-    // Tauri runtime side via `on_page_load` decouples it from JS.
+    // Build hidden and reveal after the renderer signals it has actually
+    // painted (`overlay-render-ready` event from `OverlayApp.svelte`'s
+    // double-rAF). `on_page_load(Finished)` fires too early — the HTML is
+    // parsed but the transparent CSS has not been composited yet, so the
+    // user briefly sees the white default background. The renderer-invoke
+    // variant (Phase 4 first attempt) also failed — likely an IPC/capability
+    // issue. Tauri's event channel uses a separate transport that only needs
+    // `core:event:default` (bundled into the overlay capability's
+    // `core:default`), and the 500ms `async_runtime::spawn` safety net
+    // below still covers renderer crash / event-system failure.
     let mut builder = tauri::WebviewWindowBuilder::new(app, OVERLAY_WINDOW_LABEL, url)
         .title("Endara Overlay")
         .decorations(false)
@@ -370,15 +373,7 @@ pub fn build_overlay_window(
         .shadow(false)
         .visible(false)
         .background_color(Color(0, 0, 0, 0))
-        .accept_first_mouse(true)
-        .on_page_load(|window, payload| {
-            if matches!(payload.event(), PageLoadEvent::Finished) {
-                log::info!(target: "overlay", "page loaded — showing window");
-                if let Err(e) = window.show() {
-                    log::warn!("[overlay] show on page_load failed: {e}");
-                }
-            }
-        });
+        .accept_first_mouse(true);
 
     // `transparent` requires the `macos-private-api` Cargo feature on macOS
     // (we enable it in `Cargo.toml`) and `app.macOSPrivateApi = true` in
@@ -415,11 +410,25 @@ pub fn build_overlay_window(
         log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
     }
 
-    // Safety net: if the `on_page_load` hook somehow never fires (renderer
-    // crash, dev server stall, etc.), reveal the window unconditionally
-    // after ~500ms so it never stays hidden forever. `show()` is idempotent
-    // — calling it after the page-load hook has already shown the window
-    // is a no-op.
+    // Primary reveal path: the renderer emits `overlay-render-ready` after a
+    // double-rAF in `OverlayApp.svelte`'s `onMount`, which guarantees at
+    // least one full composited paint cycle has shipped the transparent
+    // canvas to the OS compositor before we ask the window manager to make
+    // the window visible. `show()` is idempotent, so a second call from the
+    // safety net below is a no-op.
+    let ready_target = window.clone();
+    window.once("overlay-render-ready", move |_event| {
+        log::info!(target: "overlay", "render-ready event received — showing window");
+        if let Err(e) = ready_target.show() {
+            log::warn!("[overlay] show on render-ready failed: {e}");
+        }
+    });
+
+    // Safety net: if the renderer never emits `overlay-render-ready`
+    // (renderer crash, dev server stall, event-system regression, etc.),
+    // reveal the window unconditionally after ~500ms so it never stays
+    // hidden forever. `show()` is idempotent — calling it after the
+    // render-ready handler has already shown the window is a no-op.
     // Use `tauri::async_runtime::spawn` rather than `tokio::spawn` here:
     // `build_overlay_window` runs from Tauri's `setup` hook on the macOS
     // main thread during `did_finish_launching`, where no tokio runtime is
