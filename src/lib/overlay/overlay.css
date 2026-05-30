@@ -40,10 +40,11 @@
 
 @keyframes tfSpin { to { transform: rotate(360deg); } }
 @keyframes tfDismissFill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@keyframes tfCardIn {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
+/* Card enter / exit animations live in `OverlayCard.svelte` via Svelte
+ * `in:fly` + a custom `out:` transition that fades, slides horizontally
+ * toward the anchor edge, and collapses the wrapper height so the
+ * remaining cards in the column re-flow smoothly. See the
+ * `slideCollapse` helper there for the exact CSS produced per frame. */
 
 .tf-feed {
   position: fixed;
@@ -107,7 +108,7 @@
   padding: 4px 0;
 }
 
-.tf-card-wrap { position: relative; opacity: 1; animation: tfCardIn 180ms var(--ease, ease-out); }
+.tf-card-wrap { position: relative; opacity: 1; }
 .tf-card {
   position: relative;
   background: var(--tf-card-bg);

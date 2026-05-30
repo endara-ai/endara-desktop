@@ -46,7 +46,7 @@
       <div class="tf-more" data-testid="more-earlier">+{hidden} earlier</div>
     {/if}
     {#each visible as g (g.id)}
-      <OverlayCard group={g} {dismissMs} {showProfile} />
+      <OverlayCard group={g} {dismissMs} {showProfile} {position} />
     {/each}
   </div>
 </div>
