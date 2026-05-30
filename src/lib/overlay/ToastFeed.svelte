@@ -35,17 +35,20 @@
   const hidden = $derived(hiddenGroupCount(groups.length, maxVisible));
 
   // Feed-level dismiss progress bar state. The store bumps `dismissReset`
-  // every time the idle timer is (re)armed; we pipe `tick` into the
-  // bottommost card so Svelte's `{#key dismissTick}` inside that card
-  // re-mounts the fill and the CSS keyframe restarts at 0%.
-  // `dismissPaused` flips on overlay hover and freezes the fill via
-  // `animation-play-state: paused`. `durationMs` is captured at arm time
-  // in the store, so it stays aligned with the timer that will fire.
-  // Wrapped in `$derived` to satisfy Svelte 5's runes warning about
-  // capturing `store` only on initial render. The bar itself is rendered
-  // inside `OverlayCard` (gated by `showDismissBar`) so it sits flush
-  // against the bottom edge of the bottommost card; the timer LOGIC
-  // stays here / in the store and is not duplicated per-card.
+  // every time the idle timer is (re)armed; we key the bar's fill on
+  // `tick` so Svelte's `{#key dismissTick}` re-mounts the element and
+  // the CSS keyframe restarts at 0%. `dismissPaused` flips on overlay
+  // hover and freezes the fill via `animation-play-state: paused`.
+  // `durationMs` is captured at arm time in the store, so it stays
+  // aligned with the timer that will fire. Wrapped in `$derived` to
+  // satisfy Svelte 5's runes warning about capturing `store` only on
+  // initial render. The bar lives at a stable DOM location (sibling of
+  // the cards, last child of `.tf-feed-inner`) so group reorders
+  // triggered by `addStarted` don't unmount-remount the bar on
+  // different cards — that mid-animation churn was the root cause of
+  // the stuck-progress regression. CSS in `overlay.css` collapses the
+  // 8px flex gap so the bar still reads as fused to the bottommost
+  // card's bottom edge at all four anchor corners.
   const dismissReset = $derived(store.dismissReset);
   const dismissPaused = $derived(store.dismissPaused);
   const dismissTick = $derived($dismissReset.tick);
@@ -100,27 +103,34 @@
       {#if hidden > 0}
         <div class="tf-more" data-testid="more-earlier">+{hidden} earlier</div>
       {/if}
-      {#each visible as g, i (g.id)}
-        <!--
-          `showDismissBar={i === visible.length - 1}` always lands the
-          single feed-level dismiss bar on the visually-bottommost card
-          (closest to the screen corner): for `bottom-*` anchors that is
-          the LAST DOM child; for `top-*` anchors `flex-direction:
-          column-reverse` on `.tf-feed-inner` puts the LAST DOM child at
-          the visual bottom too. Either way the bar sits flush against
-          the outermost card's bottom edge.
-        -->
+      {#each visible as g (g.id)}
         <div class="tf-card-slot" in:fade={{ duration: 120 }}>
-          <OverlayCard
-            group={g}
-            {showProfile}
-            showDismissBar={i === visible.length - 1}
-            {dismissTick}
-            {dismissDurationMs}
-            dismissPaused={dismissPausedNow}
-          />
+          <OverlayCard group={g} {showProfile} />
         </div>
       {/each}
+      <!--
+        Feed-level dismiss progress bar. Rendered as a sibling AFTER
+        the cards so its DOM location is stable regardless of how
+        groups reorder (the `addStarted` reshuffle in `toastStore`
+        used to move the bar between cards mid-animation, freezing
+        the CSS keyframe). The `{#key dismissTick}` re-mounts the
+        inner fill on every idle-timer (re)arm so the keyframe
+        restarts at 0%. `overlay.css` gives the bar a negative
+        top margin to absorb the 8px flex gap above it so it sits
+        flush against the bottommost card's bottom edge, and a
+        position-keyed `order` flip handles the `column-reverse`
+        layout used by the top-anchored corners.
+      -->
+      {#key dismissTick}
+        <div class="tf-dismiss-bar" data-testid="dismiss-bar">
+          <div
+            class="tf-dismiss-fill"
+            data-testid="dismiss-fill"
+            style:animation-duration="{dismissDurationMs}ms"
+            style:animation-play-state={dismissPausedNow ? 'paused' : 'running'}
+          ></div>
+        </div>
+      {/key}
     </div>
   {/if}
 </div>

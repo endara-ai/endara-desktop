@@ -32,25 +32,8 @@
   type Props = {
     group: ToolCallGroup;
     showProfile?: boolean;
-    // Feed-level dismiss-bar plumbing. The timer LOGIC lives in
-    // `toastStore` and is read by `ToastFeed.svelte`; we just pipe the
-    // same state into whichever card is the visually-bottommost one
-    // (i.e. `index === visible.length - 1`) so the bar sits flush
-    // against the bottom edge of that card. All four are optional with
-    // safe defaults so non-bottom cards render unchanged.
-    showDismissBar?: boolean;
-    dismissTick?: number;
-    dismissDurationMs?: number;
-    dismissPaused?: boolean;
   };
-  let {
-    group,
-    showProfile = true,
-    showDismissBar = false,
-    dismissTick = 0,
-    dismissDurationMs = 0,
-    dismissPaused = false,
-  }: Props = $props();
+  let { group, showProfile = true }: Props = $props();
 
   const state = $derived(groupVisualState(group));
   const stacked = $derived(isStacked(group));
@@ -170,26 +153,5 @@
       {/if}
     </div>
 
-    {#if showDismissBar}
-      <!--
-        Feed-level dismiss progress bar, rendered on the bottommost card
-        only (gated by the `showDismissBar` prop set by `ToastFeed` to
-        `i === visible.length - 1`). Sits flush against the card's
-        bottom edge; the card's `border-radius: 12px` + `overflow:
-        hidden` clip the bar's bottom corners so it inherits the card
-        shape. `{#key dismissTick}` re-mounts the fill on every
-        idle-timer (re)arm so the CSS keyframe restarts at 0%.
-      -->
-      {#key dismissTick}
-        <div class="tf-dismiss-bar" data-testid="dismiss-bar">
-          <div
-            class="tf-dismiss-fill"
-            data-testid="dismiss-fill"
-            style:animation-duration="{dismissDurationMs}ms"
-            style:animation-play-state={dismissPaused ? 'paused' : 'running'}
-          ></div>
-        </div>
-      {/key}
-    {/if}
   </button>
 </div>

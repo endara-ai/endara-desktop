@@ -293,12 +293,10 @@ describe('Overlay window — no scrollbar during slide', () => {
 });
 
 // Ghost-stack "paper" peek cards (`.tf-card-ghost*`) are gone in the
-// group-level redesign. The per-card dismiss progress bar is BACK (so
-// it sits flush against the bottom edge of the bottommost card), but
-// it's now driven by feed-level state piped in through props — the
-// timer logic still lives in `toastStore` / `ToastFeed`, not in each
-// card. Lock the ghost removal at the source level so future
-// regressions are caught.
+// group-level redesign. The dismiss progress bar lives feed-level (as
+// a sibling of the cards inside `.tf-feed-inner`) so its DOM location
+// is stable across group reorders. Lock the ghost removal at the
+// source level so future regressions are caught.
 describe('Overlay redesign — ghost stack stays removed', () => {
   it('OverlayCard.svelte does NOT render .tf-card-ghost peek cards', async () => {
     const src = (await import('./OverlayCard.svelte?raw')).default as string;
@@ -316,85 +314,63 @@ describe('Overlay redesign — ghost stack stays removed', () => {
   });
 });
 
-// Feed-level dismiss progress bar, fused to the bottommost card. The
-// timer state (`dismissReset.tick`, `dismissReset.durationMs`,
-// `dismissPaused`) lives in `toastStore` and is read in `ToastFeed`;
-// `ToastFeed` then pipes those values into the bottommost `OverlayCard`
-// via `showDismissBar={i === visible.length - 1}` + `dismissTick` /
-// `dismissDurationMs` / `dismissPaused` props. The bar itself renders
-// inside `OverlayCard.tf-card-front` after `.tf-card-body` so the
-// card's `border-radius` + `overflow: hidden` clip its bottom corners
-// flush with the card shape. The fill is wrapped in `{#key dismissTick}`
-// so each idle-timer (re)arm re-mounts the element and the CSS
-// keyframe restarts at 0%; `animation-play-state` binds to
-// `dismissPaused` so hover freezes the fill mid-animation without a
-// `Date.now()`-driven render.
-describe('ToastFeed — feed-level dismiss progress bar', () => {
-  it('ToastFeed.svelte no longer renders the dismiss bar at the feed level', async () => {
-    // The bar moved into OverlayCard so it can sit flush against the
-    // bottommost card's bottom edge. The feed template must not contain
-    // either of the dismiss markup classes anymore.
+// Feed-level dismiss progress bar — stable DOM location regression.
+// A prior iteration moved the bar INSIDE `OverlayCard` and gated it on
+// `showDismissBar={i === visible.length - 1}`. Because `addStarted`
+// reorders groups (the touched group moves to the end of the array),
+// the "bottommost card" identity changes mid-animation, the
+// previously-bottommost `OverlayCard` unmounts the bar, the new
+// bottommost mounts a fresh one, and the CSS keyframe re-mount fights
+// the surrounding card-level remount — the bar visibly freezes
+// mid-progress. The fix puts the bar back at feed level as a sibling
+// of the cards (last DOM child of `.tf-feed-inner`), so the `{#key
+// dismissTick}` re-mount happens at a stable location regardless of
+// which card is currently at the visual bottom. `overlay.css`
+// collapses the 8px flex gap above the bar via `margin-top: -8px` so
+// it still reads as fused to the bottommost card's bottom edge.
+describe('ToastFeed — feed-level dismiss progress bar (stable DOM)', () => {
+  it('ToastFeed.svelte renders the dismiss bar at the feed level (sibling of cards)', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).not.toMatch(/class="tf-dismiss-bar"/);
-    expect(src).not.toMatch(/class="tf-dismiss-fill"/);
+    expect(src).toMatch(/class="tf-dismiss-bar"/);
+    expect(src).toMatch(/class="tf-dismiss-fill"/);
   });
 
-  it('ToastFeed.svelte iterates `{#each visible as g, i (g.id)}` to expose the index', async () => {
+  it('ToastFeed.svelte iterates `{#each visible as g (g.id)}` (no index needed at feed level)', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).toMatch(/\{#each visible as g, i \(g\.id\)\}/);
+    expect(src).toMatch(/\{#each visible as g \(g\.id\)\}/);
   });
 
-  it('ToastFeed.svelte gates the dismiss bar on the LAST visible card via `showDismissBar={i === visible.length - 1}`', async () => {
+  it('ToastFeed.svelte renders the bar AFTER the `{#each}` block as a sibling of `.tf-card-slot`', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    // The prop must be keyed on the loop index relative to
-    // `visible.length - 1`. For `bottom-*` anchors the last DOM child
-    // is also the visual bottom; for `top-*` anchors `column-reverse`
-    // puts the last DOM child at the visual bottom too — so the same
-    // predicate works at all four corners. We grep within the
-    // `<OverlayCard …>` block (not the explanatory comment above it)
-    // by anchoring on the `OverlayCard` tag start.
+    const eachEndIdx = src.indexOf('{/each}');
+    const barIdx = src.indexOf('class="tf-dismiss-bar"');
+    expect(eachEndIdx).toBeGreaterThan(-1);
+    expect(barIdx).toBeGreaterThan(eachEndIdx);
+    // And the bar sits inside the `{#if visible.length > 0}` gate so
+    // it disappears with the rest of the stack on feed-level dismiss.
+    const ifIdx = src.indexOf('{#if visible.length > 0}');
+    const ifEndIdx = src.indexOf('{/if}', barIdx);
+    expect(barIdx).toBeGreaterThan(ifIdx);
+    expect(ifEndIdx).toBeGreaterThan(barIdx);
+  });
+
+  it('ToastFeed.svelte does NOT pipe `showDismissBar` / `dismissTick` / `dismissPaused` props into OverlayCard', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
     const cardIdx = src.indexOf('<OverlayCard');
     expect(cardIdx).toBeGreaterThan(-1);
     const cardEndIdx = src.indexOf('/>', cardIdx);
-    expect(cardEndIdx).toBeGreaterThan(cardIdx);
     const cardBlock = src.slice(cardIdx, cardEndIdx);
-    expect(cardBlock).toMatch(/showDismissBar=\{i === visible\.length - 1\}/);
-    // And only ONE `<OverlayCard` element is templated (one per loop
-    // iteration, so still one bar per feed).
+    expect(cardBlock).not.toMatch(/showDismissBar=/);
+    expect(cardBlock).not.toMatch(/dismissTick/);
+    expect(cardBlock).not.toMatch(/dismissDurationMs/);
+    expect(cardBlock).not.toMatch(/dismissPaused/);
+    // Only ONE OverlayCard tag templated (one per loop iteration).
     const overlayCardMatches = src.match(/<OverlayCard\b/g) ?? [];
     expect(overlayCardMatches).toHaveLength(1);
   });
 
-  it('ToastFeed.svelte forwards dismissTick / dismissDurationMs / dismissPaused into OverlayCard', async () => {
+  it('ToastFeed.svelte keys the `.tf-dismiss-fill` element on `dismissTick`', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    // Shorthand `{dismissTick}` and `{dismissDurationMs}` plus an
-    // explicit rename `dismissPaused={dismissPausedNow}` (the local
-    // `$derived` is suffixed `Now` to disambiguate from the prop).
-    expect(src).toMatch(/\{dismissTick\}/);
-    expect(src).toMatch(/\{dismissDurationMs\}/);
-    expect(src).toMatch(/dismissPaused=\{dismissPausedNow\}/);
-  });
-
-  it('OverlayCard.svelte renders `.tf-dismiss-bar` inside the card, gated on `showDismissBar`', async () => {
-    const src = (await import('./OverlayCard.svelte?raw')).default as string;
-    // Bar lives inside the card (so it inherits the card's
-    // border-radius + overflow:hidden), gated by `{#if showDismissBar}`.
-    expect(src).toMatch(/\{#if showDismissBar\}/);
-    const ifIdx = src.indexOf('{#if showDismissBar}');
-    const barIdx = src.indexOf('class="tf-dismiss-bar"', ifIdx);
-    const ifEndIdx = src.indexOf('{/if}', barIdx);
-    expect(ifIdx).toBeGreaterThan(-1);
-    expect(barIdx).toBeGreaterThan(ifIdx);
-    expect(ifEndIdx).toBeGreaterThan(barIdx);
-    // And the bar sits AFTER `.tf-card-body` (i.e. at the bottom of
-    // the card) so it lines up against the card's bottom border.
-    const bodyEndIdx = src.lastIndexOf('</div>', ifIdx);
-    expect(bodyEndIdx).toBeGreaterThan(-1);
-    expect(ifIdx).toBeGreaterThan(bodyEndIdx);
-  });
-
-  it('OverlayCard.svelte keys the `.tf-dismiss-fill` element on `dismissTick`', async () => {
-    const src = (await import('./OverlayCard.svelte?raw')).default as string;
     expect(src).toMatch(/\{#key dismissTick\}/);
     const keyIdx = src.indexOf('{#key dismissTick}');
     const fillIdx = src.indexOf('class="tf-dismiss-fill"', keyIdx);
@@ -404,15 +380,25 @@ describe('ToastFeed — feed-level dismiss progress bar', () => {
     expect(keyEndIdx).toBeGreaterThan(fillIdx);
   });
 
-  it('OverlayCard.svelte binds animation-duration to `dismissDurationMs` and animation-play-state to `dismissPaused`', async () => {
-    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+  it('ToastFeed.svelte binds animation-duration to `dismissDurationMs` and animation-play-state to `dismissPausedNow`', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
     expect(src).toMatch(/style:animation-duration="\{dismissDurationMs\}ms"/);
     expect(src).toMatch(
-      /style:animation-play-state=\{dismissPaused \? 'paused' : 'running'\}/,
+      /style:animation-play-state=\{dismissPausedNow \? 'paused' : 'running'\}/,
     );
   });
 
-  it('overlay.css ships @keyframes tfDismissFill and the .tf-dismiss-bar/.tf-dismiss-fill rules with no bottom margin', async () => {
+  it('OverlayCard.svelte no longer carries dismiss-bar props or markup', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    expect(src).not.toMatch(/showDismissBar/);
+    expect(src).not.toMatch(/dismissTick/);
+    expect(src).not.toMatch(/dismissDurationMs/);
+    expect(src).not.toMatch(/dismissPaused/);
+    expect(src).not.toMatch(/tf-dismiss-bar/);
+    expect(src).not.toMatch(/tf-dismiss-fill/);
+  });
+
+  it('overlay.css ships @keyframes tfDismissFill and the .tf-dismiss-bar/.tf-dismiss-fill rules collapsing the flex gap', async () => {
     // @ts-expect-error node builtin types not installed
     const { readFileSync } = await import('node:fs');
     // @ts-expect-error node builtin types not installed
@@ -422,15 +408,32 @@ describe('ToastFeed — feed-level dismiss progress bar', () => {
     expect(src).toMatch(/@keyframes tfDismissFill\s*\{[^}]*from\s*\{\s*width:\s*0%/);
     expect(src).toMatch(/\.tf-dismiss-bar\s*\{/);
     expect(src).toMatch(/\.tf-dismiss-fill\s*\{/);
-    // The fill is tinted with --accent and the track uses a faint
-    // background — matches the visual style of the old per-card bar.
     expect(src).toMatch(/\.tf-dismiss-fill\s*\{[^}]*background:\s*var\(--accent\)/);
     expect(src).toMatch(
       /\.tf-dismiss-bar\s*\{[^}]*background:\s*var\(--tf-progress-track\)/,
     );
-    // Fused to the card's bottom edge — no `margin-bottom` (which would
-    // re-introduce the gap the feed-level placement had).
+    // The negative top margin is what visually fuses the bar to the
+    // bottommost card's bottom edge by absorbing the 8px flex gap on
+    // `.tf-feed-inner`.
+    expect(src).toMatch(/\.tf-dismiss-bar\s*\{[^}]*margin-top:\s*-8px/);
+    // No `margin-bottom` on the bar — it sits flush at the feed-inner
+    // edge so any bottom margin would leak as a gap below.
     expect(src).not.toMatch(/\.tf-dismiss-bar\s*\{[^}]*margin-bottom:/);
+    // Top-anchored corners use `flex-direction: column-reverse` on
+    // `.tf-feed-inner`. The bar is the last DOM child, so without an
+    // `order` override it would land at flex main-end = visual TOP.
+    // The position-keyed rule pulls it to main-start = visual bottom.
+    expect(src).toMatch(
+      /\.tf-feed\[data-position\^='top-'\]\s+\.tf-dismiss-bar\s*\{[^}]*order:\s*-1/,
+    );
+    // Bottom corners rounded to match the card's `border-radius: 12px`
+    // so the bar inherits the card's bottom shape when fused to it.
+    expect(src).toMatch(
+      /\.tf-dismiss-bar\s*\{[^}]*border-bottom-left-radius:\s*12px/,
+    );
+    expect(src).toMatch(
+      /\.tf-dismiss-bar\s*\{[^}]*border-bottom-right-radius:\s*12px/,
+    );
     // Re-introduced track variable in both themes.
     expect(src).toMatch(/--tf-progress-track:\s*rgba\(0,\s*0,\s*0,\s*0\.06\)/);
     expect(src).toMatch(/--tf-progress-track:\s*rgba\(255,\s*255,\s*255,\s*0\.08\)/);
