@@ -81,7 +81,12 @@
   width: var(--tf-card-w);
   pointer-events: auto;
   padding-top: 24px;
-  overflow: hidden;
+  /* Split clipping by axis: keep vertical containment (and the
+   * `mask-image` top-edge fade on [data-overflow='true']), but let
+   * cards slide horizontally past the 340px-wide inner column on
+   * dismiss without being clipped from the edge. */
+  overflow-x: visible;
+  overflow-y: hidden;
   max-height: calc(100vh - 40px);
 }
 /* Only apply the top-edge fade when the feed is overflowing — i.e. when

@@ -157,6 +157,43 @@ describe('ToastFeed — position-driven slide direction', () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
     expect(src).toMatch(/prefers-reduced-motion: reduce/);
   });
+
+  it('uses a short slide magnitude that fits inside the Tauri overlay window', async () => {
+    // The Tauri overlay window is 400 logical px wide (OVERLAY_WIDTH in
+    // src-tauri/src/overlay.rs) and the `.tf-feed` is `--tf-card-w` + 40
+    // = 380px, leaving only ~20 logical px of slack to the screen edge
+    // for right-anchored cards. A large slide (e.g. a full card width)
+    // is clipped by the OS compositor almost immediately and reads as
+    // "vanish". Lock the magnitude to a small, observable value.
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
+    expect(src).toMatch(/const slidePx = 80;/);
+  });
+});
+
+// The horizontal slide-out was previously clipped by
+// `.tf-feed-inner { overflow: hidden }` immediately after dismissal —
+// the card's slot would translate past the 340px-wide inner column and
+// disappear without any visible motion. The fix is to split clipping
+// by axis: keep `overflow-y: hidden` so the column stays bounded
+// vertically (and the `[data-overflow='true']` mask-image top-edge
+// fade still works), but switch the horizontal axis to
+// `overflow-x: visible` so the card can slide out of the inner column.
+describe('ToastFeed — overlay.css splits inner overflow by axis', () => {
+  it('.tf-feed-inner uses overflow-x: visible and overflow-y: hidden', async () => {
+    // @ts-expect-error node builtin types not installed
+    const { readFileSync } = await import('node:fs');
+    // @ts-expect-error node builtin types not installed
+    const { fileURLToPath } = await import('node:url');
+    const cssPath = fileURLToPath(new URL('./overlay.css', import.meta.url));
+    const src = readFileSync(cssPath, 'utf8') as string;
+    expect(src).toMatch(/overflow-x:\s*visible;/);
+    expect(src).toMatch(/overflow-y:\s*hidden;/);
+    // And the old `overflow: hidden` shorthand must NOT be reintroduced
+    // on `.tf-feed-inner` — that would re-clip the slide-out.
+    expect(src).not.toMatch(
+      /\.tf-feed-inner\s*\{[^}]*\soverflow:\s*hidden;[^}]*\}/,
+    );
+  });
 });
 
 // Regression for the unconditional top-edge fade: `.tf-feed-inner`

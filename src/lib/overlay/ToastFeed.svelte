@@ -37,17 +37,27 @@
   const hidden = $derived(hiddenGroupCount(groups.length, maxVisible));
 
   // Right-anchored corners slide in/out toward +x, left-anchored toward
-  // −x. Magnitude is the card width + the feed's outer padding so the
-  // slot fully clears the visible area before the transition ends.
-  // 380px = --tf-card-w (340) + .tf-feed horizontal padding (20) + slack.
-  // The transition directives live on the per-card slot `<div>` below —
-  // the immediate keyed child of `{#each}` — so Svelte plays the outro
-  // when the store removes a group. Moving them here from inside
-  // OverlayCard.svelte fixes the slide-out no-op: Svelte unmounts a
-  // child component synchronously and the transition on its root
-  // element never gets a chance to run.
+  // −x. The transition directives live on the per-card slot `<div>`
+  // below — the immediate keyed child of `{#each}` — so Svelte plays
+  // the outro when the store removes a group. Moving them here from
+  // inside OverlayCard.svelte fixes the slide-out no-op: Svelte
+  // unmounts a child component synchronously and the transition on its
+  // root element never gets a chance to run.
+  //
+  // Magnitude (80px) is intentionally short of a full off-screen exit.
+  // The Tauri overlay window is 400 logical px wide (see
+  // `OVERLAY_WIDTH` in `src-tauri/src/overlay.rs`) and sits flush
+  // against the monitor edge, so the right-anchored `.tf-feed`
+  // (`--tf-card-w` + 40 = 380px) only has ~20 logical px of slack to
+  // the screen edge before the OS compositor clips translated content.
+  // A larger slide is clipped almost immediately and reads as "vanish".
+  // The opacity fade does the heavy lifting of removing the card; the
+  // slide just provides a directional cue. Paired with the
+  // `overflow-x: visible` change on `.tf-feed-inner` in `overlay.css`,
+  // 80px gives a clearly observable horizontal motion at all four
+  // corners without hitting the compositor clip.
   const slideDir = $derived(position.endsWith('right') ? 1 : -1);
-  const slidePx = 380;
+  const slidePx = 80;
 
   // Honour the OS reduced-motion preference: collapse the slide to a
   // short cross-fade with no horizontal travel. `matchMedia` is gated on
