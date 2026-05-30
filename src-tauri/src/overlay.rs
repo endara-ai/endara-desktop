@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tauri::webview::Color;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
 };
@@ -346,6 +347,13 @@ pub fn build_overlay_window(
     //   - prod: Tauri's asset protocol maps the directory path to its `index.html`
     // Using `"overlay.html"` would 404 in dev (the dev server has no such file).
     let url = WebviewUrl::App(PathBuf::from("overlay/"));
+    // Build hidden so the renderer can paint a frame with the transparent CSS
+    // applied before the OS shows the window — `OverlayApp.svelte` calls
+    // `show_overlay` after a double-rAF to reveal it. Also set the
+    // window/webview `background_color` to fully-transparent RGBA so the
+    // initial canvas before our CSS loads is transparent rather than white
+    // (covers Windows; macOS webview layer ignores this per Tauri docs, but
+    // `transparent(true)` + the CSS handle that path).
     let mut builder = tauri::WebviewWindowBuilder::new(app, OVERLAY_WINDOW_LABEL, url)
         .title("Endara Overlay")
         .decorations(false)
@@ -354,7 +362,8 @@ pub fn build_overlay_window(
         .resizable(false)
         .focusable(false)
         .shadow(false)
-        .visible(true)
+        .visible(false)
+        .background_color(Color(0, 0, 0, 0))
         .accept_first_mouse(true);
 
     // `transparent` requires the `macos-private-api` Cargo feature on macOS
