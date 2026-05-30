@@ -108,16 +108,23 @@
 </div>
 
 <style>
+  /* `overflow: clip` (not `hidden`) so these ancestors never create a
+   * scroll container. Card slide-in/out translates 80px past the
+   * `.tf-feed` right/left edge; with `overflow: hidden` the webview
+   * would render a faint horizontal scrollbar on the overlay window
+   * during the transition. `clip` clips visually like `hidden` but
+   * suppresses the scroll container, so no scrollbar can appear. */
   :global(html),
   :global(body) {
     margin: 0;
     padding: 0;
     background: transparent !important;
-    overflow: hidden;
+    overflow: clip;
   }
   .overlay-root {
     position: fixed;
     inset: 0;
     background: transparent;
+    overflow: clip;
   }
 </style>

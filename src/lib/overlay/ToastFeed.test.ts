@@ -244,3 +244,41 @@ describe('ToastFeed — overflow-gated top-edge mask', () => {
     );
   });
 });
+
+// The horizontal slide-out (80px past the inner column's right/left
+// edge) previously caused a faint horizontal scrollbar in the overlay
+// window during slide-in/out. The webview was creating a scroll
+// container on the fixed-width `.tf-feed` (and as a belt-and-suspenders
+// on `html`/`body` + `.overlay-root`) because `overflow: visible`
+// (the default) lets the card extend past the container and
+// `overflow: hidden` creates a scroll container. The fix is
+// `overflow: clip`, which clips visually like `hidden` but never
+// creates a scroll container — so no scrollbar can appear.
+describe('Overlay window — no scrollbar during slide', () => {
+  it('overlay.css sets .tf-feed { overflow: clip } so the slide cannot surface a scrollbar', async () => {
+    // @ts-expect-error node builtin types not installed
+    const { readFileSync } = await import('node:fs');
+    // @ts-expect-error node builtin types not installed
+    const { fileURLToPath } = await import('node:url');
+    const cssPath = fileURLToPath(new URL('./overlay.css', import.meta.url));
+    const src = readFileSync(cssPath, 'utf8') as string;
+    // The `.tf-feed` block must declare `overflow: clip`. Match the
+    // declaration anywhere inside the block.
+    expect(src).toMatch(/\.tf-feed\s*\{[^}]*\soverflow:\s*clip;[^}]*\}/);
+    // And it must NOT regress to `overflow: hidden` (which would
+    // create a scroll container at this fixed-width fixed-position
+    // element and produce the faint horizontal scrollbar).
+    expect(src).not.toMatch(/\.tf-feed\s*\{[^}]*\soverflow:\s*hidden;[^}]*\}/);
+  });
+
+  it('OverlayApp.svelte uses overflow: clip on html/body + .overlay-root', async () => {
+    const src = (await import('./OverlayApp.svelte?raw')).default as string;
+    // html/body shorthand must be `clip`, not `hidden` or `auto`/`scroll`.
+    expect(src).toMatch(/:global\(html\),\s*:global\(body\)\s*\{[^}]*\soverflow:\s*clip;[^}]*\}/);
+    expect(src).not.toMatch(/:global\(html\),\s*:global\(body\)\s*\{[^}]*\soverflow:\s*hidden;[^}]*\}/);
+    // .overlay-root must also clip so the fixed-position ancestor
+    // doesn't surface a scrollbar.
+    expect(src).toMatch(/\.overlay-root\s*\{[^}]*\soverflow:\s*clip;[^}]*\}/);
+    expect(src).not.toMatch(/\.overlay-root\s*\{[^}]*\soverflow:\s*hidden;[^}]*\}/);
+  });
+});
