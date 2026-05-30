@@ -315,4 +315,101 @@ describe('toastStore', () => {
       expect(get(store)).toEqual([]);
     });
   });
+
+  // Feed-level dismiss progress bar surface. `dismissReset` is a
+  // `{ tick, durationMs }` store that the `ToastFeed` keys its CSS
+  // animation off — every arm of the idle timer bumps `tick` and
+  // captures the `opts.dismissMs` that will fire it. `dismissPaused`
+  // mirrors the hover-pause boolean so the bar can freeze its fill
+  // via `animation-play-state: paused` (no `Date.now()` in the DOM).
+  describe('feed-level dismiss progress bar state', () => {
+    it('dismissReset starts at tick=0 with the initial dismissMs', () => {
+      const store = createToastStore({ dismissMs: 1234 });
+      expect(get(store.dismissReset)).toEqual({ tick: 0, durationMs: 1234 });
+    });
+
+    it('addStarted bumps dismissReset.tick and captures the current dismissMs', () => {
+      const store = createToastStore({ dismissMs: 2000 });
+      const before = get(store.dismissReset).tick;
+      store.addStarted(started({ request_id: 'req-1' }));
+      const after = get(store.dismissReset);
+      expect(after.tick).toBe(before + 1);
+      expect(after.durationMs).toBe(2000);
+    });
+
+    it('settle bumps dismissReset.tick (second arm of the same idle timer)', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      const afterStart = get(store.dismissReset).tick;
+      store.settle(completed('req-1', 'ok'));
+      expect(get(store.dismissReset).tick).toBe(afterStart + 1);
+    });
+
+    it('a second addStarted bumps the tick again (idle reset semantics)', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'a-1', tool: 'a' }));
+      const afterFirst = get(store.dismissReset).tick;
+      store.addStarted(started({ request_id: 'b-1', tool: 'b' }));
+      expect(get(store.dismissReset).tick).toBe(afterFirst + 1);
+    });
+
+    it('addStarted while paused does NOT bump the tick (timer is not armed)', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.pauseDismiss();
+      const before = get(store.dismissReset).tick;
+      store.addStarted(started({ request_id: 'req-1' }));
+      expect(get(store.dismissReset).tick).toBe(before);
+    });
+
+    it('resumeDismiss bumps the tick when it re-arms a non-empty feed', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.pauseDismiss();
+      const beforeResume = get(store.dismissReset).tick;
+      store.resumeDismiss();
+      expect(get(store.dismissReset).tick).toBe(beforeResume + 1);
+    });
+
+    it('resumeDismiss on an empty feed does NOT bump the tick', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.pauseDismiss();
+      const before = get(store.dismissReset).tick;
+      store.resumeDismiss();
+      expect(get(store.dismissReset).tick).toBe(before);
+    });
+
+    it('setOpts() updates the dismissMs captured on the NEXT arm', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      expect(get(store.dismissReset).durationMs).toBe(1000);
+      store.setOpts({ dismissMs: 4500 });
+      store.settle(completed('req-1', 'ok'));
+      expect(get(store.dismissReset).durationMs).toBe(4500);
+    });
+
+    it('dismissPaused starts false', () => {
+      const store = createToastStore();
+      expect(get(store.dismissPaused)).toBe(false);
+    });
+
+    it('pauseDismiss flips dismissPaused to true; resumeDismiss flips it back', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.pauseDismiss();
+      expect(get(store.dismissPaused)).toBe(true);
+      store.resumeDismiss();
+      expect(get(store.dismissPaused)).toBe(false);
+    });
+
+    it('redundant pauseDismiss/resumeDismiss calls are no-ops on the paused boolean', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.pauseDismiss();
+      store.pauseDismiss();
+      expect(get(store.dismissPaused)).toBe(true);
+      store.resumeDismiss();
+      store.resumeDismiss();
+      expect(get(store.dismissPaused)).toBe(false);
+    });
+  });
 });

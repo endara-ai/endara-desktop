@@ -15,6 +15,7 @@
   --tf-danger-fg: #b42a2a;
   --tf-chip-bg: rgba(0, 0, 0, 0.04);
   --tf-icon-bg: rgba(0, 0, 0, 0.04);
+  --tf-progress-track: rgba(0, 0, 0, 0.06);
   --tf-card-w: 340px;
 }
 
@@ -30,9 +31,11 @@
   --tf-danger-fg: #ff9b9b;
   --tf-chip-bg: rgba(255, 255, 255, 0.05);
   --tf-icon-bg: rgba(255, 255, 255, 0.06);
+  --tf-progress-track: rgba(255, 255, 255, 0.08);
 }
 
 @keyframes tfSpin { to { transform: rotate(360deg); } }
+@keyframes tfDismissFill { from { width: 0%; } to { width: 100%; } }
 /* Feed-level slide-in / slide-out live in `ToastFeed.svelte` as Svelte
  * `in:fly` + `out:fly` directives on the `.tf-feed-inner` container,
  * gated by `{#if visible.length > 0}` so the whole stack slides as one
@@ -153,3 +156,12 @@
 .tf-pill[data-tone='warn'] { background: var(--tf-warn-bg); color: var(--tf-warn-fg); }
 .tf-pill[data-tone='danger'] { background: var(--tf-danger-bg); color: var(--tf-danger-fg); }
 .tf-chip { display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 6px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); background: var(--tf-chip-bg); border-radius: 3px; }
+
+/* Feed-level dismiss progress bar. Lives at the bottom of `.tf-feed-inner`,
+ * spans the full inner column, fills left → right over `opts.dismissMs`
+ * (the same idle window the store schedules). `width` is animated rather
+ * than `transform: scaleX` so the fill grows from the container's left
+ * edge without a transform-origin gotcha. The 6px margin-bottom keeps the
+ * bar from crowding the screen edge below the last card. */
+.tf-dismiss-bar { width: 100%; height: 3px; margin-bottom: 6px; background: var(--tf-progress-track); border-radius: 2px; overflow: hidden; }
+.tf-dismiss-fill { display: block; height: 100%; width: 0%; background: var(--accent); animation-name: tfDismissFill; animation-timing-function: linear; animation-fill-mode: forwards; }

@@ -13,6 +13,21 @@
 //     pointer-enter), `resumeDismiss()` re-arms it (call on pointer-leave);
 //   - `clear()` cancels the timer and empties the store; `setOpts({...})`
 //     shallow-merges options.
+//
+// Feed-level dismiss progress bar:
+//   - `dismissReset` is a `Readable<{ tick, durationMs }>` that the
+//     `ToastFeed` keys its CSS-driven progress bar off. The tick increments
+//     every time the idle timer is actually (re)armed — i.e. on every
+//     `addStarted` / `settle` that schedules a fresh `setTimeout`, AND on
+//     `resumeDismiss()` re-arming after a hover. `durationMs` captures
+//     `opts.dismissMs` at arm time so the bar's `animation-duration`
+//     stays aligned with the timer that will fire it.
+//   - `dismissPaused` is a `Readable<boolean>` that mirrors the hover-pause
+//     boolean. The bar binds `animation-play-state` to it so the fill
+//     freezes at its current width while the cursor is over the overlay.
+//   - We intentionally avoid `Date.now()` timestamps in this surface:
+//     they race with hover-pause and make the rendered DOM time-dependent.
+//     The tick + paused boolean keeps all timing in CSS keyframes.
 
 import { writable, type Readable } from 'svelte/store';
 import type {
@@ -69,6 +84,14 @@ export type ToastStore = Readable<ToolCallGroup[]> & {
   setOpts: (opts: Partial<ToastStoreOpts>) => void;
   getOpts: () => ToastStoreOpts;
   clear: () => void;
+  // Increments on every (re)arm of the idle timer. The `ToastFeed` keys
+  // its progress-bar fill on `tick` so each reset re-mounts the element
+  // and the CSS keyframe restarts from 0%. `durationMs` carries the
+  // `opts.dismissMs` captured at arm time.
+  dismissReset: Readable<{ tick: number; durationMs: number }>;
+  // True while the hover-pause is engaged. The progress bar binds
+  // `animation-play-state` to this so the fill freezes mid-animation.
+  dismissPaused: Readable<boolean>;
 };
 
 function groupKey(event: StartedEvent): string {
@@ -87,7 +110,17 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
   // after `dismissMs` of inactivity, and clears the whole feed at once.
   let dismissTimer: ReturnType<typeof setTimeout> | null = null;
   let paused = false;
+  let dismissTick = 0;
   const inner = writable<ToolCallGroup[]>(groups);
+  // Bar-facing state. `dismissReset` is bumped every time the idle timer
+  // is actually rearmed (not on pause-skipped arming) so the bar restarts
+  // its CSS keyframe; `dismissPaused` mirrors `paused` so the bar can
+  // freeze with `animation-play-state: paused`.
+  const dismissResetInner = writable<{ tick: number; durationMs: number }>({
+    tick: 0,
+    durationMs: opts.dismissMs,
+  });
+  const dismissPausedInner = writable<boolean>(false);
 
   function publish() {
     inner.set(groups.slice());
@@ -104,6 +137,8 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     clearDismissTimer();
     if (paused) return;
     if (groups.length === 0) return;
+    dismissTick += 1;
+    dismissResetInner.set({ tick: dismissTick, durationMs: opts.dismissMs });
     dismissTimer = setTimeout(() => {
       dismissTimer = null;
       groups = [];
@@ -114,12 +149,14 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
   function pauseDismiss() {
     if (paused) return;
     paused = true;
+    dismissPausedInner.set(true);
     clearDismissTimer();
   }
 
   function resumeDismiss() {
     if (!paused) return;
     paused = false;
+    dismissPausedInner.set(false);
     armDismissTimer();
   }
 
@@ -236,5 +273,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     setOpts,
     getOpts,
     clear,
+    dismissReset: { subscribe: dismissResetInner.subscribe },
+    dismissPaused: { subscribe: dismissPausedInner.subscribe },
   };
 }

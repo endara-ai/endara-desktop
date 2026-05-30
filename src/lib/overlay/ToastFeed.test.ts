@@ -292,10 +292,12 @@ describe('Overlay window — no scrollbar during slide', () => {
   });
 });
 
-// Ghost-stack "paper" peek cards (`.tf-card-ghost*`) and the per-card
-// dismiss progress bar are gone in the group-level redesign. Lock
-// removal at the source level so future regressions are caught.
-describe('Overlay redesign — ghost stack + dismiss bar removed', () => {
+// Ghost-stack "paper" peek cards (`.tf-card-ghost*`) are gone in the
+// group-level redesign and the per-card dismiss progress bar stays
+// removed too — dismissal is feed-level now and the bar lives in
+// `ToastFeed.svelte`, not in each `OverlayCard`. Lock both removals
+// at the source level so future regressions are caught.
+describe('Overlay redesign — ghost stack + per-card dismiss bar removed', () => {
   it('OverlayCard.svelte does NOT render .tf-card-ghost peek cards', async () => {
     const src = (await import('./OverlayCard.svelte?raw')).default as string;
     expect(src).not.toMatch(/tf-card-ghost/);
@@ -307,7 +309,7 @@ describe('Overlay redesign — ghost stack + dismiss bar removed', () => {
     expect(src).not.toMatch(/tf-dismiss-fill/);
   });
 
-  it('overlay.css drops .tf-card-ghost*, .tf-dismiss-bar/.tf-dismiss-fill and the tfDismissFill keyframes', async () => {
+  it('overlay.css drops .tf-card-ghost* (ghost stack stays gone)', async () => {
     // @ts-expect-error node builtin types not installed
     const { readFileSync } = await import('node:fs');
     // @ts-expect-error node builtin types not installed
@@ -315,8 +317,72 @@ describe('Overlay redesign — ghost stack + dismiss bar removed', () => {
     const cssPath = fileURLToPath(new URL('./overlay.css', import.meta.url));
     const src = readFileSync(cssPath, 'utf8') as string;
     expect(src).not.toMatch(/\.tf-card-ghost/);
-    expect(src).not.toMatch(/\.tf-dismiss-bar/);
-    expect(src).not.toMatch(/\.tf-dismiss-fill/);
-    expect(src).not.toMatch(/tfDismissFill/);
+  });
+});
+
+// Feed-level dismiss progress bar. Lives inside `{#if visible.length > 0}`
+// after the per-card `{#each}` so it mounts/unmounts with the feed and
+// rides the same group-level `out:fly` on dismissal. The fill is keyed
+// on the store's `dismissReset.tick` so each idle-timer (re)arm tears
+// down + re-mounts the element and the CSS keyframe restarts at 0%.
+// `animation-play-state` binds to `dismissPaused` so hover freezes the
+// fill mid-animation without a `Date.now()`-driven render.
+describe('ToastFeed — feed-level dismiss progress bar', () => {
+  it('renders `.tf-dismiss-bar` inside the {#if visible.length > 0} block, after the cards loop', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
+    const ifIdx = src.indexOf('{#if visible.length > 0}');
+    const eachEndIdx = src.indexOf('{/each}', ifIdx);
+    const barIdx = src.indexOf('class="tf-dismiss-bar"', ifIdx);
+    // `lastIndexOf('{/if}')` skips the inner `{#if hidden > 0}{/if}`
+    // marker and lands on the closing tag of the outer
+    // `{#if visible.length > 0}` block — the one that gates the bar.
+    const ifEndIdx = src.lastIndexOf('{/if}');
+    expect(ifIdx).toBeGreaterThan(-1);
+    expect(eachEndIdx).toBeGreaterThan(ifIdx);
+    expect(barIdx).toBeGreaterThan(eachEndIdx);
+    expect(ifEndIdx).toBeGreaterThan(barIdx);
+  });
+
+  it('keys the `.tf-dismiss-fill` element on the reset tick so the keyframe restarts on every arm', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
+    // The fill must be wrapped in a `{#key dismissTick}` block so Svelte
+    // re-mounts the element on every store-side tick increment, restarting
+    // the CSS keyframe from 0% width.
+    expect(src).toMatch(/\{#key dismissTick\}/);
+    const keyIdx = src.indexOf('{#key dismissTick}');
+    const fillIdx = src.indexOf('class="tf-dismiss-fill"', keyIdx);
+    const keyEndIdx = src.indexOf('{/key}', keyIdx);
+    expect(keyIdx).toBeGreaterThan(-1);
+    expect(fillIdx).toBeGreaterThan(keyIdx);
+    expect(keyEndIdx).toBeGreaterThan(fillIdx);
+  });
+
+  it('binds animation-duration to dismissDurationMs and animation-play-state to dismissPaused', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
+    expect(src).toMatch(/style:animation-duration="\{dismissDurationMs\}ms"/);
+    expect(src).toMatch(
+      /style:animation-play-state=\{dismissPausedNow \? 'paused' : 'running'\}/,
+    );
+  });
+
+  it('overlay.css ships @keyframes tfDismissFill and the .tf-dismiss-bar/.tf-dismiss-fill rules', async () => {
+    // @ts-expect-error node builtin types not installed
+    const { readFileSync } = await import('node:fs');
+    // @ts-expect-error node builtin types not installed
+    const { fileURLToPath } = await import('node:url');
+    const cssPath = fileURLToPath(new URL('./overlay.css', import.meta.url));
+    const src = readFileSync(cssPath, 'utf8') as string;
+    expect(src).toMatch(/@keyframes tfDismissFill\s*\{[^}]*from\s*\{\s*width:\s*0%/);
+    expect(src).toMatch(/\.tf-dismiss-bar\s*\{/);
+    expect(src).toMatch(/\.tf-dismiss-fill\s*\{/);
+    // The fill is tinted with --accent and the track uses a faint
+    // background — matches the visual style of the old per-card bar.
+    expect(src).toMatch(/\.tf-dismiss-fill\s*\{[^}]*background:\s*var\(--accent\)/);
+    expect(src).toMatch(
+      /\.tf-dismiss-bar\s*\{[^}]*background:\s*var\(--tf-progress-track\)/,
+    );
+    // Re-introduced track variable in both themes.
+    expect(src).toMatch(/--tf-progress-track:\s*rgba\(0,\s*0,\s*0,\s*0\.06\)/);
+    expect(src).toMatch(/--tf-progress-track:\s*rgba\(255,\s*255,\s*255,\s*0\.08\)/);
   });
 });

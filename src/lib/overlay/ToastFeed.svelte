@@ -34,6 +34,20 @@
   const visible = $derived(visibleGroups(groups, maxVisible));
   const hidden = $derived(hiddenGroupCount(groups.length, maxVisible));
 
+  // Feed-level dismiss progress bar state. The store bumps `dismissReset`
+  // every time the idle timer is (re)armed; we key the fill element off
+  // `tick` so Svelte re-mounts it and the CSS keyframe restarts at 0%.
+  // `dismissPaused` flips on overlay hover and freezes the fill via
+  // `animation-play-state: paused`. `durationMs` is captured at arm time
+  // in the store, so it stays aligned with the timer that will fire.
+  // Wrapped in `$derived` to satisfy Svelte 5's runes warning about
+  // capturing `store` only on initial render.
+  const dismissReset = $derived(store.dismissReset);
+  const dismissPaused = $derived(store.dismissPaused);
+  const dismissTick = $derived($dismissReset.tick);
+  const dismissDurationMs = $derived($dismissReset.durationMs);
+  const dismissPausedNow = $derived($dismissPaused);
+
   // Right-anchored corners slide in/out toward +x, left-anchored toward
   // −x. The transition directives live on the `.tf-feed-inner` container
   // gated by `{#if visible.length > 0}` so the WHOLE stack slides in on
@@ -87,6 +101,23 @@
           <OverlayCard group={g} {showProfile} />
         </div>
       {/each}
+      <!--
+        Single feed-level dismiss progress bar. Lives inside the
+        `{#if visible.length > 0}` gate so it mounts/unmounts with the
+        feed and rides the same group-level `out:fly` on dismissal.
+        `{#key dismissTick}` re-mounts the fill on every idle-timer
+        reset so the CSS keyframe restarts cleanly at 0% width.
+      -->
+      <div class="tf-dismiss-bar" data-testid="dismiss-bar">
+        {#key dismissTick}
+          <div
+            class="tf-dismiss-fill"
+            data-testid="dismiss-fill"
+            style:animation-duration="{dismissDurationMs}ms"
+            style:animation-play-state={dismissPausedNow ? 'paused' : 'running'}
+          ></div>
+        {/key}
+      </div>
     </div>
   {/if}
 </div>
