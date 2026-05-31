@@ -34,6 +34,11 @@ const SPAN_RE = /(\w+)\{([^}]+)\}/g;
 // Capture groups: 1 = field name, 2 = full value, 3 = inside-quotes (when
 // quoted), 4 = unquoted value.
 const FIELD_RE = /(\w+)=("([^"]*)"|([^\s,}]+))/g;
+// Event-level fields appended after the message text (outside any span). Same
+// shape as FIELD_RE but the unquoted alternative is `\S*` so a trailing
+// `endpoint=` with no value still matches and gets stripped from the message
+// instead of leaking as a stray token.
+const EVENT_FIELD_RE = /(\w+)=("([^"]*)"|(\S*))/g;
 const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?)\s+/;
 // Whole-word level token that the relay emits right after the timestamp. The
 // regex is case-sensitive because the relay always emits these upper-case;
@@ -102,18 +107,21 @@ export function parseLogLine(
   // ": " separator that preceded the message text. Collapse both.
   cleanMessage = cleanMessage.replace(/^\s+/, '').replace(/^:\s*/, '').trim();
 
-  const msgParts = cleanMessage.length > 0 ? cleanMessage.split(/\s+/) : [];
-  const messageParts: string[] = [];
-  for (const part of msgParts) {
-    const fieldMatch = part.match(/^(\w+)=(.+)$/);
-    if (fieldMatch) {
-      fields[fieldMatch[1]] = fieldMatch[2].replace(/^"|"$/g, '');
-    } else {
-      messageParts.push(part);
+  // Scan with a regex (not split-on-whitespace) so quoted multi-word values
+  // such as `endpoint="Two Words"` stay intact instead of leaking the trailing
+  // word into the message. Empty values (`endpoint=`) are removed from the
+  // message but not stored, so they cannot overwrite a real endpoint from the
+  // span or from `endpointOverride`.
+  for (const fm of cleanMessage.matchAll(EVENT_FIELD_RE)) {
+    const value = fm[3] !== undefined ? fm[3] : fm[4];
+    if (value !== '') {
+      fields[fm[1]] = value;
     }
   }
-
-  const cleanedMessage = messageParts.join(' ').trim();
+  const cleanedMessage = cleanMessage
+    .replace(EVENT_FIELD_RE, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   const tool = fields.tool;
   const status = fields.status;
   const durationMs = fields.duration_ms !== undefined ? parseInt(fields.duration_ms, 10) : undefined;
@@ -124,7 +132,10 @@ export function parseLogLine(
         cleanedMessage.includes('Tool call failed'))) ||
     (status !== undefined && durationMs !== undefined && !Number.isNaN(durationMs));
 
-  const parsedEndpoint = spans.endpoint?.endpoint;
+  // Fall back to event-level fields when no `endpoint` span is present, so
+  // `info!(endpoint = %name, …)` calls outside a span still render correctly.
+  // Empty values were skipped above, so `??` won't promote `""` over undefined.
+  const parsedEndpoint = spans.endpoint?.endpoint ?? fields.endpoint;
   const endpoint =
     options?.endpointOverride !== undefined && options.endpointOverride !== null
       ? options.endpointOverride
@@ -143,8 +154,8 @@ export function parseLogLine(
     timestamp,
     level: normalizeLevel(extractedLevel ?? level),
     endpoint,
-    transport: spans.endpoint?.transport,
-    serverType: spans.endpoint?.server_type,
+    transport: spans.endpoint?.transport ?? fields.transport,
+    serverType: spans.endpoint?.server_type ?? fields.server_type,
     method: spans.request?.method,
     requestId: spans.request?.id,
     tool,

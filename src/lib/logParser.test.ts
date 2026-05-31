@@ -311,3 +311,82 @@ describe('parseLogLine — in-text level extraction (hotfix)', () => {
     expect(parsed.message).toBe('some error occurred');
   });
 });
+
+describe('parseLogLine — trailing event fields (defense-in-depth)', () => {
+  // Pairs with the watcher span migration: any `info!(endpoint = %name, …)`
+  // emitted outside an `endpoint{…}` span must still surface correctly and
+  // must not leak quoted multi-word values into the message body.
+  it('keeps quoted multi-word trailing event field intact and out of the message', () => {
+    const parsed = parseLogLine(
+      'info',
+      'Relay handling request endpoint="Collins Whatsapp"',
+    );
+    expect(parsed.endpoint).toBe('Collins Whatsapp');
+    expect(parsed.message).toBe('Relay handling request');
+    expect(parsed.message).not.toContain('Words');
+    expect(parsed.message).not.toContain('endpoint=');
+  });
+
+  it('surfaces an unquoted single-word trailing event field as the endpoint', () => {
+    const parsed = parseLogLine('info', 'Relay handling request endpoint=Drive');
+    expect(parsed.endpoint).toBe('Drive');
+    expect(parsed.message).toBe('Relay handling request');
+  });
+
+  it('silently drops an empty trailing event field (endpoint=) without leaking it', () => {
+    const parsed = parseLogLine('info', 'Relay handling request endpoint=');
+    expect(parsed.endpoint).toBeUndefined();
+    expect(parsed.message).toBe('Relay handling request');
+    expect(parsed.message).not.toContain('endpoint=');
+  });
+
+  it('does not let an empty trailing endpoint= override a real span endpoint', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: handled endpoint=',
+    );
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.message).toBe('handled');
+  });
+
+  it('does not let an empty trailing endpoint= override an endpointOverride', () => {
+    const parsed = parseLogLine(
+      'info',
+      'handled endpoint=',
+      { endpointOverride: 'gmail' },
+    );
+    expect(parsed.endpoint).toBe('gmail');
+    expect(parsed.message).toBe('handled');
+  });
+
+  it('parses multiple trailing event fields mixed with the message', () => {
+    const parsed = parseLogLine(
+      'info',
+      'Relay handling request endpoint="Collins Whatsapp" transport=stdio',
+    );
+    expect(parsed.endpoint).toBe('Collins Whatsapp');
+    expect(parsed.transport).toBe('stdio');
+    expect(parsed.message).toBe('Relay handling request');
+  });
+
+  it('surfaces event-level transport and server_type when no endpoint span is present', () => {
+    const parsed = parseLogLine(
+      'info',
+      'Relay handling request endpoint=gmail transport=stdio server_type=github',
+    );
+    expect(parsed.endpoint).toBe('gmail');
+    expect(parsed.transport).toBe('stdio');
+    expect(parsed.serverType).toBe('github');
+    expect(parsed.message).toBe('Relay handling request');
+  });
+
+  it('prefers the endpoint span over a trailing event-level endpoint field', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: handled endpoint="other"',
+    );
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.message).toBe('handled');
+  });
+});
+
