@@ -31,6 +31,27 @@ export interface OAuthCatalogEntry {
 
 export const oauthCatalog: OAuthCatalogEntry[] = [
   {
+    id: 'atlassian',
+    name: 'Atlassian',
+    description: 'Jira, Confluence, and Compass',
+    icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M6.5 11.5L3 17h6l1.5-2.5M13.5 8.5L17 3h-6L3 17M13.5 8.5l3.5 8.5h-6l-1.5-3"/></svg>',
+    category: 'productivity',
+    url: 'https://mcp.atlassian.com/v1/mcp/authv2',
+    defaultScopes: [
+      'offline_access',
+      'read:jira-work',
+      'write:jira-work',
+      'read:page:confluence',
+      'write:page:confluence',
+      'search:confluence',
+      'read:space:confluence',
+    ],
+    supportsDiscovery: true,
+    supportsDcr: true,
+    notes:
+      'Jira, Confluence, and Compass via Atlassian Remote MCP — your org admin must have Rovo + Remote MCP enabled',
+  },
+  {
     id: 'linear',
     name: 'Linear',
     description: 'Issue tracking and project management',

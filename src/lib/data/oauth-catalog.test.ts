@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { oauthCatalog } from './oauth-catalog';
 
 describe('oauthCatalog', () => {
-  it('should have exactly 9 entries', () => {
-    expect(oauthCatalog).toHaveLength(9);
+  it('should have exactly 10 entries', () => {
+    expect(oauthCatalog).toHaveLength(10);
   });
 
   it('should include the Gmail entry with curated scopes', () => {
@@ -110,6 +110,23 @@ describe('oauthCatalog', () => {
     expect(craft!.url).toBe('https://mcp.craft.do/my/mcp');
     expect(craft!.supportsDiscovery).toBe(true);
     expect(craft!.supportsDcr).toBe(true);
+  });
+
+  it('should have the correct Atlassian entry', () => {
+    const atlassian = oauthCatalog.find((entry) => entry.id === 'atlassian');
+    expect(atlassian).toBeDefined();
+    expect(atlassian!.url).toBe('https://mcp.atlassian.com/v1/mcp/authv2');
+    expect(atlassian!.supportsDiscovery).toBe(true);
+    expect(atlassian!.supportsDcr).toBe(true);
+    expect(atlassian!.defaultScopes).toEqual([
+      'offline_access',
+      'read:jira-work',
+      'write:jira-work',
+      'read:page:confluence',
+      'write:page:confluence',
+      'search:confluence',
+      'read:space:confluence',
+    ]);
   });
 });
 
