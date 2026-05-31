@@ -34,26 +34,13 @@
   const visible = $derived(visibleGroups(groups, maxVisible));
   const hidden = $derived(hiddenGroupCount(groups.length, maxVisible));
 
-  // Feed-level dismiss progress bar state. The store bumps `dismissReset`
-  // every time the idle timer is (re)armed; we key the bar's fill on
-  // `tick` so Svelte's `{#key dismissTick}` re-mounts the element and
-  // the CSS keyframe restarts at 0%. `dismissPaused` flips on overlay
-  // hover and freezes the fill via `animation-play-state: paused`.
-  // `durationMs` is captured at arm time in the store, so it stays
-  // aligned with the timer that will fire. Wrapped in `$derived` to
-  // satisfy Svelte 5's runes warning about capturing `store` only on
-  // initial render. The bar lives at a stable DOM location (sibling of
-  // the cards, last child of `.tf-feed-inner`) so group reorders
-  // triggered by `addStarted` don't unmount-remount the bar on
-  // different cards — that mid-animation churn was the root cause of
-  // the stuck-progress regression. CSS in `overlay.css` collapses the
-  // 8px flex gap so the bar still reads as fused to the bottommost
-  // card's bottom edge at all four anchor corners.
-  const dismissReset = $derived(store.dismissReset);
-  const dismissPaused = $derived(store.dismissPaused);
-  const dismissTick = $derived($dismissReset.tick);
-  const dismissDurationMs = $derived($dismissReset.durationMs);
-  const dismissPausedNow = $derived($dismissPaused);
+  // Per-card dismiss bar lives inside `OverlayCard` and reads its
+  // timing state from `group.dismissTick` + `group.inflight`/
+  // `group.success`/`group.error`. The duration captured by the
+  // matching `setTimeout` in `toastStore` is exposed via
+  // `store.getOpts().dismissMs` and piped down so the CSS keyframe
+  // and the JS timeout stay aligned.
+  const dismissDurationMs = $derived(store.getOpts().dismissMs);
 
   // Right-anchored corners slide in/out toward +x, left-anchored toward
   // −x. The transition directives live on the `.tf-feed-inner` container
@@ -105,32 +92,9 @@
       {/if}
       {#each visible as g (g.id)}
         <div class="tf-card-slot" in:fade={{ duration: 120 }}>
-          <OverlayCard group={g} {showProfile} />
+          <OverlayCard group={g} {showProfile} {dismissDurationMs} />
         </div>
       {/each}
-      <!--
-        Feed-level dismiss progress bar. Rendered as a sibling AFTER
-        the cards so its DOM location is stable regardless of how
-        groups reorder (the `addStarted` reshuffle in `toastStore`
-        used to move the bar between cards mid-animation, freezing
-        the CSS keyframe). The `{#key dismissTick}` re-mounts the
-        inner fill on every idle-timer (re)arm so the keyframe
-        restarts at 0%. `overlay.css` gives the bar a negative
-        top margin to absorb the 8px flex gap above it so it sits
-        flush against the bottommost card's bottom edge, and a
-        position-keyed `order` flip handles the `column-reverse`
-        layout used by the top-anchored corners.
-      -->
-      {#key dismissTick}
-        <div class="tf-dismiss-bar" data-testid="dismiss-bar">
-          <div
-            class="tf-dismiss-fill"
-            data-testid="dismiss-fill"
-            style:animation-duration="{dismissDurationMs}ms"
-            style:animation-play-state={dismissPausedNow ? 'paused' : 'running'}
-          ></div>
-        </div>
-      {/key}
     </div>
   {/if}
 </div>

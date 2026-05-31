@@ -1,33 +1,36 @@
 // Typed Svelte writable-store fed by the `tool-call-event` Tauri stream.
 //
-// Group-level model (overlay redesign):
+// Per-group dismissal model:
 //   - groups by `(server_type | server_name | tool)` to dedupe a flurry of
 //     repeats into one stacked card;
 //   - tracks per-group `{ inflight, success, error }` counters AND the
 //     individual `requests` list so the card can render a state breakdown;
-//   - dismissal is FEED-LEVEL, not per-card. A single idle timer ticks
-//     `dismissMs` from the last push/update. Any `addStarted` or `settle`
-//     resets it; when it fires, the whole feed is cleared at once and the
-//     `ToastFeed` plays a single group-level slide-out;
-//   - hover-pause: `pauseDismiss()` cancels the timer (call on overlay
-//     pointer-enter), `resumeDismiss()` re-arms it (call on pointer-leave);
-//   - `clear()` cancels the timer and empties the store; `setOpts({...})`
-//     shallow-merges options.
+//   - dismissal is PER-CARD, not feed-level. Each group owns its own
+//     6-second countdown that arms when the group transitions from
+//     `inflight > 0` to `inflight === 0` (the last in-flight request
+//     settles). When the timer fires, ONLY that one group is removed
+//     and the matching `OverlayCard` slides out individually — other
+//     cards keep their own independent countdowns;
+//   - a new `addStarted` for an existing group whose `inflight` WAS 0
+//     (it was counting down) cancels that group's timer, hides its
+//     bar, and lets the card flip back to the in-flight visual state;
+//   - `clear()` cancels every per-group timer and empties the store;
+//   - `setOpts({...})` shallow-merges options. No hover-pause: the
+//     per-card progress bar runs to completion regardless of cursor
+//     position and the matching `setTimeout` fires at the same offset.
 //
-// Feed-level dismiss progress bar:
-//   - `dismissReset` is a `Readable<{ tick, durationMs }>` that the
-//     `ToastFeed` keys its CSS-driven progress bar off. The tick increments
-//     every time the idle timer is actually (re)armed — i.e. on every
-//     `addStarted` / `settle` that schedules a fresh `setTimeout`, AND on
-//     `resumeDismiss()` re-arming after a hover. `durationMs` captures
-//     `opts.dismissMs` at arm time so the bar's `animation-duration`
-//     stays aligned with the timer that will fire it.
-//   - `dismissPaused` is a `Readable<boolean>` that mirrors the hover-pause
-//     boolean. The bar binds `animation-play-state` to it so the fill
-//     freezes at its current width while the cursor is over the overlay.
-//   - We intentionally avoid `Date.now()` timestamps in this surface:
-//     they race with hover-pause and make the rendered DOM time-dependent.
-//     The tick + paused boolean keeps all timing in CSS keyframes.
+// Per-card progress bar plumbing:
+//   - `ToolCallGroup.dismissAt` is `Date.now() + opts.dismissMs` while
+//     the group is counting down, `null` otherwise. The UI reads
+//     `group.inflight === 0 && (group.success > 0 || group.error > 0)`
+//     to decide whether to render the bar; it doesn't drive the CSS
+//     keyframe from `dismissAt` directly (the keyframe is purely
+//     time-based via `animation-duration`).
+//   - `ToolCallGroup.dismissTick` is a monotonically increasing
+//     counter scoped to the group. It increments on every (re)arm,
+//     and on cancel via a same-group `addStarted` (so the
+//     `{#key group.dismissTick}` in the card re-mounts the bar fresh
+//     on the next arm). It NEVER decreases.
 
 import { writable, type Readable } from 'svelte/store';
 import type {
@@ -62,6 +65,13 @@ export type ToolCallGroup = {
   error: number;
   requests: ToolCallRequest[];
   lastUpdatedAt: number;
+  // When this group started its own countdown (`Date.now() + opts.dismissMs`
+  // at arm time), or `null` when no timer is running for this group.
+  dismissAt: number | null;
+  // Monotonically increasing per-group arm counter. The `OverlayCard`
+  // uses this in `{#key group.dismissTick}` so the CSS keyframe on the
+  // dismiss-fill remounts from 0% on every (re)arm.
+  dismissTick: number;
 };
 
 export type ToastStoreOpts = {
@@ -79,19 +89,9 @@ const DEFAULT_OPTS: ToastStoreOpts = {
 export type ToastStore = Readable<ToolCallGroup[]> & {
   addStarted: (event: StartedEvent) => void;
   settle: (event: CompletedEvent | FailedEvent) => void;
-  pauseDismiss: () => void;
-  resumeDismiss: () => void;
   setOpts: (opts: Partial<ToastStoreOpts>) => void;
   getOpts: () => ToastStoreOpts;
   clear: () => void;
-  // Increments on every (re)arm of the idle timer. The `ToastFeed` keys
-  // its progress-bar fill on `tick` so each reset re-mounts the element
-  // and the CSS keyframe restarts from 0%. `durationMs` carries the
-  // `opts.dismissMs` captured at arm time.
-  dismissReset: Readable<{ tick: number; durationMs: number }>;
-  // True while the hover-pause is engaged. The progress bar binds
-  // `animation-play-state` to this so the fill freezes mid-animation.
-  dismissPaused: Readable<boolean>;
 };
 
 function groupKey(event: StartedEvent): string {
@@ -106,58 +106,36 @@ function groupKey(event: StartedEvent): string {
 export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore {
   let groups: ToolCallGroup[] = [];
   let opts: ToastStoreOpts = { ...DEFAULT_OPTS, ...initial };
-  // Single feed-level idle timer. Arms on every addStarted/settle, fires
-  // after `dismissMs` of inactivity, and clears the whole feed at once.
-  let dismissTimer: ReturnType<typeof setTimeout> | null = null;
-  let paused = false;
-  let dismissTick = 0;
+  // Per-group dismiss timers, keyed by `group.id`. Each group's countdown
+  // is independent: arming one does not affect any other, and firing one
+  // only removes that single group.
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const inner = writable<ToolCallGroup[]>(groups);
-  // Bar-facing state. `dismissReset` is bumped every time the idle timer
-  // is actually rearmed (not on pause-skipped arming) so the bar restarts
-  // its CSS keyframe; `dismissPaused` mirrors `paused` so the bar can
-  // freeze with `animation-play-state: paused`.
-  const dismissResetInner = writable<{ tick: number; durationMs: number }>({
-    tick: 0,
-    durationMs: opts.dismissMs,
-  });
-  const dismissPausedInner = writable<boolean>(false);
 
   function publish() {
     inner.set(groups.slice());
   }
 
-  function clearDismissTimer() {
-    if (dismissTimer !== null) {
-      clearTimeout(dismissTimer);
-      dismissTimer = null;
+  function clearGroupTimer(id: string) {
+    const t = timers.get(id);
+    if (t !== undefined) {
+      clearTimeout(t);
+      timers.delete(id);
     }
   }
 
-  function armDismissTimer() {
-    clearDismissTimer();
-    if (paused) return;
-    if (groups.length === 0) return;
-    dismissTick += 1;
-    dismissResetInner.set({ tick: dismissTick, durationMs: opts.dismissMs });
-    dismissTimer = setTimeout(() => {
-      dismissTimer = null;
-      groups = [];
+  function armGroupTimer(id: string) {
+    // Defensive clear — the arming callers also recompute `dismissAt` and
+    // `dismissTick` on the group, and `setTimeout` here owns the lifetime
+    // of the actual JS timer.
+    clearGroupTimer(id);
+    const delay = opts.dismissMs;
+    const handle = setTimeout(() => {
+      timers.delete(id);
+      groups = groups.filter((g) => g.id !== id);
       publish();
-    }, opts.dismissMs);
-  }
-
-  function pauseDismiss() {
-    if (paused) return;
-    paused = true;
-    dismissPausedInner.set(true);
-    clearDismissTimer();
-  }
-
-  function resumeDismiss() {
-    if (!paused) return;
-    paused = false;
-    dismissPausedInner.set(false);
-    armDismissTimer();
+    }, delay);
+    timers.set(id, handle);
   }
 
   function addStarted(event: StartedEvent) {
@@ -171,6 +149,14 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       jsonrpcId: event.jsonrpc_id ?? null,
     };
     if (existing) {
+      // If this group was counting down (inflight had been 0), a new
+      // started event cancels its timer, hides its bar, and the card
+      // flips back to the in-flight visual state. Bump `dismissTick`
+      // so the next arm's `{#key}` remount starts the bar fresh.
+      const wasCountingDown = existing.inflight === 0;
+      if (wasCountingDown) {
+        clearGroupTimer(id);
+      }
       // Copy-on-write: build a fresh ToolCallGroup so OverlayCard's
       // `group` prop changes identity and Svelte 5 re-runs its derived
       // expressions. Mutating `existing` in place would leave the prop
@@ -183,6 +169,8 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         // Most recent values from the latest started event win.
         annotations: event.annotations ?? existing.annotations,
         profile: event.profile ?? null,
+        dismissAt: wasCountingDown ? null : existing.dismissAt,
+        dismissTick: wasCountingDown ? existing.dismissTick + 1 : existing.dismissTick,
       };
       // Move to end (newest position).
       groups = groups.filter((g) => g.id !== id).concat(updated);
@@ -199,10 +187,11 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         error: 0,
         requests: [req],
         lastUpdatedAt: now,
+        dismissAt: null,
+        dismissTick: 0,
       });
     }
     publish();
-    armDismissTimer();
   }
 
   function settle(event: CompletedEvent | FailedEvent) {
@@ -231,6 +220,9 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
           ? event.jsonrpc_id
           : existingReq.jsonrpcId,
     };
+    const newInflight = Math.max(0, target.inflight - 1);
+    const willArm = newInflight === 0;
+    const now = Date.now();
     // Copy-on-write: replace both the group and the matching request with
     // fresh object references so OverlayCard sees a new `group` prop
     // identity and Svelte 5 re-runs the derived expressions that read
@@ -240,14 +232,18 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       requests: target.requests.map((r) =>
         r.requestId === event.request_id ? settledReq : r,
       ),
-      inflight: Math.max(0, target.inflight - 1),
+      inflight: newInflight,
       success: target.success + (isError ? 0 : 1),
       error: target.error + (isError ? 1 : 0),
-      lastUpdatedAt: Date.now(),
+      lastUpdatedAt: now,
+      dismissAt: willArm ? now + opts.dismissMs : target.dismissAt,
+      dismissTick: willArm ? target.dismissTick + 1 : target.dismissTick,
     };
     groups = groups.map((g) => (g.id === target.id ? updated : g));
+    if (willArm) {
+      armGroupTimer(target.id);
+    }
     publish();
-    armDismissTimer();
   }
 
   function setOpts(next: Partial<ToastStoreOpts>) {
@@ -259,7 +255,9 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
   }
 
   function clear() {
-    clearDismissTimer();
+    for (const id of Array.from(timers.keys())) {
+      clearGroupTimer(id);
+    }
     groups = [];
     publish();
   }
@@ -268,12 +266,8 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     subscribe: inner.subscribe,
     addStarted,
     settle,
-    pauseDismiss,
-    resumeDismiss,
     setOpts,
     getOpts,
     clear,
-    dismissReset: { subscribe: dismissResetInner.subscribe },
-    dismissPaused: { subscribe: dismissPausedInner.subscribe },
   };
 }

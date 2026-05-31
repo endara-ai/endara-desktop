@@ -314,91 +314,78 @@ describe('Overlay redesign — ghost stack stays removed', () => {
   });
 });
 
-// Feed-level dismiss progress bar — stable DOM location regression.
-// A prior iteration moved the bar INSIDE `OverlayCard` and gated it on
-// `showDismissBar={i === visible.length - 1}`. Because `addStarted`
-// reorders groups (the touched group moves to the end of the array),
-// the "bottommost card" identity changes mid-animation, the
-// previously-bottommost `OverlayCard` unmounts the bar, the new
-// bottommost mounts a fresh one, and the CSS keyframe re-mount fights
-// the surrounding card-level remount — the bar visibly freezes
-// mid-progress. The fix puts the bar back at feed level as a sibling
-// of the cards (last DOM child of `.tf-feed-inner`), so the `{#key
-// dismissTick}` re-mount happens at a stable location regardless of
-// which card is currently at the visual bottom. `overlay.css`
-// collapses the 8px flex gap above the bar via `margin-top: -8px` so
-// it still reads as fused to the bottommost card's bottom edge.
-describe('ToastFeed — feed-level dismiss progress bar (stable DOM)', () => {
-  it('ToastFeed.svelte renders the dismiss bar at the feed level (sibling of cards)', async () => {
+// Per-card dismiss progress bar: lives inside `OverlayCard` and is
+// driven by `group.dismissTick` + `group.inflight`/`group.success`/
+// `group.error`. `ToastFeed` no longer owns any bar markup — it just
+// pipes `store.getOpts().dismissMs` down to each card as
+// `dismissDurationMs` so the CSS keyframe matches the per-group
+// `setTimeout` in `toastStore`. No hover-pause: pointer enter/leave
+// only toggles Tauri's ignore-cursor-events flag (see `OverlayApp`).
+describe('ToastFeed — per-card dismiss bar plumbing', () => {
+  it('ToastFeed.svelte pipes `dismissDurationMs` into OverlayCard and renders no feed-level bar', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).toMatch(/class="tf-dismiss-bar"/);
-    expect(src).toMatch(/class="tf-dismiss-fill"/);
-  });
-
-  it('ToastFeed.svelte iterates `{#each visible as g (g.id)}` (no index needed at feed level)', async () => {
-    const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).toMatch(/\{#each visible as g \(g\.id\)\}/);
-  });
-
-  it('ToastFeed.svelte renders the bar AFTER the `{#each}` block as a sibling of `.tf-card-slot`', async () => {
-    const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    const eachEndIdx = src.indexOf('{/each}');
-    const barIdx = src.indexOf('class="tf-dismiss-bar"');
-    expect(eachEndIdx).toBeGreaterThan(-1);
-    expect(barIdx).toBeGreaterThan(eachEndIdx);
-    // And the bar sits inside the `{#if visible.length > 0}` gate so
-    // it disappears with the rest of the stack on feed-level dismiss.
-    const ifIdx = src.indexOf('{#if visible.length > 0}');
-    const ifEndIdx = src.indexOf('{/if}', barIdx);
-    expect(barIdx).toBeGreaterThan(ifIdx);
-    expect(ifEndIdx).toBeGreaterThan(barIdx);
-  });
-
-  it('ToastFeed.svelte does NOT pipe `showDismissBar` / `dismissTick` / `dismissPaused` props into OverlayCard', async () => {
-    const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    const cardIdx = src.indexOf('<OverlayCard');
-    expect(cardIdx).toBeGreaterThan(-1);
-    const cardEndIdx = src.indexOf('/>', cardIdx);
-    const cardBlock = src.slice(cardIdx, cardEndIdx);
-    expect(cardBlock).not.toMatch(/showDismissBar=/);
-    expect(cardBlock).not.toMatch(/dismissTick/);
-    expect(cardBlock).not.toMatch(/dismissDurationMs/);
-    expect(cardBlock).not.toMatch(/dismissPaused/);
-    // Only ONE OverlayCard tag templated (one per loop iteration).
+    // The feed must NOT render its own `.tf-dismiss-bar` / `.tf-dismiss-fill`.
+    expect(src).not.toMatch(/class="tf-dismiss-bar"/);
+    expect(src).not.toMatch(/class="tf-dismiss-fill"/);
+    // No feed-level `{#key dismissTick}` block — keying is per-card.
+    expect(src).not.toMatch(/\{#key dismissTick\}/);
+    // The shorthand `{dismissDurationMs}` is forwarded to each card.
+    expect(src).toMatch(/<OverlayCard[^/]*\{dismissDurationMs\}/);
+    // Exactly one `<OverlayCard` tag (one per loop iteration).
     const overlayCardMatches = src.match(/<OverlayCard\b/g) ?? [];
     expect(overlayCardMatches).toHaveLength(1);
   });
 
-  it('ToastFeed.svelte keys the `.tf-dismiss-fill` element on `dismissTick`', async () => {
+  it('ToastFeed.svelte derives dismissDurationMs from `store.getOpts().dismissMs`', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).toMatch(/\{#key dismissTick\}/);
-    const keyIdx = src.indexOf('{#key dismissTick}');
-    const fillIdx = src.indexOf('class="tf-dismiss-fill"', keyIdx);
-    const keyEndIdx = src.indexOf('{/key}', keyIdx);
-    expect(keyIdx).toBeGreaterThan(-1);
-    expect(fillIdx).toBeGreaterThan(keyIdx);
-    expect(keyEndIdx).toBeGreaterThan(fillIdx);
-  });
-
-  it('ToastFeed.svelte binds animation-duration to `dismissDurationMs` and animation-play-state to `dismissPausedNow`', async () => {
-    const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).toMatch(/style:animation-duration="\{dismissDurationMs\}ms"/);
     expect(src).toMatch(
-      /style:animation-play-state=\{dismissPausedNow \? 'paused' : 'running'\}/,
+      /const dismissDurationMs = \$derived\(store\.getOpts\(\)\.dismissMs\)/,
     );
   });
 
-  it('OverlayCard.svelte no longer carries dismiss-bar props or markup', async () => {
-    const src = (await import('./OverlayCard.svelte?raw')).default as string;
-    expect(src).not.toMatch(/showDismissBar/);
-    expect(src).not.toMatch(/dismissTick/);
-    expect(src).not.toMatch(/dismissDurationMs/);
+  it('ToastFeed.svelte does NOT expose any hover-pause state to OverlayCard', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
     expect(src).not.toMatch(/dismissPaused/);
-    expect(src).not.toMatch(/tf-dismiss-bar/);
-    expect(src).not.toMatch(/tf-dismiss-fill/);
+    expect(src).not.toMatch(/pauseDismiss/);
+    expect(src).not.toMatch(/resumeDismiss/);
+    expect(src).not.toMatch(/animation-play-state/);
   });
 
-  it('overlay.css ships @keyframes tfDismissFill and the .tf-dismiss-bar/.tf-dismiss-fill rules collapsing the flex gap', async () => {
+  it('OverlayCard.svelte renders the per-card bar markup keyed on group.dismissTick', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    expect(src).toMatch(/class="tf-dismiss-bar"/);
+    expect(src).toMatch(/class="tf-dismiss-fill"/);
+    // The bar lives inside the card button (the `{#key barTick}` wraps it).
+    expect(src).toMatch(/\{#key barTick\}/);
+    // Visibility derived from settled-with-results predicate.
+    expect(src).toMatch(/group\.inflight === 0/);
+    // No `animation-play-state` binding anywhere — hover-pause is gone.
+    expect(src).not.toMatch(/animation-play-state/);
+  });
+
+  it('OverlayCard.svelte binds the bar colour to green/red via group.error', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    // The `barColor` derivation picks `--offline` on any error, else `--healthy`.
+    expect(src).toMatch(/group\.error > 0[\s\S]*var\(--offline\)[\s\S]*var\(--healthy\)/);
+    // And the fill element binds it via `style:background={barColor}`.
+    expect(src).toMatch(/style:background=\{barColor\}/);
+  });
+
+  it('OverlayCard.svelte binds animation-duration to `dismissDurationMs`', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    expect(src).toMatch(/style:animation-duration="\{dismissDurationMs\}ms"/);
+  });
+
+  it('OverlayApp.svelte does NOT call pauseDismiss/resumeDismiss on pointer enter/leave', async () => {
+    const src = (await import('./OverlayApp.svelte?raw')).default as string;
+    expect(src).not.toMatch(/pauseDismiss/);
+    expect(src).not.toMatch(/resumeDismiss/);
+    // Pointer enter/leave only toggle the Tauri ignore-cursor-events flag.
+    expect(src).toMatch(/overlayPointerEnter/);
+    expect(src).toMatch(/overlayPointerLeave/);
+  });
+
+  it('overlay.css ships @keyframes tfDismissFill and per-card .tf-dismiss-bar/.tf-dismiss-fill rules', async () => {
     // @ts-expect-error node builtin types not installed
     const { readFileSync } = await import('node:fs');
     // @ts-expect-error node builtin types not installed
@@ -408,33 +395,22 @@ describe('ToastFeed — feed-level dismiss progress bar (stable DOM)', () => {
     expect(src).toMatch(/@keyframes tfDismissFill\s*\{[^}]*from\s*\{\s*width:\s*0%/);
     expect(src).toMatch(/\.tf-dismiss-bar\s*\{/);
     expect(src).toMatch(/\.tf-dismiss-fill\s*\{/);
-    expect(src).toMatch(/\.tf-dismiss-fill\s*\{[^}]*background:\s*var\(--accent\)/);
+    // Per-card bar is absolutely positioned at the bottom of the card.
+    expect(src).toMatch(/\.tf-dismiss-bar\s*\{[^}]*position:\s*absolute/);
+    expect(src).toMatch(/\.tf-dismiss-bar\s*\{[^}]*bottom:\s*0/);
     expect(src).toMatch(
       /\.tf-dismiss-bar\s*\{[^}]*background:\s*var\(--tf-progress-track\)/,
     );
-    // The negative top margin is what visually fuses the bar to the
-    // bottommost card's bottom edge by absorbing the 8px flex gap on
-    // `.tf-feed-inner`.
-    expect(src).toMatch(/\.tf-dismiss-bar\s*\{[^}]*margin-top:\s*-8px/);
-    // No `margin-bottom` on the bar — it sits flush at the feed-inner
-    // edge so any bottom margin would leak as a gap below.
-    expect(src).not.toMatch(/\.tf-dismiss-bar\s*\{[^}]*margin-bottom:/);
-    // Top-anchored corners use `flex-direction: column-reverse` on
-    // `.tf-feed-inner`. The bar is the last DOM child, so without an
-    // `order` override it would land at flex main-end = visual TOP.
-    // The position-keyed rule pulls it to main-start = visual bottom.
-    expect(src).toMatch(
-      /\.tf-feed\[data-position\^='top-'\]\s+\.tf-dismiss-bar\s*\{[^}]*order:\s*-1/,
+    // The fill no longer hard-codes a background — colour comes from
+    // the inline `style:background={barColor}` on the element.
+    expect(src).not.toMatch(/\.tf-dismiss-fill\s*\{[^}]*background:/);
+    // No feed-level remnants of the old centralized bar.
+    expect(src).not.toMatch(/\.tf-dismiss-bar\s*\{[^}]*margin-top:\s*-8px/);
+    expect(src).not.toMatch(
+      /\.tf-feed\[data-position\^='top-'\]\s+\.tf-dismiss-bar\s*\{[^}]*order:/,
     );
-    // Bottom corners rounded to match the card's `border-radius: 12px`
-    // so the bar inherits the card's bottom shape when fused to it.
-    expect(src).toMatch(
-      /\.tf-dismiss-bar\s*\{[^}]*border-bottom-left-radius:\s*12px/,
-    );
-    expect(src).toMatch(
-      /\.tf-dismiss-bar\s*\{[^}]*border-bottom-right-radius:\s*12px/,
-    );
-    // Re-introduced track variable in both themes.
+    // Track variable is still defined in both themes (the card bar
+    // reuses it for its idle track colour).
     expect(src).toMatch(/--tf-progress-track:\s*rgba\(0,\s*0,\s*0,\s*0\.06\)/);
     expect(src).toMatch(/--tf-progress-track:\s*rgba\(255,\s*255,\s*255,\s*0\.08\)/);
   });

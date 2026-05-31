@@ -35,6 +35,8 @@ function makeGroup(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     error: 0,
     requests: [],
     lastUpdatedAt: 0,
+    dismissAt: null,
+    dismissTick: 0,
     ...over,
   };
 }

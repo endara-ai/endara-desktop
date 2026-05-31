@@ -220,196 +220,217 @@ describe('toastStore', () => {
     });
   });
 
-  // Feed-level idle dismissal: a single timer ticks `dismissMs` from the
-  // most recent push/update. When it fires, the whole feed is cleared at
-  // once and the `ToastFeed` component plays a single group-level
-  // slide-out (see `ToastFeed.svelte`). Replaces the previous per-card
-  // dismiss model.
-  describe('feed-level idle dismiss', () => {
-    it('arms on addStarted and clears the entire feed after dismissMs of idle', () => {
-      const store = createToastStore({ dismissMs: 1000 });
+  // Per-card (per-group) dismissal: each group owns its own
+  // `setTimeout`. Arming and firing are scoped to a single group —
+  // other cards' independent countdowns are untouched. No hover-pause
+  // (see `OverlayApp.svelte` for the removed wiring); each card's
+  // CSS keyframe and the JS timer both run to completion at the same
+  // `dismissMs` offset.
+  describe('per-group dismiss timer', () => {
+    it('does NOT auto-dismiss a card while inflight (no timer until inflight reaches 0)', () => {
+      const store = createToastStore({ dismissMs: 500 });
       store.addStarted(started({ request_id: 'req-1' }));
-      // Inflight is fine; the timer is idle-based, not state-based.
-      vi.advanceTimersByTime(999);
+      vi.advanceTimersByTime(5000);
       expect(get(store)).toHaveLength(1);
-      vi.advanceTimersByTime(2);
-      expect(get(store)).toEqual([]);
+      expect((get(store) as ToolCallGroup[])[0].inflight).toBe(1);
     });
 
-    it('settle resets the timer so the idle window starts from the latest update', () => {
+    it('arms the group timer when inflight reaches 0 via settle, then removes that group', () => {
       const store = createToastStore({ dismissMs: 1000 });
       store.addStarted(started({ request_id: 'req-1' }));
-      vi.advanceTimersByTime(800);
       store.settle(completed('req-1', 'ok'));
-      // Without reset the feed would clear in another 200ms. With reset
-      // it survives until 1000ms after `settle`.
       vi.advanceTimersByTime(999);
       expect(get(store)).toHaveLength(1);
       vi.advanceTimersByTime(2);
       expect(get(store)).toEqual([]);
     });
 
-    it('a second addStarted resets the timer (idle clock starts over)', () => {
+    it('settle sets dismissAt to Date.now() + dismissMs and bumps dismissTick', () => {
+      const store = createToastStore({ dismissMs: 1500 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      const before = (get(store) as ToolCallGroup[])[0];
+      expect(before.dismissAt).toBeNull();
+      expect(before.dismissTick).toBe(0);
+      const t0 = Date.now();
+      store.settle(completed('req-1', 'ok'));
+      const after = (get(store) as ToolCallGroup[])[0];
+      expect(after.dismissAt).not.toBeNull();
+      expect(after.dismissAt as number).toBe(t0 + 1500);
+      expect(after.dismissTick).toBe(1);
+    });
+
+    it('a new addStarted on the SAME group mid-countdown cancels that timer; the card stays', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      vi.advanceTimersByTime(500);
+      store.addStarted(started({ request_id: 'req-2' }));
+      // Timer cancelled; the card flipped back to in-flight.
+      vi.advanceTimersByTime(10000);
+      const groups = get(store) as ToolCallGroup[];
+      expect(groups).toHaveLength(1);
+      expect(groups[0].inflight).toBe(1);
+    });
+
+    it('cancellation by same-group addStarted resets dismissAt to null and bumps dismissTick', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      const armed = (get(store) as ToolCallGroup[])[0];
+      const armedTick = armed.dismissTick;
+      expect(armed.dismissAt).not.toBeNull();
+      store.addStarted(started({ request_id: 'req-2' }));
+      const canceled = (get(store) as ToolCallGroup[])[0];
+      expect(canceled.dismissAt).toBeNull();
+      expect(canceled.dismissTick).toBe(armedTick + 1);
+    });
+
+    it('re-settle after a cancel arms a fresh timer that fires from the new arm point', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      vi.advanceTimersByTime(500);
+      store.addStarted(started({ request_id: 'req-2' }));
+      vi.advanceTimersByTime(2000);
+      // Still there: inflight=1 again, no timer.
+      expect(get(store)).toHaveLength(1);
+      store.settle(completed('req-2', 'ok'));
+      vi.advanceTimersByTime(999);
+      expect(get(store)).toHaveLength(1);
+      vi.advanceTimersByTime(2);
+      expect(get(store)).toEqual([]);
+    });
+
+    it('per-group timers are independent: firing one does not remove the others', () => {
       const store = createToastStore({ dismissMs: 1000 });
       store.addStarted(started({ request_id: 'a-1', tool: 'a' }));
-      vi.advanceTimersByTime(900);
       store.addStarted(started({ request_id: 'b-1', tool: 'b' }));
-      vi.advanceTimersByTime(900);
-      expect(get(store)).toHaveLength(2);
-      vi.advanceTimersByTime(200);
+      store.settle(completed('a-1', 'ok'));
+      vi.advanceTimersByTime(500);
+      store.settle(completed('b-1', 'ok'));
+      // a's timer fires at +1000 from a-settle (=500 from now);
+      // b's timer fires at +1000 from b-settle (=1000 from now).
+      vi.advanceTimersByTime(600);
+      const groups = get(store) as ToolCallGroup[];
+      expect(groups).toHaveLength(1);
+      expect(groups[0].tool).toBe('b');
+      vi.advanceTimersByTime(500);
       expect(get(store)).toEqual([]);
     });
 
-    it('clears every group at once (single group-level slide-out, no per-group survival)', () => {
+    it('addStarted on a NEW group does not touch existing per-group timers', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'a-1', tool: 'a' }));
+      store.settle(completed('a-1', 'ok'));
+      vi.advanceTimersByTime(500);
+      store.addStarted(started({ request_id: 'b-1', tool: 'b' }));
+      // a's timer is still on schedule (fires 500ms from now), b is in-flight.
+      vi.advanceTimersByTime(600);
+      const groups = get(store) as ToolCallGroup[];
+      expect(groups).toHaveLength(1);
+      expect(groups[0].tool).toBe('b');
+      expect(groups[0].inflight).toBe(1);
+    });
+
+    it('clear() cancels every per-group timer', () => {
       const store = createToastStore({ dismissMs: 500 });
       store.addStarted(started({ request_id: 'a-1', tool: 'a' }));
       store.addStarted(started({ request_id: 'b-1', tool: 'b' }));
       store.settle(completed('a-1', 'ok'));
       store.settle(completed('b-1', 'ok'));
-      vi.advanceTimersByTime(499);
-      expect(get(store)).toHaveLength(2);
-      vi.advanceTimersByTime(2);
+      store.clear();
       expect(get(store)).toEqual([]);
-    });
-
-    it('pauseDismiss() freezes the idle clock while the cursor is over the overlay', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.addStarted(started({ request_id: 'req-1' }));
-      vi.advanceTimersByTime(500);
-      store.pauseDismiss();
-      // Even way past dismissMs, the feed must still be on screen.
-      vi.advanceTimersByTime(5000);
-      expect(get(store)).toHaveLength(1);
-    });
-
-    it('resumeDismiss() re-arms the timer with a fresh full window', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.addStarted(started({ request_id: 'req-1' }));
-      store.pauseDismiss();
-      vi.advanceTimersByTime(5000);
-      store.resumeDismiss();
-      vi.advanceTimersByTime(999);
-      expect(get(store)).toHaveLength(1);
-      vi.advanceTimersByTime(2);
-      expect(get(store)).toEqual([]);
-    });
-
-    it('resumeDismiss() while empty does not arm a phantom timer', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.pauseDismiss();
-      store.resumeDismiss();
       vi.advanceTimersByTime(5000);
       expect(get(store)).toEqual([]);
     });
 
-    it('addStarted while paused does NOT start the timer (hover-pause sticks)', () => {
+    it('settle does not arm a timer while other in-flight requests remain on the same group', () => {
       const store = createToastStore({ dismissMs: 500 });
-      store.pauseDismiss();
       store.addStarted(started({ request_id: 'req-1' }));
+      store.addStarted(started({ request_id: 'req-2' }));
+      store.settle(completed('req-1', 'ok'));
       vi.advanceTimersByTime(5000);
-      expect(get(store)).toHaveLength(1);
-      store.resumeDismiss();
-      vi.advanceTimersByTime(499);
+      const groups = get(store) as ToolCallGroup[];
+      expect(groups).toHaveLength(1);
+      expect(groups[0].inflight).toBe(1);
+      expect(groups[0].dismissAt).toBeNull();
+    });
+
+    it('error settle arms the timer the same way as a success settle', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(failed('req-1', 'boom'));
+      vi.advanceTimersByTime(999);
       expect(get(store)).toHaveLength(1);
       vi.advanceTimersByTime(2);
       expect(get(store)).toEqual([]);
     });
   });
 
-  // Feed-level dismiss progress bar surface. `dismissReset` is a
-  // `{ tick, durationMs }` store that the `ToastFeed` keys its CSS
-  // animation off — every arm of the idle timer bumps `tick` and
-  // captures the `opts.dismissMs` that will fire it. `dismissPaused`
-  // mirrors the hover-pause boolean so the bar can freeze its fill
-  // via `animation-play-state: paused` (no `Date.now()` in the DOM).
-  describe('feed-level dismiss progress bar state', () => {
-    it('dismissReset starts at tick=0 with the initial dismissMs', () => {
-      const store = createToastStore({ dismissMs: 1234 });
-      expect(get(store.dismissReset)).toEqual({ tick: 0, durationMs: 1234 });
-    });
-
-    it('addStarted bumps dismissReset.tick and captures the current dismissMs', () => {
-      const store = createToastStore({ dismissMs: 2000 });
-      const before = get(store.dismissReset).tick;
-      store.addStarted(started({ request_id: 'req-1' }));
-      const after = get(store.dismissReset);
-      expect(after.tick).toBe(before + 1);
-      expect(after.durationMs).toBe(2000);
-    });
-
-    it('settle bumps dismissReset.tick (second arm of the same idle timer)', () => {
+  // Per-card progress bar surface on `ToolCallGroup`. The card reads
+  // `dismissTick` to key its `{#key}` re-mount of the CSS keyframe;
+  // `dismissAt` is exposed for diagnostics. A new started event on
+  // the same group while it's counting down cancels the timer, bumps
+  // `dismissTick`, and resets `dismissAt` to null.
+  describe('per-group progress bar state', () => {
+    it('new group starts with dismissAt=null and dismissTick=0', () => {
       const store = createToastStore({ dismissMs: 1000 });
       store.addStarted(started({ request_id: 'req-1' }));
-      const afterStart = get(store.dismissReset).tick;
-      store.settle(completed('req-1', 'ok'));
-      expect(get(store.dismissReset).tick).toBe(afterStart + 1);
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissAt).toBeNull();
+      expect(g.dismissTick).toBe(0);
     });
 
-    it('a second addStarted bumps the tick again (idle reset semantics)', () => {
+    it('settle while inflight remains > 0 does NOT arm: dismissAt stays null, dismissTick unchanged', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.addStarted(started({ request_id: 'req-2' }));
+      store.settle(completed('req-1', 'ok'));
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissAt).toBeNull();
+      expect(g.dismissTick).toBe(0);
+    });
+
+    it('settle that drives inflight to 0 arms: dismissAt set, dismissTick bumped', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissAt).not.toBeNull();
+      expect(g.dismissTick).toBe(1);
+    });
+
+    it('setOpts() updates the dismissMs captured on the NEXT arm (dismissAt reflects it)', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.setOpts({ dismissMs: 4500 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      const t0 = Date.now();
+      store.settle(completed('req-1', 'ok'));
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissAt as number).toBe(t0 + 4500);
+    });
+
+    it('re-arm after cancel + re-settle bumps dismissTick again (monotonic per group)', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      expect((get(store) as ToolCallGroup[])[0].dismissTick).toBe(1);
+      store.addStarted(started({ request_id: 'req-2' })); // cancel → +1
+      expect((get(store) as ToolCallGroup[])[0].dismissTick).toBe(2);
+      store.settle(completed('req-2', 'ok')); // re-arm → +1
+      expect((get(store) as ToolCallGroup[])[0].dismissTick).toBe(3);
+    });
+
+    it('different groups maintain independent dismissTick counters', () => {
       const store = createToastStore({ dismissMs: 1000 });
       store.addStarted(started({ request_id: 'a-1', tool: 'a' }));
-      const afterFirst = get(store.dismissReset).tick;
       store.addStarted(started({ request_id: 'b-1', tool: 'b' }));
-      expect(get(store.dismissReset).tick).toBe(afterFirst + 1);
-    });
-
-    it('addStarted while paused does NOT bump the tick (timer is not armed)', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.pauseDismiss();
-      const before = get(store.dismissReset).tick;
-      store.addStarted(started({ request_id: 'req-1' }));
-      expect(get(store.dismissReset).tick).toBe(before);
-    });
-
-    it('resumeDismiss bumps the tick when it re-arms a non-empty feed', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.addStarted(started({ request_id: 'req-1' }));
-      store.pauseDismiss();
-      const beforeResume = get(store.dismissReset).tick;
-      store.resumeDismiss();
-      expect(get(store.dismissReset).tick).toBe(beforeResume + 1);
-    });
-
-    it('resumeDismiss on an empty feed does NOT bump the tick', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.pauseDismiss();
-      const before = get(store.dismissReset).tick;
-      store.resumeDismiss();
-      expect(get(store.dismissReset).tick).toBe(before);
-    });
-
-    it('setOpts() updates the dismissMs captured on the NEXT arm', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.addStarted(started({ request_id: 'req-1' }));
-      expect(get(store.dismissReset).durationMs).toBe(1000);
-      store.setOpts({ dismissMs: 4500 });
-      store.settle(completed('req-1', 'ok'));
-      expect(get(store.dismissReset).durationMs).toBe(4500);
-    });
-
-    it('dismissPaused starts false', () => {
-      const store = createToastStore();
-      expect(get(store.dismissPaused)).toBe(false);
-    });
-
-    it('pauseDismiss flips dismissPaused to true; resumeDismiss flips it back', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.addStarted(started({ request_id: 'req-1' }));
-      store.pauseDismiss();
-      expect(get(store.dismissPaused)).toBe(true);
-      store.resumeDismiss();
-      expect(get(store.dismissPaused)).toBe(false);
-    });
-
-    it('redundant pauseDismiss/resumeDismiss calls are no-ops on the paused boolean', () => {
-      const store = createToastStore({ dismissMs: 1000 });
-      store.addStarted(started({ request_id: 'req-1' }));
-      store.pauseDismiss();
-      store.pauseDismiss();
-      expect(get(store.dismissPaused)).toBe(true);
-      store.resumeDismiss();
-      store.resumeDismiss();
-      expect(get(store.dismissPaused)).toBe(false);
+      store.settle(completed('a-1', 'ok'));
+      const groups = get(store) as ToolCallGroup[];
+      const a = groups.find((g) => g.tool === 'a')!;
+      const b = groups.find((g) => g.tool === 'b')!;
+      expect(a.dismissTick).toBe(1);
+      expect(b.dismissTick).toBe(0);
     });
   });
 });

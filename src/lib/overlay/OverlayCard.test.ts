@@ -33,6 +33,8 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     error: 0,
     requests: [],
     lastUpdatedAt: 0,
+    dismissAt: null,
+    dismissTick: 0,
     ...over,
   };
 }
@@ -208,5 +210,94 @@ describe('OverlayCard — collapsed row 2 when serverType === serverName', () =>
     expect(src).toMatch(
       /\{#if showProfile && group\.profile\}\s*<span class="tf-sep">·<\/span>\s*<span class="tf-profile">/,
     );
+  });
+});
+
+
+// Per-card dismiss progress bar. The card renders the bar only when
+// the group has settled (no in-flight requests AND at least one
+// resolved request). The colour is `--healthy` (green) when no errors
+// landed and `--offline` (red) the moment any error did. The bar's
+// CSS keyframe is re-mounted via `{#key group.dismissTick}` so each
+// (re)arm starts the animation from 0% width.
+describe('OverlayCard — per-card dismiss bar', () => {
+  // Mirrors the `$derived` predicates in OverlayCard.svelte.
+  const showBar = (group: ToolCallGroup) =>
+    group.inflight === 0 && (group.success > 0 || group.error > 0);
+  const barColor = (group: ToolCallGroup) =>
+    group.error > 0 ? 'var(--offline)' : 'var(--healthy)';
+
+  it('does NOT render while in-flight (group.inflight > 0)', () => {
+    const group = g({ inflight: 1, requests: [req()] });
+    expect(showBar(group)).toBe(false);
+  });
+
+  it('does NOT render when no request has resolved yet', () => {
+    const group = g({ inflight: 0, requests: [] });
+    expect(showBar(group)).toBe(false);
+  });
+
+  it('renders once the group has settled (success only)', () => {
+    const group = g({
+      inflight: 0,
+      success: 1,
+      requests: [req({ status: 'success', durationMs: 100 })],
+    });
+    expect(showBar(group)).toBe(true);
+    expect(barColor(group)).toBe('var(--healthy)');
+  });
+
+  it('renders once the group has settled (error only)', () => {
+    const group = g({
+      inflight: 0,
+      error: 1,
+      requests: [req({ status: 'error', durationMs: 50 })],
+    });
+    expect(showBar(group)).toBe(true);
+    expect(barColor(group)).toBe('var(--offline)');
+  });
+
+  it('colours red as soon as ANY error landed on a mixed group', () => {
+    const group = g({
+      inflight: 0,
+      success: 4,
+      error: 1,
+      requests: [
+        req({ requestId: 'a', status: 'success', durationMs: 100 }),
+        req({ requestId: 'b', status: 'error', durationMs: 50 }),
+      ],
+    });
+    expect(showBar(group)).toBe(true);
+    expect(barColor(group)).toBe('var(--offline)');
+  });
+
+  it('hides again when a new request arrives mid-countdown (inflight flips back > 0)', () => {
+    const group = g({
+      inflight: 1,
+      success: 1,
+      requests: [
+        req({ requestId: 'a', status: 'success', durationMs: 100 }),
+        req({ requestId: 'b', status: 'inflight' }),
+      ],
+    });
+    expect(showBar(group)).toBe(false);
+  });
+
+  it('OverlayCard.svelte wires the bar markup, `{#key barTick}`, and the inline style bindings', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    // The bar lives inside the card button, keyed on `barTick`.
+    expect(src).toMatch(/\{#if showBar\}/);
+    expect(src).toMatch(/\{#key barTick\}/);
+    expect(src).toMatch(/class="tf-dismiss-bar"/);
+    expect(src).toMatch(/class="tf-dismiss-fill"/);
+    expect(src).toMatch(/style:background=\{barColor\}/);
+    expect(src).toMatch(/style:animation-duration="\{dismissDurationMs\}ms"/);
+    // No animation-play-state binding — hover-pause is gone.
+    expect(src).not.toMatch(/animation-play-state/);
+  });
+
+  it('OverlayCard.svelte derives barTick from `group.dismissTick`', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    expect(src).toMatch(/const barTick = \$derived\(group\.dismissTick\)/);
   });
 });

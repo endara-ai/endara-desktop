@@ -157,31 +157,23 @@
 .tf-pill[data-tone='danger'] { background: var(--tf-danger-bg); color: var(--tf-danger-fg); }
 .tf-chip { display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 6px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); background: var(--tf-chip-bg); border-radius: 3px; }
 
-/* Feed-level dismiss progress bar. Lives as a sibling of the cards
- * inside `.tf-feed-inner` (a stable DOM location across group
- * reorders) and reads its timer state from `toastStore` via the
- * `ToastFeed` derived stores. `margin-top: -8px` collapses the 8px
- * flex gap above the bar so it sits flush against the bottommost
- * card's bottom edge — fused to the card, not floating below it.
- * Bottom corners rounded to match the card's `border-radius: 12px`;
- * top corners stay square so it abuts the card body cleanly. `width`
- * is animated rather than `transform: scaleX` so the fill grows from
- * the left edge without a transform-origin gotcha. */
+/* Per-card dismiss progress bar. Absolutely positioned inside the
+ * `.tf-card` button so it sits flush against the card's bottom edge.
+ * The card's `overflow: hidden` + `border-radius: 12px` crops the bar
+ * with the same rounded bottom corners as the card itself, so no
+ * explicit border-radius is needed here. Top corners are square (they
+ * abut the card body). `width` is animated rather than `transform:
+ * scaleX` so the fill grows from the left edge without a
+ * transform-origin gotcha. Background colour is set inline on the
+ * fill (green/red) so the bar reflects the group's success/error
+ * state. */
 .tf-dismiss-bar {
-  width: 100%;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   height: 3px;
-  margin-top: -8px;
   background: var(--tf-progress-track);
-  border-bottom-left-radius: 12px;
-  border-bottom-right-radius: 12px;
   overflow: hidden;
 }
-.tf-dismiss-fill { display: block; height: 100%; width: 0%; background: var(--accent); animation-name: tfDismissFill; animation-timing-function: linear; animation-fill-mode: forwards; }
-/* Top-anchored corners use `flex-direction: column-reverse` on
- * `.tf-feed-inner`, so the last DOM child (the bar) would land at the
- * visual TOP of the stack. `order: -1` pulls it back to flex
- * main-start = visual bottom so the bar still attaches to the
- * outermost card's bottom edge. `margin-top: -8px` from the base rule
- * still collapses the gap correctly (physical top edge faces the
- * adjacent card above it). */
-.tf-feed[data-position^='top-'] .tf-dismiss-bar { order: -1; }
+.tf-dismiss-fill { display: block; height: 100%; width: 0%; animation-name: tfDismissFill; animation-timing-function: linear; animation-fill-mode: forwards; }
