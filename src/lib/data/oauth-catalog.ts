@@ -37,15 +37,12 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M6.5 11.5L3 17h6l1.5-2.5M13.5 8.5L17 3h-6L3 17M13.5 8.5l3.5 8.5h-6l-1.5-3"/></svg>',
     category: 'productivity',
     url: 'https://mcp.atlassian.com/v1/mcp/authv2',
-    defaultScopes: [
-      'offline_access',
-      'read:jira-work',
-      'write:jira-work',
-      'read:page:confluence',
-      'write:page:confluence',
-      'search:confluence',
-      'read:space:confluence',
-    ],
+    // Atlassian's MCP server determines product access server-side from the
+    // user's account and silently strips any `scope` field on DCR. Sending
+    // explicit scopes on `/authorize` triggers their post-consent
+    // `invalid_request` / "Incorrect request parameters" error, so we leave
+    // this empty and let the server infer the granted scopes.
+    defaultScopes: [],
     supportsDiscovery: true,
     supportsDcr: true,
     notes:

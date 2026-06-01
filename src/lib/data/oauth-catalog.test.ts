@@ -118,15 +118,7 @@ describe('oauthCatalog', () => {
     expect(atlassian!.url).toBe('https://mcp.atlassian.com/v1/mcp/authv2');
     expect(atlassian!.supportsDiscovery).toBe(true);
     expect(atlassian!.supportsDcr).toBe(true);
-    expect(atlassian!.defaultScopes).toEqual([
-      'offline_access',
-      'read:jira-work',
-      'write:jira-work',
-      'read:page:confluence',
-      'write:page:confluence',
-      'search:confluence',
-      'read:space:confluence',
-    ]);
+    expect(atlassian!.defaultScopes).toEqual([]);
   });
 });
 
