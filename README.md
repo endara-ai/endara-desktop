@@ -20,6 +20,9 @@ Add MCP servers, manage OAuth, browse tools — without ever opening a terminal.
 ## What can you do?
 
 - **Visual endpoint dashboard** — see every MCP server you've added with live health indicators, all in one place.
+- **Live tool-call overlay** — an always-on-top, click-through window in the corner of your screen shows every MCP tool call as it happens, with success / failure / duration and a repeat-call counter so bursts collapse into a single card.
+- **Endpoint profiles** — group endpoints into named profiles served under their own `/mcp/{profile}` URL so different agents can share one relay without sharing one catalog.
+- **Tray health at a glance** — the tray icon flips green / yellow / red and the menu's first line spells out the exact reason (sign-in needed, endpoint unhealthy, relay stopped) without opening the app.
 - **Search tools** across every connected server from a single ⌘K palette.
 - **Watch real-time logs** stream from each endpoint as requests flow through.
 - **Manage OAuth flows** end-to-end inside the app — no copy-pasting tokens between terminals.
@@ -67,6 +70,9 @@ Or [build from source](#development) if you prefer.
 ## Features
 
 - **System tray integration** — Runs in your menu bar / system tray, always available without cluttering your workspace
+- **Tray health indicator** — The tray icon itself flips green / yellow / red to reflect overall relay health, and the menu's first line spells out the exact reason (e.g. `Endara — Sign in required for linear`)
+- **Tool-call overlay window** — Always-on-top, click-through window that surfaces every MCP tool call as a card (in-flight blue → success green / failure red), with stacked count chips when the same tool is called in quick succession. Configurable corner, max-cards, and "hide while Endara is focused" toggles in the **Overlay** section of Settings.
+- **Endpoint profiles** — Group endpoints into named profiles via the **Profiles** tab, each served at `/mcp/{profile}` with its own JS-execution and TOON-output toggles. The tab renders a copyable `claude_desktop_config.json` snippet for each profile.
 - **Relay lifecycle management** — Auto-starts the relay on launch, monitors it, auto-restarts on crash, kills on quit
 - **Endpoint dashboard** — View all configured MCP server endpoints with live health indicators (🟢 healthy / 🟡 degraded / 🔴 down)
 - **Tool browser** — Browse and search all tools exposed by each endpoint
@@ -236,8 +242,8 @@ Releases are automated via GitHub Actions. The desktop release depends on [Endar
 
 ### Release flow
 
-1. **Release the relay first** — tag and push in [endara-ai/endara-relay](https://github.com/endara-ai/endara-relay) (e.g. `v0.1.0`)
-2. **Tag the desktop** — `git tag v0.1.0 && git push origin v0.1.0`
+1. **Release the relay first** — tag and push in [endara-ai/endara-relay](https://github.com/endara-ai/endara-relay) on the same tag the desktop will use (e.g. `v0.1.8`; release candidates use `vX.Y.Z-rc.N`)
+2. **Tag the desktop** — `git tag v0.1.8 && git push origin v0.1.8`
 3. The [release workflow](.github/workflows/release.yml) automatically:
    - Downloads the relay binary for each platform from the relay's GitHub Release
    - Places it at `src-tauri/binaries/endara-relay-{target_triple}`
