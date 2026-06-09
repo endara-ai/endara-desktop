@@ -26,6 +26,13 @@ const STABLE_UPDATE_URL: &str =
     "https://github.com/endara-ai/endara-desktop/releases/latest/download/latest.json";
 const BETA_UPDATE_URL: &str = "https://endara-ai.github.io/endara-desktop/latest.json";
 
+/// Custom process exit code used to signal a post-update restart. The frontend
+/// calls `restart_after_update`, which exits with this code; the `RunEvent::Exit`
+/// handler relaunches the app when it observes this code. This avoids the
+/// macOS race condition between exit and relaunch described in Tauri issues
+/// #11392 and #1692.
+const RESTART_EXIT_CODE: i32 = 42;
+
 /// Timeout for the pre-flight JSON manifest fetch performed before delegating
 /// to `tauri-plugin-updater`. Chosen to be larger than typical CDN latency yet
 /// short enough that a hung endpoint does not block the UI.
@@ -1959,6 +1966,14 @@ async fn download_and_install_update(pending: State<'_, PendingUpdate>) -> Resul
     }
 }
 
+/// Exit the process with [`RESTART_EXIT_CODE`] to signal a post-update restart.
+/// The `RunEvent::Exit` handler relaunches the app when it sees this code,
+/// avoiding the macOS exit/relaunch race condition (Tauri issues #11392, #1692).
+#[tauri::command]
+fn restart_after_update(app: AppHandle) {
+    app.exit(RESTART_EXIT_CODE);
+}
+
 /// Show a system notification that an update is ready to install.
 #[tauri::command]
 async fn show_update_notification(app: AppHandle, version: String) -> Result<(), String> {
@@ -2294,6 +2309,12 @@ pub fn run() {
     let autostarted = is_autostarted();
     let dev = is_dev_mode();
 
+    // Set to `true` by the `RunEvent::ExitRequested` arm when the app is asked to
+    // exit with `RESTART_EXIT_CODE` (via the `restart_after_update` command); the
+    // `RunEvent::Exit` arm consumes it to relaunch after the event loop has stopped,
+    // avoiding the macOS exit/relaunch race (Tauri issues #11392 and #1692).
+    let mut restart_requested = false;
+
     tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -2347,6 +2368,7 @@ pub fn run() {
             set_update_channel,
             check_for_update,
             download_and_install_update,
+            restart_after_update,
             show_update_notification,
             get_autostart,
             set_autostart,
@@ -2638,8 +2660,16 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(move |_app, event| {
-            if let RunEvent::Exit = event {
+        .run(move |app, event| match event {
+            // `RunEvent::Exit` does not carry the exit code, so capture it here:
+            // a programmatic exit with `RESTART_EXIT_CODE` (from `restart_after_update`)
+            // means the upcoming `RunEvent::Exit` should relaunch instead of quit.
+            RunEvent::ExitRequested { code, .. } => {
+                if code == Some(RESTART_EXIT_CODE) {
+                    restart_requested = true;
+                }
+            }
+            RunEvent::Exit => {
                 log::info!("app exit");
                 // Suppress any in-flight supervisor logic so the upcoming SIGTERM
                 // is treated as an intentional shutdown, then abort a pending
@@ -2681,7 +2711,17 @@ pub fn run() {
                     }
                 })
                 .join();
+                // If this exit was a restart request, relaunch now that the event
+                // loop has stopped and the relay sidecar has been torn down. Doing
+                // it here (rather than at request time) is the macOS-safe workaround
+                // for the exit/relaunch race in Tauri issues #11392 and #1692.
+                if restart_requested {
+                    log::info!("restarting app after update");
+                    app.cleanup_before_exit();
+                    tauri::process::restart(&app.env());
+                }
             }
+            _ => {}
         });
 }
 

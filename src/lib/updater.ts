@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { relaunch } from '@tauri-apps/plugin-process';
 import { updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from './stores';
 import { get } from 'svelte/store';
 
@@ -132,7 +131,7 @@ export async function listenForUpdateChecks(): Promise<() => void> {
 }
 
 export async function restartApp() {
-  await relaunch();
+  await invoke('restart_after_update');
 }
 
 export async function getUpdateChannel(): Promise<string> {
