@@ -196,6 +196,15 @@ pub fn ensure_overlay_default(
     write_overlay_section(&mut table, &defaults);
     ensure_meta_block(&mut table);
 
+    // Case 1 only: scaffold a complete `[relay]` table so the generated
+    // `config.toml` is self-documenting and the relay's `RelayConfig` (which
+    // requires `machine_name`) can deserialize it on its first reload. On
+    // upgrade (Case 2) we leave `[relay]` exactly as the existing install had
+    // it; explicit settings (Case 3) already returned above.
+    if !file_existed_before {
+        ensure_relay_machine_name(&mut table);
+    }
+
     if let Some(parent) = cfg_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("create config directory {}: {e}", parent.display()))?;
@@ -240,6 +249,32 @@ fn write_overlay_section(table: &mut toml::Table, settings: &OverlaySettings) {
     let overlay_value =
         toml::Value::try_from(settings).expect("OverlaySettings serializes to a TOML table");
     desktop.insert("overlay".to_string(), overlay_value);
+}
+
+/// Scaffold a `[relay]` table carrying `machine_name` so a freshly-seeded
+/// `config.toml` is complete and the relay can deserialize it on its first
+/// reload. `machine_name` is derived from the system hostname (fallback
+/// `"unknown"`), mirroring the pattern used by the `set_*` config commands in
+/// `lib.rs`. Idempotent: never overwrites an existing `[relay]` table or an
+/// existing `machine_name`.
+fn ensure_relay_machine_name(table: &mut toml::Table) {
+    let relay = table
+        .entry("relay")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let Some(relay) = relay.as_table_mut() else {
+        return;
+    };
+    if relay.contains_key("machine_name") {
+        return;
+    }
+    let machine_name = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    relay.insert(
+        "machine_name".to_string(),
+        toml::Value::String(machine_name),
+    );
 }
 
 /// Stamp a `[meta]` block onto the config if one is not already present.
@@ -849,6 +884,14 @@ mod tests {
             Some(CONFIG_SCHEMA_VERSION)
         );
         assert!(meta.contains_key("installed_at"));
+        // Fresh install scaffolds a complete `[relay]` table with a
+        // non-empty `machine_name` so the relay can deserialize the config.
+        let relay = table["relay"].as_table().unwrap();
+        let machine_name = relay["machine_name"].as_str().unwrap();
+        assert!(
+            !machine_name.is_empty(),
+            "fresh install must seed a non-empty relay.machine_name"
+        );
     }
 
     #[test]
@@ -877,6 +920,15 @@ mod tests {
         assert_eq!(table["desktop"]["update_channel"].as_str(), Some("stable"));
         // Unrelated tables are untouched.
         assert_eq!(table["relay"]["port"].as_integer(), Some(7777));
+        // Upgrade must NOT inject a `machine_name` into the existing
+        // `[relay]` table.
+        assert!(
+            !table["relay"]
+                .as_table()
+                .unwrap()
+                .contains_key("machine_name"),
+            "upgrade must not add relay.machine_name"
+        );
         let meta = table["meta"].as_table().unwrap();
         assert_eq!(
             meta["schema_version"].as_integer(),
@@ -904,6 +956,15 @@ mod tests {
         assert_eq!(overlay["enabled"].as_bool(), Some(false));
         // Unrelated `[relay]` table is untouched.
         assert_eq!(table["relay"]["port"].as_integer(), Some(7777));
+        // Upgrade must NOT inject a `machine_name` into the existing
+        // `[relay]` table.
+        assert!(
+            !table["relay"]
+                .as_table()
+                .unwrap()
+                .contains_key("machine_name"),
+            "upgrade must not add relay.machine_name"
+        );
         let meta = table["meta"].as_table().unwrap();
         assert_eq!(
             meta["schema_version"].as_integer(),
