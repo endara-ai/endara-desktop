@@ -49,7 +49,7 @@ describe('toastStore', () => {
     store.addStarted(started());
     const groups = get(store) as ToolCallGroup[];
     expect(groups).toHaveLength(1);
-    expect(groups[0].id).toBe('github|github|list_issues');
+    expect(groups[0].id).toBe('|github|github|list_issues');
     expect(groups[0].inflight).toBe(1);
     expect(groups[0].success).toBe(0);
     expect(groups[0].error).toBe(0);
@@ -155,8 +155,44 @@ describe('toastStore', () => {
     );
     const groups = get(store) as ToolCallGroup[];
     expect(groups).toHaveLength(1);
-    expect(groups[0].id).toBe('||t');
+    expect(groups[0].id).toBe('|||t');
     expect(groups[0].inflight).toBe(2);
+  });
+
+  it('populates group.client from the started event and folds caller into the group id', () => {
+    const store = createToastStore();
+    store.addStarted(
+      started({
+        request_id: 'req-1',
+        client: { name: 'Claude Desktop', version: '0.7.0' },
+      }),
+    );
+    const groups = get(store) as ToolCallGroup[];
+    expect(groups).toHaveLength(1);
+    expect(groups[0].client).toEqual({ name: 'Claude Desktop', version: '0.7.0' });
+    expect(groups[0].id).toBe('Claude Desktop|github|github|list_issues');
+  });
+
+  it('defaults group.client to null when the started event omits it', () => {
+    const store = createToastStore();
+    store.addStarted(started({ request_id: 'req-1' }));
+    const groups = get(store) as ToolCallGroup[];
+    expect(groups[0].client).toBeNull();
+  });
+
+  it('keeps two callers on the same tool as distinct groups (caller in groupKey)', () => {
+    const store = createToastStore();
+    store.addStarted(
+      started({ request_id: 'a-1', client: { name: 'Claude Desktop' } }),
+    );
+    store.addStarted(
+      started({ request_id: 'b-1', client: { name: 'Cursor' } }),
+    );
+    const groups = get(store) as ToolCallGroup[];
+    expect(groups).toHaveLength(2);
+    const labels = groups.map((g) => g.client?.name);
+    expect(labels).toContain('Claude Desktop');
+    expect(labels).toContain('Cursor');
   });
 
   it('persists jsonrpcId from started event onto the request', () => {

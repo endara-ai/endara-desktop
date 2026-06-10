@@ -45,3 +45,18 @@ export function formatDurationMs(durationMs: number | undefined): string {
   if (durationMs === undefined || Number.isNaN(durationMs)) return '';
   return `${durationMs}ms`;
 }
+
+// Build the parenthetical caller suffix rendered inline after the tool name in
+// `ToolCallRow.svelte`. The logs view shows the FULL caller (name + version
+// when available), unlike the overlay card which uses the simplified
+// `callerLabel` (name only). Returns null when `clientName` is missing/empty
+// so the row renders the tool name alone.
+export function callerSuffix(
+  clientName: string | undefined | null,
+  clientVersion: string | undefined | null,
+): string | null {
+  const name = typeof clientName === 'string' ? clientName.trim() : '';
+  if (name.length === 0) return null;
+  const version = typeof clientVersion === 'string' ? clientVersion.trim() : '';
+  return version.length > 0 ? `${name} ${version}` : name;
+}

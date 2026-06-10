@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ParsedLogLine } from '$lib/logParser';
   import {
+    callerSuffix,
     durationColorClass,
     statusIcon,
     statusIconClass,
@@ -18,6 +19,7 @@
   const icon = $derived(statusIcon(line.status));
   const iconClass = $derived(statusIconClass(line.status));
   const errSuffix = $derived(toolCallErrorSuffix(line));
+  const caller = $derived(callerSuffix(line.clientName, line.clientVersion));
 </script>
 
 <span class="inline-flex items-baseline gap-2 min-w-0 w-full" data-testid="tool-call-row">
@@ -25,6 +27,9 @@
   <span class="font-mono font-semibold text-(--fg1) truncate" data-testid="tool-name">
     {line.tool ?? ''}
   </span>
+  {#if caller}
+    <span class="text-(--fg2) truncate" data-testid="tool-caller">({caller})</span>
+  {/if}
   {#if durationLabel}
     <span
       class="ml-auto tabular-nums {durationClass}"

@@ -28,6 +28,7 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     tool: 'list_issues',
     annotations: undefined,
     profile: null,
+    client: null,
     inflight: 0,
     success: 0,
     error: 0,
@@ -210,6 +211,53 @@ describe('OverlayCard — collapsed row 2 when serverType === serverName', () =>
     expect(src).toMatch(
       /\{#if showProfile && group\.profile\}\s*<span class="tf-sep">·<\/span>\s*<span class="tf-profile">/,
     );
+  });
+});
+
+
+// Row 2's first item: when a caller is known the card renders
+// `"<caller> → <serverType>"`; when no caller is known it falls back to the
+// server-type-only rendering (no arrow). Vitest is in Node, so we (1) assert
+// the `callerLabel(group.client)` predicate the component's `$derived` uses
+// and (2) source-grep `OverlayCard.svelte` to confirm the markup.
+describe('OverlayCard — caller label on row 2', () => {
+  it('renders `<caller> → <serverType>` when client.name is present', async () => {
+    const group = g({
+      client: { name: 'Claude Desktop', version: '0.7.0' },
+      serverType: 'Linear',
+    });
+    const { callerLabel } = await import('./overlay-helpers');
+    expect(callerLabel(group.client)).toBe('Claude Desktop');
+  });
+
+  it('falls back to user_agent product token when name is absent', async () => {
+    const group = g({
+      client: { user_agent: 'claude-ai/0.1.0' },
+      serverType: 'Linear',
+    });
+    const { callerLabel } = await import('./overlay-helpers');
+    expect(callerLabel(group.client)).toBe('claude-ai');
+  });
+
+  it('renders no caller when group.client is null', async () => {
+    const group = g({ client: null, serverType: 'Linear' });
+    const { callerLabel } = await import('./overlay-helpers');
+    expect(callerLabel(group.client)).toBeNull();
+  });
+
+  it('OverlayCard.svelte gates `tf-caller` + `tf-caller-arrow` on `{#if caller}` inside row 2', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    // The caller label and the arrow live inside row 2, behind `{#if caller}`.
+    expect(src).toMatch(
+      /<div class="tf-row-2">\s*\{#if caller\}\s*<span class="tf-caller">\{caller\}<\/span>\s*<span class="tf-caller-arrow"[^>]*>→<\/span>\s*\{\/if\}/,
+    );
+    // `tf-server-type` still renders unconditionally afterwards, so the
+    // caller-absent path keeps the existing server-type-only layout.
+    expect(src).toMatch(
+      /\{\/if\}\s*<span class="tf-server-type">\{group\.serverType \?\? 'unknown'\}<\/span>/,
+    );
+    // `caller` is derived from `callerLabel(group.client)`.
+    expect(src).toMatch(/const caller = \$derived\(callerLabel\(group\.client\)\)/);
   });
 });
 

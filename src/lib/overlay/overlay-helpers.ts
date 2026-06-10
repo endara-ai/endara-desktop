@@ -4,7 +4,7 @@
 // and keep markup-only concerns inside the `.svelte` files.
 
 import type { ToolCallGroup } from './toastStore';
-import type { ToolCallAnnotations } from './types';
+import type { ClientIdentity, ToolCallAnnotations } from './types';
 
 /** Aggregate visual state for a group, derived from its inflight/error/success counts. */
 export type GroupVisualState = 'inflight' | 'success' | 'fail';
@@ -87,3 +87,26 @@ export function isDestructive(g: ToolCallGroup): boolean {
 export type OverlayPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
 export const DEFAULT_OVERLAY_POSITION: OverlayPosition = 'bottom-right';
+
+/**
+ * Resolve a short, friendly caller label for the overlay card.
+ *
+ * Returns `client.name` (trimmed, without version) when present; otherwise a
+ * friendly label derived from `user_agent` (the leading product token, before
+ * the first `/`); otherwise `null` when no caller signal is known. "Missing
+ * key" and explicit `null`/empty values are treated identically.
+ */
+export function callerLabel(client: ClientIdentity | null | undefined): string | null {
+  if (!client) return null;
+  const name = typeof client.name === 'string' ? client.name.trim() : '';
+  if (name.length > 0) return name;
+  const ua = typeof client.user_agent === 'string' ? client.user_agent.trim() : '';
+  if (ua.length > 0) {
+    // Pull the leading product token from a typical `product/version …` UA.
+    // Falls back to the raw UA when no `/` is present.
+    const slash = ua.indexOf('/');
+    const head = slash >= 0 ? ua.slice(0, slash).trim() : ua;
+    if (head.length > 0) return head;
+  }
+  return null;
+}

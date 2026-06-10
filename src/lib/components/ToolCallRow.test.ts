@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { parseLogLine } from '$lib/logParser';
 import type { ParsedLogLine } from '$lib/logParser';
 import {
+  callerSuffix,
   durationColorClass,
   statusIcon,
   statusIconClass,
@@ -135,5 +136,48 @@ describe('ToolCallRow — error suffix (test #17)', () => {
     expect(suffix).not.toBeNull();
     expect(suffix!.length).toBe(ERROR_SUFFIX_MAX_LEN);
     expect(suffix!.endsWith('…')).toBe(true);
+  });
+});
+
+// Caller suffix rendered inline after the tool name in the logs view. The
+// helper joins the parsed `clientName` + `clientVersion` flat fields into the
+// FULL caller label (unlike the overlay card, which uses the simplified
+// name-only `callerLabel`).
+describe('ToolCallRow — caller suffix', () => {
+  it('joins client name and version when both are present', () => {
+    expect(callerSuffix('claude-ai', '0.1.0')).toBe('claude-ai 0.1.0');
+  });
+
+  it('returns the bare name when only client name is present', () => {
+    expect(callerSuffix('Claude Desktop', undefined)).toBe('Claude Desktop');
+    expect(callerSuffix('Claude Desktop', '')).toBe('Claude Desktop');
+    expect(callerSuffix('Claude Desktop', null)).toBe('Claude Desktop');
+  });
+
+  it('returns null when client name is missing or empty', () => {
+    expect(callerSuffix(undefined, undefined)).toBeNull();
+    expect(callerSuffix(undefined, '0.1.0')).toBeNull();
+    expect(callerSuffix(null, '0.1.0')).toBeNull();
+    expect(callerSuffix('', '0.1.0')).toBeNull();
+    expect(callerSuffix('   ', '0.1.0')).toBeNull();
+  });
+
+  it('end-to-end: parseLogLine + callerSuffix surfaces the full label', () => {
+    const line = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: Tool call completed tool=get_file_contents status=ok duration_ms=312 client_name="Claude Desktop" client_version="0.7.0"',
+    );
+    expect(line.clientName).toBe('Claude Desktop');
+    expect(line.clientVersion).toBe('0.7.0');
+    expect(callerSuffix(line.clientName, line.clientVersion)).toBe('Claude Desktop 0.7.0');
+  });
+
+  it('end-to-end: no client_name flat field → no caller suffix', () => {
+    const line = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: Tool call completed tool=foo status=ok duration_ms=42',
+    );
+    expect(line.clientName).toBeUndefined();
+    expect(callerSuffix(line.clientName, line.clientVersion)).toBeNull();
   });
 });

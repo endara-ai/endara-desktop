@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   averageDurationMs,
+  callerLabel,
   canFocusLog,
   groupVisualState,
   hiddenGroupCount,
@@ -30,6 +31,7 @@ function makeGroup(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     tool: 'list_issues',
     annotations: undefined,
     profile: null,
+    client: null,
     inflight: 0,
     success: 0,
     error: 0,
@@ -129,6 +131,44 @@ describe('isDestructive', () => {
     expect(isDestructive(makeGroup({ annotations: { destructive: false } }))).toBe(false);
     expect(isDestructive(makeGroup({ annotations: {} }))).toBe(false);
     expect(isDestructive(makeGroup())).toBe(false);
+  });
+});
+
+describe('callerLabel', () => {
+  it('returns null when client is null/undefined', () => {
+    expect(callerLabel(null)).toBeNull();
+    expect(callerLabel(undefined)).toBeNull();
+  });
+
+  it('returns null when client has no name and no user_agent', () => {
+    expect(callerLabel({})).toBeNull();
+    expect(callerLabel({ origin: 'https://example.com' })).toBeNull();
+  });
+
+  it('prefers client.name (without version) when present', () => {
+    expect(callerLabel({ name: 'Claude Desktop', version: '0.7.0' })).toBe('Claude Desktop');
+  });
+
+  it('trims whitespace from name', () => {
+    expect(callerLabel({ name: '  Cursor  ' })).toBe('Cursor');
+  });
+
+  it('treats empty / whitespace-only name as missing and falls through to user_agent', () => {
+    expect(callerLabel({ name: '', user_agent: 'claude-ai/0.1.0' })).toBe('claude-ai');
+    expect(callerLabel({ name: '   ', user_agent: 'cursor/2.0.0' })).toBe('cursor');
+  });
+
+  it('derives the leading product token from a typical user_agent', () => {
+    expect(callerLabel({ user_agent: 'claude-desktop/0.7.0' })).toBe('claude-desktop');
+    expect(callerLabel({ user_agent: 'claude-ai/0.1.0 (extra)' })).toBe('claude-ai');
+  });
+
+  it('falls back to the full user_agent when no slash is present', () => {
+    expect(callerLabel({ user_agent: 'SomeRawUA' })).toBe('SomeRawUA');
+  });
+
+  it('treats null name and null user_agent as missing', () => {
+    expect(callerLabel({ name: null, user_agent: null })).toBeNull();
   });
 });
 

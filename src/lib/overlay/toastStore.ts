@@ -33,7 +33,9 @@
 //     on the next arm). It NEVER decreases.
 
 import { writable, type Readable } from 'svelte/store';
+import { callerLabel } from './overlay-helpers';
 import type {
+  ClientIdentity,
   CompletedEvent,
   FailedEvent,
   StartedEvent,
@@ -60,6 +62,11 @@ export type ToolCallGroup = {
   tool: string;
   annotations?: ToolCallAnnotations;
   profile: string | null;
+  // Identity of the calling MCP client captured from the latest started
+  // event. `null` when no caller signal is known. The resolved short label
+  // (from `callerLabel`) is folded into the group's `id` so calls from
+  // distinct callers to the same tool render as separate cards.
+  client: ClientIdentity | null;
   inflight: number;
   success: number;
   error: number;
@@ -97,10 +104,13 @@ export type ToastStore = Readable<ToolCallGroup[]> & {
 function groupKey(event: StartedEvent): string {
   // Treat null/undefined as empty string so `(null, null, "tool")` and
   // `(undefined, null, "tool")` collapse into the same key — the only fields
-  // the user can distinguish are the ones the event carries.
+  // the user can distinguish are the ones the event carries. The resolved
+  // caller label is folded in so two different apps calling the same tool
+  // do NOT merge into one ambiguous card.
   const t = event.server_type ?? '';
   const n = event.server_name ?? '';
-  return `${t}|${n}|${event.tool}`;
+  const c = callerLabel(event.client ?? null) ?? '';
+  return `${c}|${t}|${n}|${event.tool}`;
 }
 
 export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore {
@@ -169,6 +179,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         // Most recent values from the latest started event win.
         annotations: event.annotations ?? existing.annotations,
         profile: event.profile ?? null,
+        client: event.client ?? existing.client,
         dismissAt: wasCountingDown ? null : existing.dismissAt,
         dismissTick: wasCountingDown ? existing.dismissTick + 1 : existing.dismissTick,
       };
@@ -182,6 +193,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         tool: event.tool,
         annotations: event.annotations,
         profile: event.profile ?? null,
+        client: event.client ?? null,
         inflight: 1,
         success: 0,
         error: 0,

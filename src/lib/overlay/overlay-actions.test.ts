@@ -23,6 +23,7 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     tool: 'list_issues',
     annotations: undefined,
     profile: null,
+    client: null,
     inflight: 0,
     success: 0,
     error: 0,

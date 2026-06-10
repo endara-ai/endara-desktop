@@ -14,6 +14,17 @@ export type ToolCallAnnotations = {
   idempotent?: boolean;
 };
 
+// Mirrors the relay's `ClientIdentity` struct (see
+// `packages/relay/src/events.rs`). All fields are independently optional —
+// the on-wire JSON omits any `None` field, so the renderer must treat
+// "missing key" and "null" as the same "no value" state.
+export type ClientIdentity = {
+  name?: string | null;
+  version?: string | null;
+  user_agent?: string | null;
+  origin?: string | null;
+};
+
 export type StartedEvent = {
   kind: 'started';
   request_id: string;
@@ -32,6 +43,9 @@ export type StartedEvent = {
   jsonrpc_id?: string | null;
   tool: string;
   annotations?: ToolCallAnnotations;
+  // Identity of the calling MCP client. Omitted by the relay when no caller
+  // signal is known; treat "missing key" and "null" as the same "no caller".
+  client?: ClientIdentity | null;
 };
 
 export type CompletedEvent = {

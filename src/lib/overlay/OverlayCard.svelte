@@ -22,6 +22,7 @@
   import type { ToolCallGroup } from './toastStore';
   import {
     averageDurationMs,
+    callerLabel,
     canFocusLog,
     groupVisualState,
     hintsForAnnotations,
@@ -85,6 +86,9 @@
         : 'var(--offline)',
   );
   const iconSvg = $derived(serverIconFor(group.serverType));
+  // Short caller label rendered on row 2 as `"<caller> → <serverType>"`.
+  // When null we fall back to the unchanged server-type-only rendering.
+  const caller = $derived(callerLabel(group.client));
 
   async function onClick() {
     await cardClick(group);
@@ -153,6 +157,10 @@
       </div>
 
       <div class="tf-row-2">
+        {#if caller}
+          <span class="tf-caller">{caller}</span>
+          <span class="tf-caller-arrow" aria-hidden="true">→</span>
+        {/if}
         <span class="tf-server-type">{group.serverType ?? 'unknown'}</span>
         {#if !sameServer}
           <span class="tf-sep">·</span>

@@ -144,6 +144,8 @@
 .tf-counts { display: flex; gap: 4px; }
 
 .tf-row-2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; line-height: 1.35; padding-left: 38px; color: var(--fg2); }
+.tf-caller { font-weight: 600; color: var(--fg1); }
+.tf-caller-arrow { color: var(--fg3); opacity: 0.7; }
 .tf-server-type { font-weight: 600; color: var(--fg1); }
 .tf-server-name { color: var(--fg2); }
 .tf-sep { color: var(--fg3); opacity: 0.6; }
