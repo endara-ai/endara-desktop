@@ -256,68 +256,70 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Extract the endpoint name from the relay's tracing span.
+/// Extract the endpoint name from the relay's structured JSON log line.
 ///
-/// The relay sidecar is launched with `--log-format text` (see
-/// [`build_sidecar_args`]) so tracing-subscriber emits its "Full" formatter
-/// shape, with span fields inline:
+/// The relay sidecar is launched with `--log-format json` (see
+/// [`build_sidecar_args`]) so tracing-subscriber emits one JSON object per
+/// line. Span context is carried in the top-level `spans` array, where each
+/// element is a span object with a `name` field plus that span's fields:
 ///
 /// ```text
-/// 2026-05-22T15:10:43Z  INFO endpoint{endpoint="github" transport="stdio"}: <target>: <msg>
+/// {"level":"INFO","fields":{…},"spans":[{"endpoint":"github","transport":"stdio","name":"endpoint"}]}
 /// ```
 ///
-/// Returns `Some("github")` when the `endpoint{...}` span is present and
-/// `None` for relay-level events that have no span context (e.g. "Relay
-/// listening on …"). A leading and trailing pair of double-quotes is stripped
-/// from the captured token so callers get the bare endpoint name — the Full
-/// formatter quotes string-typed field values, while older test fixtures and
-/// the compact format used unquoted values, so the parser accepts both.
-///
-/// Lines emitted in the relay's `compact` format (`INFO endpoint: <target>:
-/// <msg> endpoint="NAME" transport="…"`) do NOT match because the span fields
-/// trail the message instead of appearing inline — this is why the sidecar
-/// must run with `--log-format text`.
+/// Returns `Some("github")` when a span with `name == "endpoint"` is present
+/// and carries a non-empty `endpoint` field. Returns `None` for non-JSON lines
+/// (raw adapter stdout/stderr) and for relay-level JSON events that have no
+/// `endpoint` span (e.g. "Starting endara-relay").
 fn parse_endpoint_from_span(line: &str) -> Option<String> {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(r"endpoint\{endpoint=([^ }]+)")
-            .expect("parse_endpoint_from_span regex is valid")
-    });
-    re.captures(line)
-        .and_then(|c| c.get(1))
-        .map(|m| strip_quote_pair(m.as_str()).to_string())
-        .filter(|s| !s.is_empty())
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let spans = value.get("spans")?.as_array()?;
+    for span in spans {
+        if span.get("name").and_then(|n| n.as_str()) == Some("endpoint") {
+            if let Some(endpoint) = span.get("endpoint").and_then(|e| e.as_str()) {
+                if !endpoint.is_empty() {
+                    return Some(endpoint.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
-/// Strip exactly one leading and one trailing `"` from `s` when both are
-/// present. Returns the input unchanged if the value is not double-quoted on
-/// both sides — this avoids over-eager trimming of values that legitimately
-/// begin or end with a quote character.
-fn strip_quote_pair(s: &str) -> &str {
-    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        &s[1..s.len() - 1]
-    } else {
-        s
+/// Map an UPPERCASE tracing level token to its lowercased static string,
+/// returning `None` for any token that is not one of the five known levels.
+fn level_token_to_static(token: &str) -> Option<&'static str> {
+    match token {
+        "ERROR" => Some("error"),
+        "WARN" => Some("warn"),
+        "INFO" => Some("info"),
+        "DEBUG" => Some("debug"),
+        "TRACE" => Some("trace"),
+        _ => None,
     }
 }
 
-/// Extract the tracing level token from a relay compact-format log line.
+/// Extract the log level from a relay log line.
 ///
-/// The relay's stdout/stderr emits lines whose level token (`ERROR` / `WARN` /
-/// `INFO` / `DEBUG` / `TRACE`) appears as a whole word right after the ISO
-/// timestamp prefix, with one or two spaces of padding (compact format
-/// right-aligns the level). The regex anchors near the start of the line so it
-/// will not return `Some` just because the message body happens to contain the
-/// English word "error".
+/// JSON-format lines (the relay sidecar runs with `--log-format json`) carry an
+/// UPPERCASE top-level `level` field, which is mapped to the lowercased static
+/// level string. For raw non-JSON stdout/stderr lines emitted by adapters
+/// without tracing context (e.g. npm warnings), falls back to matching a
+/// whole-word level token right after the leading timestamp prefix. The regex
+/// anchors near the start of the line so it will not return `Some` just because
+/// the message body happens to contain the English word "error".
 ///
 /// Returns the lowercased static level string (`"error"` / `"warn"` / `"info"`
-/// / `"debug"` / `"trace"`) when the token is present, or `None` for raw
-/// stdout/stderr lines emitted by adapters without tracing context. Callers
-/// (the stdout/stderr capture branches) supply their own fallback when the
-/// helper returns `None`.
+/// / `"debug"` / `"trace"`) when a level is found, or `None` for raw
+/// stdout/stderr lines with no recognizable level. Callers (the stdout/stderr
+/// capture branches) supply their own fallback when the helper returns `None`.
 fn parse_level_from_line(line: &str) -> Option<&'static str> {
     use std::sync::OnceLock;
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+        if let Some(level) = value.get("level").and_then(|l| l.as_str()) {
+            return level_token_to_static(level);
+        }
+    }
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         // Match a whole-word level token after the ISO timestamp prefix. The
@@ -328,14 +330,7 @@ fn parse_level_from_line(line: &str) -> Option<&'static str> {
     });
     re.captures(line)
         .and_then(|c| c.get(1))
-        .map(|m| match m.as_str() {
-            "ERROR" => "error",
-            "WARN" => "warn",
-            "INFO" => "info",
-            "DEBUG" => "debug",
-            "TRACE" => "trace",
-            _ => unreachable!("regex alternation restricts matches to the five level tokens"),
-        })
+        .and_then(|m| level_token_to_static(m.as_str()))
 }
 
 /// Return the path to config.toml in the appropriate data directory
@@ -350,12 +345,12 @@ fn config_path() -> Result<std::path::PathBuf, String> {
 /// perform the first-run copy from production). In production we pass `--config`
 /// directly. Extracted as a pure helper so it is trivially unit-testable.
 ///
-/// We also force `--log-format text` (tracing-subscriber's "Full" formatter)
-/// so span fields appear inline as `endpoint{endpoint="NAME" ...}:` instead of
-/// the relay's CLI default `compact` shape, which trails the span fields at
-/// the end of the line. Both [`parse_endpoint_from_span`] and the front-end
-/// `SPAN_RE` parser are written against the inline shape — without this pin
-/// every relay-log event would report a `null` endpoint and the Logs view's
+/// We also force `--log-format json` (tracing-subscriber's `.json()` formatter)
+/// so each line is one JSON object with span fields carried in a structured
+/// `spans` array instead of the relay's CLI default `compact` shape, which
+/// trails the span fields at the end of the line. Both [`parse_endpoint_from_span`]
+/// and the front-end parser read the JSON shape — without this pin every
+/// relay-log event would report a `null` endpoint and the Logs view's
 /// "Endpoint" column would render `---` for every row.
 fn build_sidecar_args<'a>(
     dev: bool,
@@ -371,7 +366,7 @@ fn build_sidecar_args<'a>(
             "--port",
             port,
             "--log-format",
-            "text",
+            "json",
         ]
     } else {
         vec![
@@ -381,7 +376,7 @@ fn build_sidecar_args<'a>(
             "--port",
             port,
             "--log-format",
-            "text",
+            "json",
         ]
     }
 }
@@ -508,9 +503,10 @@ pub struct RelayStatusInfo {
 pub struct RelayLogPayload {
     pub level: String,
     pub message: String,
-    /// Endpoint name extracted from the compact-format tracing span
-    /// (`endpoint{endpoint=NAME ...}`), or `None` for relay-level events with
-    /// no span context. Populated by [`parse_endpoint_from_span`] during
+    /// Endpoint name extracted from the JSON-format tracing span (the object in
+    /// the line's `spans` array whose `name == "endpoint"`, read from its
+    /// `endpoint` field), or `None` for relay-level events with no such span.
+    /// Populated by [`parse_endpoint_from_span`] during
     /// stdout/stderr capture so downstream consumers (live `relay-log` events
     /// and the buffered-logs fetch) see the same authoritative value.
     /// Serialized as JSON `null` (not omitted) when absent so the desktop
@@ -2933,12 +2929,12 @@ mod dev_mode_tests {
 
     #[test]
     fn build_sidecar_args_dev_vs_prod() {
-        // Both branches must end with `--log-format text` so the relay's
-        // tracing layer emits the inline span shape the desktop parsers
-        // (`parse_endpoint_from_span` + the front-end `SPAN_RE`) expect.
-        // Without it the relay's compact-format default would hide span
-        // fields at the end of the line and the Logs view's Endpoint
-        // column would render `---` for every row.
+        // Both branches must end with `--log-format json` so the relay's
+        // tracing layer emits one structured JSON object per line, which the
+        // desktop parsers (`parse_endpoint_from_span` + the front-end JSON
+        // parser) read. Without it the relay's compact-format default would
+        // trail span fields at the end of the line and the Logs view's
+        // Endpoint column would render `---` for every row.
         let dev = build_sidecar_args(true, "/tmp/dev", "/tmp/dev/config.toml", "9500");
         assert_eq!(
             dev,
@@ -2949,7 +2945,7 @@ mod dev_mode_tests {
                 "--port",
                 "9500",
                 "--log-format",
-                "text",
+                "json",
             ]
         );
 
@@ -2963,7 +2959,7 @@ mod dev_mode_tests {
                 "--port",
                 "9400",
                 "--log-format",
-                "text",
+                "json",
             ]
         );
     }
@@ -3614,147 +3610,139 @@ mod toon_output_tests {
 #[cfg(test)]
 mod parse_endpoint_from_span_tests {
     //! Coverage for [`parse_endpoint_from_span`] — the helper that lifts the
-    //! endpoint name out of the relay's Full-format tracing span so each
+    //! endpoint name out of the relay's structured JSON log line so each
     //! `relay-log` Tauri event carries an authoritative `endpoint` field.
     //!
-    //! The sidecar is pinned to `--log-format text` ([`build_sidecar_args`]),
-    //! which produces tracing-subscriber's Full-formatter shape with QUOTED
-    //! span field values: `endpoint{endpoint="github" transport="stdio"}`.
-    //! Fixtures here use that real wire shape so a future regression in the
-    //! quote-stripping path would fail loudly. One backward-compatible
-    //! unquoted fixture is retained, and a negative compact-format fixture
-    //! documents why the sidecar must run with `--log-format text`.
+    //! The sidecar is pinned to `--log-format json` ([`build_sidecar_args`]),
+    //! which produces tracing-subscriber's `.json()` shape: one JSON object per
+    //! line, with span context in a top-level `spans` array. The positive
+    //! fixtures below are REAL lines captured from `endara-relay start
+    //! --log-format json` (verbatim, raw string literals), so a future
+    //! regression in the JSON span lookup would fail loudly. Negative fixtures
+    //! confirm that a flat `fields.endpoint` (no span) and a non-JSON raw line
+    //! both yield `None`.
 
     use super::*;
 
     #[test]
     fn endpoint_present_in_span_returns_some() {
-        // Real Full-format wire shape — tracing-subscriber quotes the field.
-        let line = "2026-05-20T10:00:00.000Z  INFO endpoint{endpoint=\"github\" transport=\"stdio\"}: Tool call completed";
+        // Real captured JSON line (stdio adapter, single endpoint span).
+        let line = r#"{"timestamp":"2026-06-09T15:20:36.427384Z","level":"INFO","fields":{"message":"MCP server reported serverInfo.name","raw_name":"gmail","sanitized":"gmail","effective":"Some(\"gmail\")"},"target":"endara_relay::adapter::stdio","span":{"endpoint":"Gmail","transport":"stdio","name":"endpoint"},"spans":[{"endpoint":"Gmail","transport":"stdio","name":"endpoint"}]}"#;
         assert_eq!(
             parse_endpoint_from_span(line),
-            Some("github".to_string()),
-            "endpoint name should be extracted from endpoint{{endpoint=\"NAME\" ...}} span"
+            Some("Gmail".to_string()),
+            "endpoint name should be extracted from the spans[] entry named \"endpoint\""
         );
     }
 
     #[test]
-    fn no_span_returns_none() {
-        // Relay-level event with no endpoint span.
-        let line = "2026-05-20T10:00:00.000Z  INFO Relay listening on 127.0.0.1:47107";
+    fn endpoint_span_with_extra_fields_still_extracts_endpoint() {
+        // Real captured JSON line (oauth adapter) — the endpoint span carries
+        // additional fields (server_type, transport) which must be ignored.
+        let line = r#"{"timestamp":"2026-06-09T15:20:34.910906Z","level":"INFO","fields":{"message":"OAuth state transition","from":"NeedsLogin","to":"Authenticated","oauth_state":"Authenticated","reason":"tokens applied, inner adapter ready"},"target":"endara_relay::adapter::oauth","span":{"endpoint":"Linear","server_type":"linear","transport":"oauth","name":"endpoint"},"spans":[{"endpoint":"Linear","server_type":"linear","transport":"oauth","name":"endpoint"}]}"#;
+        assert_eq!(parse_endpoint_from_span(line), Some("Linear".to_string()),);
+    }
+
+    #[test]
+    fn relay_level_line_with_no_spans_returns_none() {
+        // Real captured JSON line — a relay-level event has no `spans` array.
+        let line = r#"{"timestamp":"2026-06-09T15:20:34.324891Z","level":"INFO","fields":{"message":"Starting endara-relay","config":"/Users/clement/.endara-dev/config.toml","data_dir":"/Users/clement/.endara-dev"},"target":"endara_relay"}"#;
         assert_eq!(
             parse_endpoint_from_span(line),
             None,
-            "lines without an endpoint{{...}} span must yield None"
+            "JSON lines without a spans[] endpoint entry must yield None"
         );
     }
 
     #[test]
-    fn nested_request_and_endpoint_spans_still_extract_endpoint() {
-        // Full format with multiple span scopes (request{...} endpoint{...}).
-        let line = "2026-05-20T10:00:00.000Z  INFO request{method=\"tools/call\" id=42} endpoint{endpoint=\"gmail\" transport=\"stdio\"}: handled";
-        assert_eq!(parse_endpoint_from_span(line), Some("gmail".to_string()),);
-    }
-
-    #[test]
-    fn quoted_endpoint_name_is_unquoted() {
-        // A name with a hyphen — the surrounding pair of double-quotes from
-        // the Full formatter must be stripped to yield the bare key.
-        let line = "endpoint{endpoint=\"slack-prod\" transport=\"http\"}: connected";
-        assert_eq!(
-            parse_endpoint_from_span(line),
-            Some("slack-prod".to_string()),
-        );
-    }
-
-    #[test]
-    fn unquoted_endpoint_name_still_parses_for_backward_compat() {
-        // Older relay builds (and the spec §5 fixtures predating PR #67's
-        // log-format flag) emitted bare unquoted values. Keep parsing them so
-        // a stale buffered log line from a previous run still surfaces an
-        // endpoint name.
-        let line = "endpoint{endpoint=postgres transport=stdio}: ready";
-        assert_eq!(parse_endpoint_from_span(line), Some("postgres".to_string()),);
+    fn flat_fields_endpoint_without_span_returns_none() {
+        // Real captured JSON line — `fields.endpoint` is present but there is
+        // NO endpoint span, so the helper (which only reads the spans array)
+        // must return None rather than scraping the flat field.
+        let line = r#"{"timestamp":"2026-06-09T15:20:34.344797Z","level":"WARN","fields":{"message":"Using legacy `client_secret` from config.toml; re-provision via POST /api/endpoints/{name}/credentials to remove the secret from TOML","endpoint":"Todoist"},"target":"endara_relay::watcher"}"#;
+        assert_eq!(parse_endpoint_from_span(line), None);
     }
 
     #[test]
     fn empty_endpoint_field_returns_none() {
-        // Defensive: a malformed `endpoint{endpoint=}` should not produce an
-        // empty-string endpoint that the front-end might display as a row.
-        let line = "endpoint{endpoint= transport=\"stdio\"}: weird";
+        // Defensive: an endpoint span whose `endpoint` value is empty must not
+        // produce an empty-string endpoint the front-end could render as a row.
+        let line = r#"{"level":"INFO","fields":{"message":"x"},"spans":[{"endpoint":"","name":"endpoint"}]}"#;
         assert_eq!(parse_endpoint_from_span(line), None);
     }
 
     #[test]
-    fn empty_quoted_endpoint_field_returns_none() {
-        // Same defense for the quoted shape — `endpoint=""` strips to "" and
-        // must be filtered out so the front-end never renders a blank row.
-        let line = "endpoint{endpoint=\"\" transport=\"stdio\"}: weird";
+    fn endpoint_span_missing_endpoint_field_returns_none() {
+        // Defensive: a span named "endpoint" with no `endpoint` key yields None.
+        let line = r#"{"level":"INFO","fields":{"message":"x"},"spans":[{"transport":"stdio","name":"endpoint"}]}"#;
         assert_eq!(parse_endpoint_from_span(line), None);
     }
 
     #[test]
-    fn endpoint_at_end_of_span_closing_brace() {
-        // Quoted endpoint field with no trailing space — terminator is `}`.
-        let line = "endpoint{endpoint=\"postgres\"}: ready";
-        assert_eq!(parse_endpoint_from_span(line), Some("postgres".to_string()),);
-    }
-
-    #[test]
-    fn compact_format_line_returns_none() {
-        // Documents why the sidecar must run with `--log-format text`: the
-        // relay's CLI default (`compact`) emits span fields at the END of
-        // the line, not inline. The parser intentionally returns `None` for
-        // this shape so future maintainers see the dependency.
-        let line = "2026-05-22T15:10:11Z  INFO endpoint: endara_relay::adapter::http: MCP server reported serverInfo.name endpoint=\"github\" transport=\"stdio\"";
+    fn non_json_raw_line_returns_none() {
+        // Raw adapter stdout (e.g. an npm warning) is not JSON — return None.
+        let line = "npm warn deprecated some-package@1.0.0: no longer maintained";
         assert_eq!(
             parse_endpoint_from_span(line),
             None,
-            "compact-format lines have trailing span fields and must not match"
+            "non-JSON raw lines have no spans array and must yield None"
         );
     }
 }
 
 #[cfg(test)]
 mod parse_level_from_line_tests {
-    //! Coverage for [`parse_level_from_line`] — the helper that lifts the
-    //! tracing level token (ERROR/WARN/INFO/DEBUG/TRACE) out of the relay's
-    //! compact-format log line. Drives the level pill in both the top-level
-    //! Logs view and the per-endpoint LogsTab so DEBUG / WARN / TRACE lines
-    //! no longer fall through to the hardcoded `"info"` default.
+    //! Coverage for [`parse_level_from_line`] — the helper that derives the log
+    //! level. For JSON-format lines (the sidecar runs with `--log-format json`)
+    //! it reads the UPPERCASE top-level `level` field and lowercases it; for raw
+    //! non-JSON stdout/stderr lines it falls back to a whole-word level token
+    //! after a timestamp prefix. Drives the level pill in both the top-level
+    //! Logs view and the per-endpoint LogsTab so DEBUG / WARN / TRACE lines no
+    //! longer fall through to the hardcoded `"info"` default.
 
     use super::*;
 
     #[test]
-    fn debug_line_returns_debug() {
-        let line = "2026-05-20T17:54:47.123Z DEBUG endara_relay::registry: Registering adapter";
-        assert_eq!(parse_level_from_line(line), Some("debug"));
-    }
-
-    #[test]
-    fn info_line_with_two_space_padding_returns_info() {
-        // Compact format right-aligns the level — INFO and WARN get an extra
-        // leading space so columns line up with ERROR / DEBUG / TRACE.
-        let line = "2026-05-20T17:54:47.123Z  INFO endpoint{endpoint=foo}: connected";
+    fn json_info_line_returns_info() {
+        // Real captured JSON line.
+        let line = r#"{"timestamp":"2026-06-09T15:20:34.324891Z","level":"INFO","fields":{"message":"Starting endara-relay"},"target":"endara_relay"}"#;
         assert_eq!(parse_level_from_line(line), Some("info"));
     }
 
     #[test]
-    fn warn_line_returns_warn() {
-        let line = "2026-05-20T17:54:47.123Z  WARN endpoint{endpoint=slack}: reconnecting";
+    fn json_warn_line_returns_warn() {
+        // Real captured JSON line.
+        let line = r#"{"timestamp":"2026-06-09T15:20:34.344797Z","level":"WARN","fields":{"message":"Using legacy `client_secret` from config.toml","endpoint":"Todoist"},"target":"endara_relay::watcher"}"#;
         assert_eq!(parse_level_from_line(line), Some("warn"));
     }
 
     #[test]
-    fn error_line_returns_error() {
-        let line = "2026-05-20T17:54:47.123Z ERROR endpoint{endpoint=postgres}: server exited";
+    fn json_debug_line_returns_debug() {
+        // Real captured JSON line.
+        let line = r#"{"timestamp":"2026-06-09T15:20:34.359173Z","level":"DEBUG","fields":{"message":"Registering adapter","endpoint":"Todoist","tool_prefix":"Some(\"todoist\")"},"target":"endara_relay::registry"}"#;
+        assert_eq!(parse_level_from_line(line), Some("debug"));
+    }
+
+    #[test]
+    fn json_error_line_returns_error() {
+        // Same `.json()` shape with an ERROR level.
+        let line = r#"{"timestamp":"2026-06-09T15:20:34.000000Z","level":"ERROR","fields":{"message":"server exited"},"target":"endara_relay::adapter::stdio"}"#;
         assert_eq!(parse_level_from_line(line), Some("error"));
     }
 
     #[test]
-    fn trace_line_returns_trace() {
-        let line = "2026-05-20T17:54:47.123Z TRACE endara_relay::core: very noisy";
+    fn json_trace_line_returns_trace() {
+        // Same `.json()` shape with a TRACE level.
+        let line = r#"{"timestamp":"2026-06-09T15:20:34.000000Z","level":"TRACE","fields":{"message":"very noisy"},"target":"endara_relay::core"}"#;
         assert_eq!(parse_level_from_line(line), Some("trace"));
+    }
+
+    #[test]
+    fn raw_text_line_falls_back_to_token() {
+        // Non-JSON adapter line with a tracing-style level token after the
+        // timestamp prefix still resolves via the regex fallback.
+        let line = "2026-05-20T17:54:47.123Z  WARN endara_relay::registry: reconnecting";
+        assert_eq!(parse_level_from_line(line), Some("warn"));
     }
 
     #[test]
@@ -3765,10 +3753,10 @@ mod parse_level_from_line_tests {
 
     #[test]
     fn message_body_word_error_does_not_match() {
-        // The helper anchors near the start of the line, so a lowercase
-        // English word "error" inside the message body must not be promoted
-        // to a tracing level. The stderr fallback substring matcher still
-        // handles this case, but the helper itself stays strict.
+        // The regex fallback anchors near the start of the line, so a lowercase
+        // English word "error" inside the message body of a non-JSON line must
+        // not be promoted to a tracing level. The stderr fallback substring
+        // matcher still handles this case, but the helper itself stays strict.
         let line = "2026-05-20T17:54:47.123Z something happened: an error occurred mid-body";
         assert_eq!(parse_level_from_line(line), None);
     }

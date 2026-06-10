@@ -187,6 +187,56 @@ describe('parseLogLine — profile field (matrix row #7)', () => {
   });
 });
 
+describe('parseLogLine — client identity fields', () => {
+  it('extracts quoted client_name and client_version from a tool-call line', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: Tool call completed tool=get_file_contents status=ok duration_ms=312 client_name="Claude Desktop" client_version="0.7.0"',
+    );
+    expect(parsed.clientName).toBe('Claude Desktop');
+    expect(parsed.clientVersion).toBe('0.7.0');
+    expect(parsed.tool).toBe('get_file_contents');
+    expect(parsed.message).toBe('Tool call completed');
+  });
+
+  it('extracts an unquoted single-token client_name', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: MCP request client_name=claude-ai client_version=0.1.0',
+    );
+    expect(parsed.clientName).toBe('claude-ai');
+    expect(parsed.clientVersion).toBe('0.1.0');
+  });
+
+  it('leaves clientVersion undefined when only client_name is present', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: MCP request client_name="Cursor"',
+    );
+    expect(parsed.clientName).toBe('Cursor');
+    expect(parsed.clientVersion).toBeUndefined();
+  });
+
+  it('leaves both undefined when neither field is present', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: Initialize handshake complete',
+    );
+    expect(parsed.clientName).toBeUndefined();
+    expect(parsed.clientVersion).toBeUndefined();
+  });
+
+  it('silently drops empty client_name= without leaking it into the message', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: MCP request client_name= client_version=',
+    );
+    expect(parsed.clientName).toBeUndefined();
+    expect(parsed.clientVersion).toBeUndefined();
+    expect(parsed.message).toBe('MCP request');
+  });
+});
+
 describe('parseLogLine — endpointOverride (Slice D.2)', () => {
   it('uses the override when provided, ignoring the parsed span value', () => {
     const parsed = parseLogLine(
@@ -220,6 +270,268 @@ describe('parseLogLine — endpointOverride (Slice D.2)', () => {
   it('supplies the endpoint when the message has no span context', () => {
     const parsed = parseLogLine('info', 'plain message', { endpointOverride: 'slack' });
     expect(parsed.endpoint).toBe('slack');
+  });
+});
+
+describe('parseLogLine — JSON-first structured lines (Wave C)', () => {
+  // The relay sidecar now runs with `--log-format json`, so the live pipeline
+  // hands the frontend one tracing-subscriber JSON object per line. These
+  // fixtures mirror the exact shape locked in the spec's cross-stack contract.
+  it('parses a tool-call JSON line with endpoint span + flat fields', () => {
+    const line = JSON.stringify({
+      timestamp: '2026-05-22T15:10:43.123456Z',
+      level: 'INFO',
+      fields: {
+        message: 'Tool call completed',
+        tool: 'get_file_contents',
+        status: 'ok',
+        duration_ms: 312,
+        client_name: 'Claude Desktop',
+        client_version: '1.4.2',
+      },
+      target: 'endara_relay::adapter::http',
+      spans: [
+        { name: 'endpoint', endpoint: 'github', transport: 'stdio', server_type: 'http' },
+        { name: 'mcp_request', profile: 'default' },
+        { name: 'request', method: 'tools/call', id: '7' },
+      ],
+    });
+    const parsed = parseLogLine('info', line);
+    expect(parsed.level).toBe('info');
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.transport).toBe('stdio');
+    expect(parsed.serverType).toBe('http');
+    expect(parsed.method).toBe('tools/call');
+    expect(parsed.requestId).toBe('7');
+    expect(parsed.profile).toBe('default');
+    expect(parsed.tool).toBe('get_file_contents');
+    expect(parsed.status).toBe('ok');
+    expect(parsed.durationMs).toBe(312);
+    expect(parsed.clientName).toBe('Claude Desktop');
+    expect(parsed.clientVersion).toBe('1.4.2');
+    // Clean message — no `}: ` artifact, no leaked client=/content-/user- tokens.
+    expect(parsed.message).toBe('Tool call completed');
+    expect(parsed.message).not.toContain('}: ');
+    expect(parsed.message).not.toContain('client=');
+    expect(parsed.isToolCall).toBe(true);
+  });
+
+  it('does not leak a nested client={…} blob into the message (regression)', () => {
+    // The text formatter let the `request` span carry a balanced-brace
+    // `client={"name":...}` value that produced a `}: ` artifact and stray
+    // quotes. In JSON the desktop reads only the flat client_name/version.
+    const line = JSON.stringify({
+      timestamp: '2026-05-22T15:10:43.123456Z',
+      level: 'INFO',
+      fields: {
+        message: 'Tool call completed',
+        tool: 'send_email',
+        status: 'ok',
+        duration_ms: 234,
+        client_name: 'Claude Desktop',
+        client_version: '0.7.0',
+      },
+      spans: [
+        { name: 'endpoint', endpoint: 'gmail' },
+        {
+          name: 'request',
+          method: 'tools/call',
+          id: '9',
+          client: '{"name":"Claude Desktop","version":"0.7.0"}',
+        },
+      ],
+    });
+    const parsed = parseLogLine('info', line);
+    expect(parsed.message).toBe('Tool call completed');
+    expect(parsed.message).not.toContain('}: ');
+    expect(parsed.message).not.toContain('{');
+    expect(parsed.message).not.toContain('"');
+    expect(parsed.clientName).toBe('Claude Desktop');
+    expect(parsed.clientVersion).toBe('0.7.0');
+  });
+
+  it('parses a relay-level JSON line with no endpoint span (endpoint undefined)', () => {
+    const line = JSON.stringify({
+      timestamp: '2026-05-22T15:10:43.123456Z',
+      level: 'INFO',
+      fields: { message: 'Relay listening on 127.0.0.1:47107' },
+      target: 'endara_relay',
+      spans: [],
+    });
+    const parsed = parseLogLine('info', line);
+    expect(parsed.endpoint).toBeUndefined();
+    expect(parsed.transport).toBeUndefined();
+    expect(parsed.method).toBeUndefined();
+    expect(parsed.profile).toBeUndefined();
+    expect(parsed.message).toBe('Relay listening on 127.0.0.1:47107');
+    expect(parsed.isToolCall).toBe(false);
+  });
+
+  it('coerces a numeric duration_ms and drops a non-numeric one', () => {
+    const numeric = parseLogLine(
+      'info',
+      JSON.stringify({ level: 'INFO', fields: { message: 'x', status: 'ok', duration_ms: 42 } }),
+    );
+    expect(numeric.durationMs).toBe(42);
+    expect(numeric.isToolCall).toBe(true);
+    const garbage = parseLogLine(
+      'info',
+      JSON.stringify({ level: 'INFO', fields: { message: 'x', duration_ms: 'nope' } }),
+    );
+    expect(garbage.durationMs).toBeUndefined();
+  });
+
+  it('lowercases the JSON level token', () => {
+    const parsed = parseLogLine(
+      'info',
+      JSON.stringify({ level: 'ERROR', fields: { message: 'boom' } }),
+    );
+    expect(parsed.level).toBe('error');
+  });
+
+  it('lets endpointOverride win over the JSON endpoint span', () => {
+    const line = JSON.stringify({
+      level: 'INFO',
+      fields: { message: 'hello' },
+      spans: [{ name: 'endpoint', endpoint: 'github', transport: 'stdio' }],
+    });
+    const parsed = parseLogLine('info', line, { endpointOverride: 'gmail' });
+    expect(parsed.endpoint).toBe('gmail');
+    // Other span fields still come from the JSON.
+    expect(parsed.transport).toBe('stdio');
+  });
+
+  it('keeps the raw JSON string on the parsed line', () => {
+    const line = JSON.stringify({ level: 'INFO', fields: { message: 'hi' } });
+    const parsed = parseLogLine('info', line);
+    expect(parsed.raw).toBe(line);
+  });
+
+  it('falls back to the text parser for the activity-log seed shape', () => {
+    // The per-endpoint `/logs` seed returns the adapters' custom text
+    // activity-log lines (NOT tracing JSON); the text fallback must keep
+    // parsing them exactly as before.
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-22T15:10:43.123Z INFO call_tool tool=get_file_contents status=ok duration=312ms',
+    );
+    expect(parsed.tool).toBe('get_file_contents');
+    expect(parsed.status).toBe('ok');
+    expect(parsed.message).toContain('call_tool');
+    expect(parsed.level).toBe('info');
+  });
+});
+
+describe('parseLogLine — JSON relay-event fields (Wave D2)', () => {
+  // The relay emits `client_name`/`client_version` via Rust Debug (`?`), so in
+  // the JSON output their values arrive wrapped in a literal surrounding
+  // quote-pair. The parser strips exactly one pair so the caller is unquoted.
+  it('strips the Debug quote-pair from client_name / client_version', () => {
+    const parsed = parseLogLine(
+      'info',
+      JSON.stringify({
+        level: 'INFO',
+        fields: {
+          message: 'MCP request',
+          method: 'tools/call',
+          status: 200,
+          elapsed_ms: 42,
+          client_name: '"LiveTest JSON Logs"',
+          client_version: '"2.0.0"',
+        },
+        spans: [{ name: 'request', method: 'tools/call', id: '3' }],
+      }),
+    );
+    expect(parsed.clientName).toBe('LiveTest JSON Logs');
+    expect(parsed.clientVersion).toBe('2.0.0');
+  });
+
+  it('treats an empty Debug string ("") as missing', () => {
+    const parsed = parseLogLine(
+      'info',
+      JSON.stringify({
+        level: 'INFO',
+        fields: { message: 'MCP request', client_name: '""', client_version: '""' },
+      }),
+    );
+    expect(parsed.clientName).toBeUndefined();
+    expect(parsed.clientVersion).toBeUndefined();
+  });
+
+  it('leaves an already-unquoted client_name unchanged', () => {
+    const parsed = parseLogLine(
+      'info',
+      JSON.stringify({ level: 'INFO', fields: { message: 'MCP request', client_name: 'Cursor' } }),
+    );
+    expect(parsed.clientName).toBe('Cursor');
+  });
+
+  it('captures elapsedMs / reqBytes / respBytes / status without setting durationMs', () => {
+    const parsed = parseLogLine(
+      'info',
+      JSON.stringify({
+        level: 'INFO',
+        fields: {
+          message: 'MCP request',
+          method: 'tools/call',
+          status: 200,
+          elapsed_ms: 87,
+          req_bytes: 120,
+          resp_bytes: 4096,
+        },
+        spans: [{ name: 'request', method: 'tools/call', id: '5' }],
+      }),
+    );
+    expect(parsed.elapsedMs).toBe(87);
+    expect(parsed.reqBytes).toBe(120);
+    expect(parsed.respBytes).toBe(4096);
+    expect(parsed.status).toBe('200');
+    expect(parsed.method).toBe('tools/call');
+    // CRITICAL: elapsed_ms must NOT leak into durationMs, otherwise the row
+    // gets misclassified as a tool-call row by isToolCall.
+    expect(parsed.durationMs).toBeUndefined();
+    expect(parsed.isToolCall).toBe(false);
+  });
+
+  it('falls back to fields.method when no request span is present', () => {
+    const parsed = parseLogLine(
+      'info',
+      JSON.stringify({
+        level: 'INFO',
+        fields: { message: 'MCP request', method: 'initialize', status: 200, elapsed_ms: 3 },
+      }),
+    );
+    expect(parsed.method).toBe('initialize');
+  });
+
+  it('maps the Routing tool call prefixed/tool/endpoint flat fields', () => {
+    const parsed = parseLogLine(
+      'info',
+      JSON.stringify({
+        level: 'INFO',
+        fields: {
+          message: 'Routing tool call',
+          tool: 'getAccessibleAtlassianResources',
+          endpoint: 'Atlassian',
+          prefixed: 'atlassian__getAccessibleAtlassianResources',
+        },
+      }),
+    );
+    expect(parsed.prefixed).toBe('atlassian__getAccessibleAtlassianResources');
+    expect(parsed.tool).toBe('getAccessibleAtlassianResources');
+    expect(parsed.endpoint).toBe('Atlassian');
+    expect(parsed.isToolCall).toBe(false);
+  });
+
+  it('leaves the new fields undefined on lines that do not carry them', () => {
+    const parsed = parseLogLine(
+      'info',
+      JSON.stringify({ level: 'INFO', fields: { message: 'Relay listening' } }),
+    );
+    expect(parsed.elapsedMs).toBeUndefined();
+    expect(parsed.reqBytes).toBeUndefined();
+    expect(parsed.respBytes).toBeUndefined();
+    expect(parsed.prefixed).toBeUndefined();
   });
 });
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { LogLevel, ParsedLogLine } from '$lib/logParser';
   import { endpointStripeStyle } from '$lib/endpointColor';
+  import { relayEventDetail } from './relay-event-detail';
   import ToolCallRow from './ToolCallRow.svelte';
 
   // Pure presentation row shared by RelayLogs.svelte and LogsTab.svelte
@@ -74,7 +75,10 @@
     ];
   }
 
-  const segments = $derived(highlightSegments(line.message || line.raw, trimmedQuery));
+  // For bare relay-event rows ("MCP request" / "Routing tool call") surface an
+  // enriched detail string; every other non-tool-call line renders unchanged.
+  const displayText = $derived(relayEventDetail(line) ?? (line.message || line.raw));
+  const segments = $derived(highlightSegments(displayText, trimmedQuery));
   const timestampTitle = $derived(
     nowMs !== undefined
       ? `${line.timestamp.toISOString()} · ${formatRelative(line.timestamp, nowMs)}`

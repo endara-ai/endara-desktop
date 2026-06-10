@@ -21,6 +21,21 @@ export interface ParsedLogLine {
   status?: string;
   durationMs?: number;
   profile?: string;
+  // Relay-event metrics emitted on `MCP request` lines (distinct from
+  // `durationMs`, which only ever comes from a tool-call `duration_ms` field —
+  // keeping `elapsedMs` separate is what stops `MCP request` rows from being
+  // misclassified as tool-call rows by `isToolCall`).
+  elapsedMs?: number;
+  reqBytes?: number;
+  respBytes?: number;
+  // Prefixed tool name (`<endpoint>__<tool>`) emitted on `Routing tool call`
+  // lines by the relay registry.
+  prefixed?: string;
+  // Identity of the calling MCP client, captured from the relay's flat
+  // `client_name=...` / `client_version=...` event fields. Either may be
+  // missing independently — the renderer treats "missing" and `""` the same.
+  clientName?: string;
+  clientVersion?: string;
   message: string;
   raw: string;
   isToolCall: boolean;
@@ -72,11 +87,150 @@ export interface ParseLogLineOptions {
   endpointOverride?: string | null;
 }
 
+// Shape of one line emitted by tracing-subscriber's `.json()` formatter. Every
+// field is optional/defensive because the desktop never controls the exact
+// layout — see the spec's "Cross-stack contract — the relay's tracing JSON
+// line shape".
+interface TracingJsonSpan {
+  name?: string;
+  endpoint?: string;
+  transport?: string;
+  server_type?: string;
+  method?: string;
+  id?: string | number;
+  profile?: string;
+  [key: string]: unknown;
+}
+interface TracingJsonLine {
+  timestamp?: string;
+  level?: string;
+  target?: string;
+  fields?: Record<string, unknown>;
+  spans?: TracingJsonSpan[];
+}
+
+function asString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return typeof value === 'string' ? value : String(value);
+}
+
+// Coerce a JSON value to a finite number, dropping `undefined`/`null`/NaN.
+// The relay emits `elapsed_ms` / `req_bytes` / `resp_bytes` as JSON numbers.
+function asNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const n = Number(value);
+  return Number.isNaN(n) ? undefined : n;
+}
+
+// The relay emits `client_name` / `client_version` via Rust Debug (`?`), so in
+// the JSON output their values arrive wrapped in a literal surrounding
+// quote-pair (e.g. the value string is `"Claude Desktop"`, quotes included).
+// Strip exactly one surrounding quote-pair so the rendered caller is unquoted;
+// an empty Debug string (`""`) collapses to undefined ("missing"). Values with
+// no surrounding quotes (e.g. test fixtures) pass through unchanged.
+function stripDebugQuotes(value: unknown): string | undefined {
+  const s = asString(value);
+  if (s === undefined) return undefined;
+  const out =
+    s.length >= 2 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s;
+  return out.length === 0 ? undefined : out;
+}
+
+// JSON-first branch: map a parsed tracing-subscriber JSON line onto
+// `ParsedLogLine` per the locked field-mapping contract. Span/event fields are
+// no longer a non-regular language we have to scrape, so the brittle text
+// regexes never run for these lines.
+function parseJsonLogLine(
+  json: TracingJsonLine,
+  level: string,
+  raw: string,
+  options?: ParseLogLineOptions,
+): ParsedLogLine {
+  const fields: Record<string, unknown> =
+    json.fields && typeof json.fields === 'object' ? json.fields : {};
+  const spans: TracingJsonSpan[] = Array.isArray(json.spans) ? json.spans : [];
+  const findSpan = (name: string): TracingJsonSpan =>
+    spans.find((s) => s && typeof s === 'object' && s.name === name) ?? {};
+  const endpointSpan = findSpan('endpoint');
+  const requestSpan = findSpan('request');
+  const mcpRequestSpan = findSpan('mcp_request');
+
+  const parsedTimestamp = json.timestamp ? new Date(json.timestamp) : new Date();
+  const timestamp = Number.isNaN(parsedTimestamp.getTime()) ? new Date() : parsedTimestamp;
+
+  // Prefer the `endpoint` span, falling back to a flat `fields.endpoint` so
+  // relay events that carry the endpoint as an event field (e.g. the registry's
+  // `Routing tool call` line) still resolve their endpoint.
+  const parsedEndpoint = asString(endpointSpan.endpoint) ?? asString(fields.endpoint);
+  const endpoint =
+    options?.endpointOverride !== undefined && options.endpointOverride !== null
+      ? options.endpointOverride
+      : parsedEndpoint;
+
+  const tool = asString(fields.tool);
+  const status = asString(fields.status);
+  // `duration_ms` arrives as a JSON number in this format (not a quoted string
+  // as in the Full text format); coerce defensively and drop NaN.
+  const durationNum = fields.duration_ms !== undefined ? Number(fields.duration_ms) : undefined;
+  const durationMs =
+    durationNum !== undefined && !Number.isNaN(durationNum) ? durationNum : undefined;
+
+  const message = asString(fields.message) ?? '';
+
+  const isToolCall =
+    (tool !== undefined &&
+      (message.includes('Tool call completed') || message.includes('Tool call failed'))) ||
+    (status !== undefined && durationMs !== undefined);
+
+  // Per Engineering Spec §7.1 the canonical span is `mcp_request`; fall back to
+  // any span carrying a `profile` field to stay robust to the exact span name.
+  const profile =
+    asString(mcpRequestSpan.profile) ?? asString(spans.find((s) => s && s.profile)?.profile);
+
+  return {
+    timestamp,
+    level: normalizeLevel(json.level ?? level),
+    endpoint,
+    transport: asString(endpointSpan.transport),
+    serverType: asString(endpointSpan.server_type),
+    method: asString(requestSpan.method) ?? asString(fields.method),
+    requestId: asString(requestSpan.id),
+    tool,
+    status,
+    durationMs,
+    // Distinct from `durationMs` on purpose — see the `ParsedLogLine` note.
+    elapsedMs: asNumber(fields.elapsed_ms),
+    reqBytes: asNumber(fields.req_bytes),
+    respBytes: asNumber(fields.resp_bytes),
+    prefixed: asString(fields.prefixed),
+    profile,
+    clientName: stripDebugQuotes(fields.client_name),
+    clientVersion: stripDebugQuotes(fields.client_version),
+    message,
+    raw,
+    isToolCall,
+  };
+}
+
 export function parseLogLine(
   level: string,
   message: string,
   options?: ParseLogLineOptions,
 ): ParsedLogLine {
+  // JSON-first: the relay sidecar runs with `--log-format json`, so the live
+  // pipeline hands us one tracing JSON object per line. Parse it structurally
+  // and map per the contract. Non-JSON input — the per-endpoint `/logs`
+  // activity-log seed and raw adapter stdout — throws here and falls through to
+  // the text-regex parser below, which keeps those lines rendering as today.
+  try {
+    const parsed: unknown = JSON.parse(message);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parseJsonLogLine(parsed as TracingJsonLine, level, message, options);
+    }
+  } catch {
+    // Not JSON — fall through to the text-regex parser.
+  }
+
   const { timestamp, rest: afterTimestamp } = extractTimestamp(message);
 
   // Strip the level token (ERROR/WARN/INFO/DEBUG/TRACE) that the relay emits
@@ -162,6 +316,8 @@ export function parseLogLine(
     status,
     durationMs: durationMs !== undefined && !Number.isNaN(durationMs) ? durationMs : undefined,
     profile,
+    clientName: fields.client_name,
+    clientVersion: fields.client_version,
     message: cleanedMessage,
     raw: message,
     isToolCall,
