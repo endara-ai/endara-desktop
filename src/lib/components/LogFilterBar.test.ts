@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseLogLine } from '$lib/logParser';
 import type { LogLevel, ParsedLogLine } from '$lib/logParser';
+import { closeAllMenus, nextMenuState } from './logfilterbar-helpers';
 
 // Pure mirror of the filter combine logic in `LogFilterBar.svelte` +
 // `RelayLogs.svelte`. Kept in sync with the components so we can unit-test
@@ -262,5 +263,33 @@ describe('applyLogFilters', () => {
       toolCallsOnly: true,
     });
     expect(slackToolCalls).toHaveLength(0);
+  });
+});
+
+// Pure open/close transitions backing the Endpoint/Profile dropdowns. Covers
+// mutual exclusion (only one open at a time) and close-all (outside click /
+// Escape) without rendering the Svelte component.
+describe('nextMenuState / closeAllMenus', () => {
+  it('opens a closed menu when toggled', () => {
+    expect(nextMenuState(closeAllMenus(), 'endpoint')).toEqual({ endpoint: true, profile: false });
+    expect(nextMenuState(closeAllMenus(), 'profile')).toEqual({ endpoint: false, profile: true });
+  });
+
+  it('closes an open menu when toggled again', () => {
+    const open = nextMenuState(closeAllMenus(), 'endpoint');
+    expect(nextMenuState(open, 'endpoint')).toEqual({ endpoint: false, profile: false });
+  });
+
+  it('opening one menu closes the other (mutual exclusion)', () => {
+    const endpointOpen = nextMenuState(closeAllMenus(), 'endpoint');
+    const afterProfile = nextMenuState(endpointOpen, 'profile');
+    expect(afterProfile).toEqual({ endpoint: false, profile: true });
+
+    const backToEndpoint = nextMenuState(afterProfile, 'endpoint');
+    expect(backToEndpoint).toEqual({ endpoint: true, profile: false });
+  });
+
+  it('closeAllMenus collapses both menus', () => {
+    expect(closeAllMenus()).toEqual({ endpoint: false, profile: false });
   });
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { LogLevel, ParsedLogLine } from '$lib/logParser';
+  import { closeAllMenus, nextMenuState, type MenuState } from './logfilterbar-helpers';
 
   // Level toggles render in this fixed display order so the bar layout
   // doesn't reshuffle as logs arrive.
@@ -30,8 +31,23 @@
   // Search input is bound locally and the debounced value is published into
   // the bindable `searchText` prop. 150ms matches the engineering spec.
   let searchInput = $state(searchText);
-  let endpointMenuOpen = $state(false);
-  let profileMenuOpen = $state(false);
+  // At most one dropdown is open at a time (mutual exclusion). Wrapper refs let
+  // the window handler tell an outside click from a click on the toggle/list.
+  let menus = $state<MenuState>(closeAllMenus());
+  let endpointWrapper = $state<HTMLDivElement>();
+  let profileWrapper = $state<HTMLDivElement>();
+
+  function handleWindowPointerDown(event: PointerEvent) {
+    if (!menus.endpoint && !menus.profile) return;
+    const target = event.target as Node | null;
+    const insideEndpoint = !!target && !!endpointWrapper?.contains(target);
+    const insideProfile = !!target && !!profileWrapper?.contains(target);
+    if (!insideEndpoint && !insideProfile) menus = closeAllMenus();
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && (menus.endpoint || menus.profile)) menus = closeAllMenus();
+  }
 
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
@@ -110,6 +126,8 @@
   }
 </script>
 
+<svelte:window onpointerdown={handleWindowPointerDown} onkeydown={handleWindowKeydown} />
+
 <div class="px-3 py-2 border-b border-(--border) bg-(--hd-bg) flex flex-col gap-2">
   <div class="flex items-center gap-2 flex-wrap">
     {#each LEVEL_ORDER as level (level)}
@@ -135,13 +153,13 @@
       ⚡ Tool calls only ({toolCallCount})
     </button>
 
-    <div class="ml-auto relative">
+    <div class="ml-auto relative" bind:this={endpointWrapper}>
       <button
         type="button"
         class="btn-sec btn-sm"
         aria-haspopup="listbox"
-        aria-expanded={endpointMenuOpen}
-        onclick={() => (endpointMenuOpen = !endpointMenuOpen)}
+        aria-expanded={menus.endpoint}
+        onclick={() => (menus = nextMenuState(menus, 'endpoint'))}
       >
         Endpoint: {selectedEndpoints.size === 0
           ? 'All'
@@ -149,7 +167,7 @@
             ? Array.from(selectedEndpoints)[0]
             : `${selectedEndpoints.size} selected`} ▾
       </button>
-      {#if endpointMenuOpen}
+      {#if menus.endpoint}
         <ul
           role="listbox"
           aria-multiselectable="true"
@@ -173,13 +191,13 @@
       {/if}
     </div>
 
-    <div class="relative">
+    <div class="relative" bind:this={profileWrapper}>
       <button
         type="button"
         class="btn-sec btn-sm"
         aria-haspopup="listbox"
-        aria-expanded={profileMenuOpen}
-        onclick={() => (profileMenuOpen = !profileMenuOpen)}
+        aria-expanded={menus.profile}
+        onclick={() => (menus = nextMenuState(menus, 'profile'))}
       >
         Profile: {selectedProfiles.size === 0
           ? 'All'
@@ -187,7 +205,7 @@
             ? Array.from(selectedProfiles)[0]
             : `${selectedProfiles.size} selected`} ▾
       </button>
-      {#if profileMenuOpen}
+      {#if menus.profile}
         <ul
           role="listbox"
           aria-multiselectable="true"
