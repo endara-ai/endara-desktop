@@ -13,6 +13,8 @@ export interface CatalogServer {
   icon: string;
   category: 'developer' | 'search' | 'productivity' | 'data';
   transport: 'stdio' | 'sse' | 'http';
+  /** Remote endpoint URL for `http`/`sse` transports (unused for `stdio`). */
+  url?: string;
   command: string;
   args: string[];
   envVars: CatalogEnvVar[];
