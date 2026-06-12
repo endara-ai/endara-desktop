@@ -24,6 +24,20 @@ export interface ContainerStats {
   net_tx_bytes: number;
 }
 
+/**
+ * Isolation status reported by the relay for stdio endpoints. `configured`
+ * is what `config.toml` asked for; `actual` is what the relay actually did
+ * (it falls back to a direct spawn when no container runtime is usable).
+ * Absent for non-stdio endpoints and for older relays that predate the field.
+ */
+export interface IsolationState {
+  configured: 'container' | 'none';
+  actual: 'container' | 'direct';
+  runtime?: 'docker' | 'podman';
+  container_name?: string;
+  image?: string;
+}
+
 // Lifecycle state from the management API (GET /api/endpoints)
 export type LifecycleState = 'Initializing' | 'Ready' | 'Failed' | 'Stopped';
 
@@ -68,6 +82,11 @@ export interface Endpoint {
    * up by the desktop's 2s endpoint poll loop.
    */
   container_stats?: ContainerStats | null;
+  /**
+   * Present only for stdio endpoints on relays that report it; absent for
+   * non-stdio endpoints and older relays.
+   */
+  isolation_state?: IsolationState | null;
 }
 
 export interface Tool {

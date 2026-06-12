@@ -12,6 +12,7 @@
   import HealthDot from './HealthDot.svelte';
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
+  import IsolationBadge from './IsolationBadge.svelte';
   import AuthTab from './AuthTab.svelte';
   import ProfilesTab from './ProfilesTab.svelte';
   import {
@@ -22,6 +23,7 @@
     formatBytes,
     formatCpuPercent,
   } from './detail-panel-helpers';
+  import { getIsolationDetail } from './endpoint-row-helpers';
 
   let showRestartConfirm = $state(false);
   let showDeleteConfirm = $state(false);
@@ -156,7 +158,14 @@
           <h2 class="dhdr-name truncate">{ep.name}</h2>
           <div class="flex items-center gap-2 mt-0.5">
             <TransportBadge transport={ep.transport} />
+            <IsolationBadge isolation={ep.isolation_state} />
             <span class="text-[11px] text-(--fg3)">{ep.tool_count} tools</span>
+            {#if getIsolationDetail(ep.isolation_state)}
+              <span
+                class="text-[11px] text-(--fg3) truncate"
+                title="Container image and container name"
+              >{getIsolationDetail(ep.isolation_state)}</span>
+            {/if}
             {#if ep.container_stats}
               <span
                 class="text-[11px] text-(--fg3) truncate"
