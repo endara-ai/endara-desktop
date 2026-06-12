@@ -143,6 +143,154 @@ pub struct OverlaySubscriberState {
     pub task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
+// ---- Cursor poller + hit rects ---------------------------------------------
+//
+// Production builds keep the overlay window in `set_ignore_cursor_events(true)`
+// so it never steals input. That makes renderer pointer handlers useless for
+// re-enabling interactivity: a click-through window receives no pointer events
+// from the OS, so `pointerenter` never fires — the classic deadlock. Instead,
+// the renderer reports the visible card rects (`set_overlay_hit_rects`), and a
+// Rust-side poller compares the global cursor position against them, flipping
+// the ignore flag on inside/outside transitions. With no rects there is
+// nothing to hover, so the poller is stopped entirely (zero idle cost).
+
+/// Poll interval for the cursor poller while hit rects are present. Fast
+/// enough that hover feels immediate, slow enough to be negligible CPU.
+const HIT_RECT_POLL_INTERVAL: Duration = Duration::from_millis(90);
+
+/// Axis-aligned card hit rect in overlay-window viewport coordinates
+/// (CSS / logical pixels), as reported by the renderer. Mirrors the
+/// `HitRect` type in `src/lib/overlay/overlay-helpers.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct HitRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl HitRect {
+    /// Half-open containment check (`[x, x+w) × [y, y+h)`).
+    pub fn contains(&self, px: f64, py: f64) -> bool {
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
+    }
+}
+
+/// True when any rect contains the point.
+pub fn any_rect_contains(rects: &[HitRect], x: f64, y: f64) -> bool {
+    rects.iter().any(|r| r.contains(x, y))
+}
+
+/// Convert a global cursor position (physical pixels) into the overlay
+/// window's viewport coordinate space (logical / CSS pixels) so it can be
+/// compared against renderer-reported `getBoundingClientRect` values. The
+/// overlay window is undecorated, so its outer position IS the viewport
+/// origin. A non-positive scale factor (defensive; never expected from
+/// Tauri) falls back to 1.0 rather than dividing by zero.
+pub fn cursor_to_viewport(
+    cursor: PhysicalPosition<f64>,
+    window_pos: PhysicalPosition<i32>,
+    scale_factor: f64,
+) -> (f64, f64) {
+    let scale = if scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    (
+        (cursor.x - window_pos.x as f64) / scale,
+        (cursor.y - window_pos.y as f64) / scale,
+    )
+}
+
+/// Tauri-managed state for the cursor poller. `rects` is shared with the
+/// running poller task (refreshed in place on every renderer report);
+/// `poller` holds the task handle so an empty report can abort it.
+#[derive(Default)]
+pub struct OverlayHitState {
+    rects: Arc<std::sync::Mutex<Vec<HitRect>>>,
+    poller: std::sync::Mutex<Option<JoinHandle<()>>>,
+}
+
+/// Apply a renderer hit-rect report: store the rects, then start or stop the
+/// poller as needed. Empty report → abort the poller and restore
+/// click-through (covers "last card dismissed while hovered"). Non-empty →
+/// ensure exactly one poller task is running.
+///
+/// Debug builds are a no-op: `build_overlay_window` never enables
+/// click-through there (the window stays fully interactive for devtools), so
+/// a poller toggling the ignore flag would only break that.
+pub fn update_hit_rects(app: &AppHandle, state: &OverlayHitState, rects: Vec<HitRect>) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let empty = rects.is_empty();
+    *state.rects.lock().expect("hit-rect mutex poisoned") = rects;
+
+    let mut poller = state.poller.lock().expect("poller mutex poisoned");
+    if empty {
+        if let Some(task) = poller.take() {
+            task.abort();
+        }
+        // The aborted poller may have left the window interactive (cursor
+        // was inside a card when it disappeared) — restore click-through.
+        if let Some(w) = app.get_webview_window(OVERLAY_WINDOW_LABEL) {
+            if let Err(e) = w.set_ignore_cursor_events(true) {
+                log::warn!("[overlay] set_ignore_cursor_events(true) on idle failed: {e}");
+            }
+        }
+        return;
+    }
+
+    let running = poller.as_ref().map(|t| !t.is_finished()).unwrap_or(false);
+    if running {
+        return;
+    }
+    let app = app.clone();
+    let rects = Arc::clone(&state.rects);
+    *poller = Some(tokio::spawn(async move {
+        cursor_poll_loop(app, rects).await;
+    }));
+}
+
+/// Poll the global cursor position against the shared hit rects, toggling
+/// the overlay window's ignore-cursor-events flag on inside/outside
+/// transitions only (the underlying OS call is not free). Exits when the
+/// overlay window is gone (overlay disabled); `update_hit_rects` aborts it
+/// when the rect list empties.
+async fn cursor_poll_loop(app: AppHandle, rects: Arc<std::sync::Mutex<Vec<HitRect>>>) {
+    let mut hovering = false;
+    loop {
+        tokio::time::sleep(HIT_RECT_POLL_INTERVAL).await;
+        let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
+            return;
+        };
+        // `cursor_position()` is global/physical; combine with the window's
+        // position + scale factor to land in the renderer's coordinate
+        // space. Any error (e.g. cursor query unsupported mid-teardown)
+        // counts as "outside" so the window fails safe into click-through.
+        let inside = match (window.cursor_position(), window.outer_position()) {
+            (Ok(cursor), Ok(pos)) => {
+                let scale = window.scale_factor().unwrap_or(1.0);
+                let (x, y) = cursor_to_viewport(cursor, pos, scale);
+                let rects = rects.lock().expect("hit-rect mutex poisoned");
+                any_rect_contains(&rects, x, y)
+            }
+            _ => false,
+        };
+        if inside != hovering {
+            if let Err(e) = window.set_ignore_cursor_events(!inside) {
+                log::warn!(
+                    "[overlay] set_ignore_cursor_events({}) failed: {e}",
+                    !inside
+                );
+                continue;
+            }
+            hovering = inside;
+        }
+    }
+}
+
 /// Resolve the overlay's effective settings on startup, writing migration
 /// state to disk on first run / first upgrade.
 ///
@@ -481,13 +629,13 @@ pub fn build_overlay_window(
         }
     }
 
-    // Click-through by default — Phase 4 flips this per-card via the
-    // `overlayPointerEnter`/`overlayPointerLeave` actions wired in
-    // `OverlayApp.svelte`. In debug builds we skip the global
-    // click-through so the overlay window is fully interactive and
-    // right-click → Inspect works from devtools; production builds keep
-    // the original click-through behaviour so the overlay never steals
-    // input from the user's other windows.
+    // Click-through by default — the Rust-side cursor poller (see
+    // `update_hit_rects` / `cursor_poll_loop` above) flips this while the
+    // global cursor is over a renderer-reported card rect. In debug builds
+    // we skip the global click-through so the overlay window is fully
+    // interactive and right-click → Inspect works from devtools; production
+    // builds keep the original click-through behaviour so the overlay never
+    // steals input from the user's other windows.
     if cfg!(debug_assertions) {
         log::info!(
             target: "overlay",
@@ -801,6 +949,92 @@ mod tests {
         );
         // Width at scale 2.0 = 800 px. Right edge of secondary = 1920+2560 = 4480.
         assert_eq!(pos.x, 4480 - 800);
+    }
+
+    #[test]
+    fn hit_rect_contains_inside_and_edges() {
+        let r = HitRect {
+            x: 20.0,
+            y: 100.0,
+            width: 340.0,
+            height: 72.0,
+        };
+        assert!(r.contains(20.0, 100.0), "top-left corner is inclusive");
+        assert!(r.contains(189.0, 135.0), "interior point");
+        assert!(!r.contains(360.0, 135.0), "right edge is exclusive");
+        assert!(!r.contains(189.0, 172.0), "bottom edge is exclusive");
+        assert!(!r.contains(19.9, 135.0), "left of rect");
+        assert!(!r.contains(189.0, 99.9), "above rect");
+    }
+
+    #[test]
+    fn any_rect_contains_checks_all_rects() {
+        let rects = [
+            HitRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+            HitRect {
+                x: 100.0,
+                y: 100.0,
+                width: 10.0,
+                height: 10.0,
+            },
+        ];
+        assert!(any_rect_contains(&rects, 5.0, 5.0));
+        assert!(any_rect_contains(&rects, 105.0, 105.0));
+        assert!(!any_rect_contains(&rects, 50.0, 50.0));
+        assert!(!any_rect_contains(&[], 5.0, 5.0));
+    }
+
+    #[test]
+    fn cursor_to_viewport_translates_and_scales() {
+        // Window at physical (1520, 216) on a 2x display; cursor at
+        // physical (1560, 416) → viewport logical (20, 100).
+        let (x, y) = cursor_to_viewport(
+            PhysicalPosition::new(1560.0f64, 416.0f64),
+            PhysicalPosition::new(1520i32, 216i32),
+            2.0,
+        );
+        assert_eq!(x, 20.0);
+        assert_eq!(y, 100.0);
+    }
+
+    #[test]
+    fn cursor_to_viewport_identity_at_scale_one() {
+        let (x, y) = cursor_to_viewport(
+            PhysicalPosition::new(100.0f64, 50.0f64),
+            PhysicalPosition::new(0i32, 0i32),
+            1.0,
+        );
+        assert_eq!((x, y), (100.0, 50.0));
+    }
+
+    #[test]
+    fn cursor_to_viewport_guards_non_positive_scale() {
+        let (x, y) = cursor_to_viewport(
+            PhysicalPosition::new(10.0f64, 10.0f64),
+            PhysicalPosition::new(0i32, 0i32),
+            0.0,
+        );
+        assert_eq!((x, y), (10.0, 10.0));
+    }
+
+    #[test]
+    fn hit_rect_deserializes_from_renderer_shape() {
+        let json = r#"{"x":20.5,"y":100.0,"width":340.0,"height":72.25}"#;
+        let r: HitRect = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            r,
+            HitRect {
+                x: 20.5,
+                y: 100.0,
+                width: 340.0,
+                height: 72.25,
+            }
+        );
     }
 
     #[test]

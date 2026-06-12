@@ -376,13 +376,27 @@ describe('ToastFeed — per-card dismiss bar plumbing', () => {
     expect(src).toMatch(/style:animation-duration="\{dismissDurationMs\}ms"/);
   });
 
-  it('OverlayApp.svelte does NOT call pauseDismiss/resumeDismiss on pointer enter/leave', async () => {
+  it('OverlayApp.svelte has no hover-pause or renderer pointer handlers', async () => {
     const src = (await import('./OverlayApp.svelte?raw')).default as string;
     expect(src).not.toMatch(/pauseDismiss/);
     expect(src).not.toMatch(/resumeDismiss/);
-    // Pointer enter/leave only toggle the Tauri ignore-cursor-events flag.
-    expect(src).toMatch(/overlayPointerEnter/);
-    expect(src).toMatch(/overlayPointerLeave/);
+    // Click-through toggling is owned by the Rust cursor poller, not
+    // renderer pointer handlers (which never fire on a click-through
+    // window — the production deadlock).
+    expect(src).not.toMatch(/onpointerenter/);
+    expect(src).not.toMatch(/onpointerleave/);
+    expect(src).not.toMatch(/overlayPointer/);
+  });
+
+  it('ToastFeed.svelte reports hit rects to the Rust cursor poller', async () => {
+    const src = (await import('./ToastFeed.svelte?raw')).default as string;
+    // Measures the card slots and pipes them through the action helper.
+    expect(src).toMatch(/reportOverlayHitRects/);
+    expect(src).toMatch(/collectHitRects/);
+    expect(src).toMatch(/\.tf-card-slot/);
+    // Re-measures when the visible cards change and on window resize.
+    expect(src).toMatch(/\$effect/);
+    expect(src).toMatch(/addEventListener\('resize'/);
   });
 
   it('overlay.css ships @keyframes tfDismissFill and per-card .tf-dismiss-bar/.tf-dismiss-fill rules', async () => {

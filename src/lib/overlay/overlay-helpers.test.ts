@@ -3,6 +3,7 @@ import {
   averageDurationMs,
   callerLabel,
   canFocusLog,
+  collectHitRects,
   groupVisualState,
   hiddenGroupCount,
   hintsForAnnotations,
@@ -185,5 +186,42 @@ describe('visibleGroups / hiddenGroupCount', () => {
   it('returns a copy', () => {
     const out = visibleGroups(all, 100);
     expect(out).not.toBe(all);
+  });
+});
+
+describe('collectHitRects', () => {
+  const el = (x: number, y: number, width: number, height: number) => ({
+    getBoundingClientRect: () => ({ x, y, width, height }),
+  });
+
+  it('maps elements to their bounding rects in order', () => {
+    expect(collectHitRects([el(20, 100, 340, 72), el(20, 184, 340, 64)])).toEqual([
+      { x: 20, y: 100, width: 340, height: 72 },
+      { x: 20, y: 184, width: 340, height: 64 },
+    ]);
+  });
+
+  it('returns an empty list for no elements (poller idles)', () => {
+    expect(collectHitRects([])).toEqual([]);
+  });
+
+  it('skips null/undefined entries', () => {
+    expect(collectHitRects([null, el(1, 2, 3, 4), undefined])).toEqual([
+      { x: 1, y: 2, width: 3, height: 4 },
+    ]);
+  });
+
+  it('drops zero-area rects (collapsed / not yet laid out elements)', () => {
+    expect(
+      collectHitRects([el(0, 0, 0, 50), el(0, 0, 50, 0), el(5, 5, 10, 10)]),
+    ).toEqual([{ x: 5, y: 5, width: 10, height: 10 }]);
+  });
+
+  it('accepts any iterable (e.g. a NodeList-like)', () => {
+    function* gen() {
+      yield el(0, 0, 1, 1);
+      yield el(2, 2, 1, 1);
+    }
+    expect(collectHitRects(gen())).toHaveLength(2);
   });
 });

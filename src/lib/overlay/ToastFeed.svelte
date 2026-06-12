@@ -7,10 +7,12 @@
 <script lang="ts">
   import type { ToastStore } from './toastStore';
   import {
+    collectHitRects,
     hiddenGroupCount,
     visibleGroups,
     type OverlayPosition,
   } from './overlay-helpers';
+  import { reportOverlayHitRects } from './overlay-actions';
   import OverlayCard from './OverlayCard.svelte';
   import { fade, fly } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
@@ -72,6 +74,54 @@
   const outDuration = reducedMotion ? 100 : 200;
   const inX = $derived(reducedMotion ? 0 : slideDir * slidePx);
   const outX = $derived(reducedMotion ? 0 : slideDir * slidePx);
+
+  // ---- Hit-rect reporting --------------------------------------------------
+  // Measure the visible card slots and report their bounding rects to the
+  // Rust-side cursor poller (`set_overlay_hit_rects`). The poller — not a
+  // renderer pointer handler — toggles the window's ignore-cursor-events
+  // flag, because a click-through window receives no pointer events from
+  // the OS. An empty report idles the poller and restores click-through.
+  //
+  // Two-step measurement: a rAF captures the new layout as soon as it
+  // exists, and a delayed re-measure after the slide/fade transitions have
+  // settled (`inDuration` + margin) captures the final card positions (the
+  // feed-level fly translates the whole stack horizontally while animating).
+  let feedEl: HTMLElement | null = $state(null);
+  let measureRaf = 0;
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function measureAndReport() {
+    const slots = feedEl ? feedEl.querySelectorAll('.tf-card-slot') : [];
+    void reportOverlayHitRects(collectHitRects(slots));
+  }
+
+  function scheduleHitRectMeasure() {
+    if (typeof window === 'undefined') return;
+    cancelAnimationFrame(measureRaf);
+    measureRaf = requestAnimationFrame(measureAndReport);
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(measureAndReport, inDuration + 120);
+  }
+
+  // Re-measure whenever the visible card list (or the "+N earlier" row)
+  // changes. The settle-timer pass also covers the 1 → 0 case where the
+  // out-transition keeps slot elements in the DOM briefly.
+  $effect(() => {
+    void visible;
+    void hidden;
+    scheduleHitRectMeasure();
+  });
+
+  // Re-measure on window resize (monitor / scale changes move the cards).
+  $effect(() => {
+    const onResize = () => scheduleHitRectMeasure();
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(measureRaf);
+      clearTimeout(settleTimer);
+    };
+  });
 </script>
 
 <div
@@ -79,6 +129,7 @@
   data-position={position}
   data-testid="toast-feed"
   style:--tf-card-w="{cardWidth}px"
+  bind:this={feedEl}
 >
   {#if visible.length > 0}
     <div

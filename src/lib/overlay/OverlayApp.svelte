@@ -4,8 +4,13 @@
     2. Mirror the main window's theme onto this window's
        `document.documentElement` via the shared `theme` store + matchMedia.
     3. Render the toast feed.
-    4. Toggle the overlay's ignore-cursor-events flag on pointer enter/leave
-       so the feed becomes interactive while hovered, click-through otherwise.
+
+  Click-through is owned by the Rust-side cursor poller: `ToastFeed` reports
+  the visible card hit rects via `set_overlay_hit_rects`, and Rust toggles
+  the window's ignore-cursor-events flag when the global cursor enters /
+  leaves a card. Renderer pointer handlers cannot do this — a click-through
+  window receives no pointer events from the OS, so `pointerenter` would
+  never fire (the production deadlock this design fixes).
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -20,16 +25,12 @@
     overlaySettings,
     subscribeOverlaySettingsChanges,
   } from './overlaySettingsStore';
-  import { overlayPointerEnter, overlayPointerLeave } from './overlay-actions';
   import ToastFeed from './ToastFeed.svelte';
   import './overlay.css';
 
-  // Pointer enter/leave toggle the Tauri ignore-cursor-events flag so
-  // the feed becomes interactive while hovered (clicking a card focuses
-  // the matching log row in the main window) and click-through
-  // otherwise. The per-card dismiss timer is intentionally NOT paused
-  // on hover — each card's countdown runs to completion regardless of
-  // cursor position.
+  // The per-card dismiss timer is intentionally NOT paused on hover —
+  // each card's countdown runs to completion regardless of cursor
+  // position.
 
   // One store instance per overlay-window lifetime. Seed with the persisted
   // defaults so the first render uses the correct dismiss timer + visible
@@ -99,12 +100,7 @@
   <title>Endara Overlay</title>
 </svelte:head>
 
-<div
-  class="overlay-root"
-  onpointerenter={() => { void overlayPointerEnter(); }}
-  onpointerleave={() => { void overlayPointerLeave(); }}
-  role="presentation"
->
+<div class="overlay-root">
   <ToastFeed
     {store}
     position={$overlaySettings.position}

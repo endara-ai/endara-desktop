@@ -83,6 +83,34 @@ export function isDestructive(g: ToolCallGroup): boolean {
   return g.annotations?.destructive === true;
 }
 
+/**
+ * Axis-aligned card hit rect in overlay-window viewport coordinates (CSS /
+ * logical pixels). Mirrors the `HitRect` struct in `src-tauri/src/overlay.rs`
+ * consumed by the Rust-side cursor poller.
+ */
+export type HitRect = { x: number; y: number; width: number; height: number };
+
+/** Minimal element shape needed to measure a hit rect (testable without jsdom). */
+type Measurable = {
+  getBoundingClientRect(): { x: number; y: number; width: number; height: number };
+};
+
+/**
+ * Measure the bounding rects of the visible card elements. Zero-area rects
+ * (display:none, not yet laid out) are dropped so the Rust poller never
+ * treats a collapsed element as a hover target.
+ */
+export function collectHitRects(elements: Iterable<Measurable | null | undefined>): HitRect[] {
+  const out: HitRect[] = [];
+  for (const el of elements) {
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    if (!(r.width > 0) || !(r.height > 0)) continue;
+    out.push({ x: r.x, y: r.y, width: r.width, height: r.height });
+  }
+  return out;
+}
+
 /** Valid overlay positions; the route default is `bottom-right`. */
 export type OverlayPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 

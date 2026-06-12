@@ -1,14 +1,10 @@
 // Tests for the action helpers extracted from `OverlayCard.svelte` and
-// `OverlayApp.svelte`. These verify the exact Tauri commands the overlay
-// invokes on user input, since the components themselves can't be mounted in
-// the Node vitest env.
+// `ToastFeed.svelte`. These verify the exact Tauri commands the overlay
+// invokes, since the components themselves can't be mounted in the Node
+// vitest env.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import {
-  cardClick,
-  overlayPointerEnter,
-  overlayPointerLeave,
-} from './overlay-actions';
+import { cardClick, reportOverlayHitRects } from './overlay-actions';
 import type { ToolCallGroup, ToolCallRequest } from './toastStore';
 
 function req(over: Partial<ToolCallRequest> = {}): ToolCallRequest {
@@ -76,25 +72,22 @@ describe('cardClick', () => {
   });
 });
 
-describe('overlay pointer cursor toggles', () => {
+describe('reportOverlayHitRects', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('overlayPointerEnter sets ignore_cursor_events(false)', async () => {
+  it('invokes set_overlay_hit_rects with the measured rects', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
-    await overlayPointerEnter();
-    expect(mockInvoke).toHaveBeenCalledWith('set_overlay_ignore_cursor_events', {
-      ignore: false,
-    });
+    const rects = [{ x: 20, y: 100, width: 340, height: 72 }];
+    await reportOverlayHitRects(rects);
+    expect(mockInvoke).toHaveBeenCalledWith('set_overlay_hit_rects', { rects });
   });
 
-  it('overlayPointerLeave sets ignore_cursor_events(true)', async () => {
+  it('reports an empty list so the Rust poller can idle', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
-    await overlayPointerLeave();
-    expect(mockInvoke).toHaveBeenCalledWith('set_overlay_ignore_cursor_events', {
-      ignore: true,
-    });
+    await reportOverlayHitRects([]);
+    expect(mockInvoke).toHaveBeenCalledWith('set_overlay_hit_rects', { rects: [] });
   });
 
   it('swallows errors from invoke so a flaky window command never breaks the UI', async () => {
@@ -102,9 +95,8 @@ describe('overlay pointer cursor toggles', () => {
     mockInvoke.mockRejectedValue(new Error('boom'));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await expect(overlayPointerEnter()).resolves.toBeUndefined();
-    await expect(overlayPointerLeave()).resolves.toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledTimes(2);
+    await expect(reportOverlayHitRects([])).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
     warnSpy.mockRestore();
   });
 });

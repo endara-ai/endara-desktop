@@ -1445,12 +1445,17 @@ async fn hide_overlay(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Renderer-reported hit rects for the visible overlay cards (viewport /
+/// logical px). Drives the Rust-side cursor poller that toggles the overlay
+/// window's ignore-cursor-events flag — see `overlay::update_hit_rects` for
+/// why a renderer pointer handler cannot do this (click-through deadlock).
 #[tauri::command]
-async fn set_overlay_ignore_cursor_events(app: AppHandle, ignore: bool) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window(overlay::OVERLAY_WINDOW_LABEL) {
-        w.set_ignore_cursor_events(ignore)
-            .map_err(|e| e.to_string())?;
-    }
+async fn set_overlay_hit_rects(
+    app: AppHandle,
+    state: State<'_, overlay::OverlayHitState>,
+    rects: Vec<overlay::HitRect>,
+) -> Result<(), String> {
+    overlay::update_hit_rects(&app, &state, rects);
     Ok(())
 }
 
@@ -2341,6 +2346,7 @@ pub fn run() {
         .manage(pending_update)
         .manage(UpdaterBackoffState::default())
         .manage(overlay::OverlaySubscriberState::default())
+        .manage(overlay::OverlayHitState::default())
         .invoke_handler(tauri::generate_handler![
             start_relay,
             stop_relay,
@@ -2371,7 +2377,7 @@ pub fn run() {
             set_tray_health,
             show_overlay,
             hide_overlay,
-            set_overlay_ignore_cursor_events,
+            set_overlay_hit_rects,
             reposition_overlay,
             subscribe_tool_call_events,
             unsubscribe_tool_call_events,
