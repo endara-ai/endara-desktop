@@ -87,6 +87,25 @@ export function nextPollOrTimeout(
 export type AddEndpointTransport = 'stdio' | 'sse' | 'http' | 'oauth';
 
 /**
+ * Resolves the explicit `isolation` value sent when creating an endpoint.
+ *
+ * Stdio endpoints ALWAYS get an explicit value — `"container"` or `"none"`,
+ * never omitted — because the relay treats an absent field as direct spawn
+ * and we want new endpoints to containerize by default. Catalog entries
+ * flagged `containerizable: false` force `"none"` regardless of the toggle.
+ * Non-stdio transports return `undefined` (the field does not apply).
+ */
+export function resolveIsolation(
+  transport: AddEndpointTransport,
+  containerizable: boolean,
+  isolationEnabled: boolean,
+): 'container' | 'none' | undefined {
+  if (transport !== 'stdio') return undefined;
+  if (!containerizable) return 'none';
+  return isolationEnabled ? 'container' : 'none';
+}
+
+/**
  * Per-field error map for inputs that surface `aria-invalid` in the Add
  * Server modal. Presence of a key means that field failed validation; the
  * value is the human-readable message reused for both the inline state and
@@ -164,6 +183,7 @@ export interface AddEndpointFormSnapshot {
   clientSecret: string;
   scopes: string;
   serverTypeOverride: string;
+  isolationEnabled: boolean;
 }
 
 function sameKvList(
@@ -218,6 +238,7 @@ export function computeAddEndpointIsDirty(
   if (snapshot.clientSecret !== current.clientSecret) return true;
   if (snapshot.scopes !== current.scopes) return true;
   if (snapshot.serverTypeOverride !== current.serverTypeOverride) return true;
+  if (snapshot.isolationEnabled !== current.isolationEnabled) return true;
   if (!sameKvList(snapshot.envVars, current.envVars)) return true;
   if (!sameKvList(snapshot.headerVars, current.headerVars)) return true;
   if (!sameRecord(snapshot.catalogEnvValues, current.catalogEnvValues)) return true;

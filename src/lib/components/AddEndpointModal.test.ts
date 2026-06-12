@@ -11,6 +11,7 @@ import {
   validateAddEndpointForm,
   firstAddEndpointFieldError,
   computeAddEndpointIsDirty,
+  resolveIsolation,
   type AddEndpointFieldErrors,
   type AddEndpointFormSnapshot,
 } from './add-endpoint-helpers';
@@ -723,6 +724,7 @@ describe('computeAddEndpointIsDirty', () => {
       clientSecret: '',
       scopes: '',
       serverTypeOverride: '',
+      isolationEnabled: true,
       ...overrides,
     };
   }
@@ -819,6 +821,55 @@ describe('computeAddEndpointIsDirty', () => {
     const snap = makeSnapshot({ userArgValues: [''] });
     const current = makeSnapshot({ userArgValues: ['', ''] });
     expect(computeAddEndpointIsDirty(snap, current)).toBe(true);
+  });
+
+  it('flags the isolation toggle when flipped away from the snapshot', () => {
+    const snap = makeSnapshot();
+    expect(computeAddEndpointIsDirty(snap, makeSnapshot({ isolationEnabled: false }))).toBe(true);
+    expect(computeAddEndpointIsDirty(snap, makeSnapshot({ isolationEnabled: true }))).toBe(false);
+  });
+});
+
+// Isolation defaults — stdio endpoints always send an explicit value
+// ("container"/"none", never omitted) because the relay treats an absent
+// field as direct spawn. Flagged catalog entries force "none".
+describe('resolveIsolation', () => {
+  it('returns "container" for stdio when containerizable and toggle is on (default)', () => {
+    expect(resolveIsolation('stdio', true, true)).toBe('container');
+  });
+
+  it('returns "none" for stdio when the user turns the toggle off', () => {
+    expect(resolveIsolation('stdio', true, false)).toBe('none');
+  });
+
+  it('returns "none" for flagged catalog entries regardless of the toggle', () => {
+    expect(resolveIsolation('stdio', false, true)).toBe('none');
+    expect(resolveIsolation('stdio', false, false)).toBe('none');
+  });
+
+  it('returns undefined for non-stdio transports', () => {
+    for (const t of ['sse', 'http', 'oauth'] as const) {
+      expect(resolveIsolation(t, true, true)).toBeUndefined();
+      expect(resolveIsolation(t, false, false)).toBeUndefined();
+    }
+  });
+});
+
+describe('catalog containerizable flags', () => {
+  it('exactly Filesystem, Puppeteer, and Memory are flagged not-containerizable', () => {
+    const flagged = CATALOG_SERVERS.filter((s) => s.containerizable === false)
+      .map((s) => s.id)
+      .sort();
+    expect(flagged).toEqual(['filesystem', 'memory', 'puppeteer']);
+  });
+
+  it('every flagged entry carries a non-empty containerNote reason', () => {
+    for (const s of CATALOG_SERVERS) {
+      if (s.containerizable === false) {
+        expect(s.containerNote, `${s.id}: missing containerNote`).toBeTruthy();
+        expect(s.containerNote!.trim().length).toBeGreaterThan(0);
+      }
+    }
   });
 });
 

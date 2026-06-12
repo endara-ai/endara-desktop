@@ -6,6 +6,8 @@ import {
   shouldShowRefreshButton,
   shouldShowReauthorizeButton,
   visibleTabs,
+  formatBytes,
+  formatCpuPercent,
   type EndpointTransport,
 } from './detail-panel-helpers';
 
@@ -285,5 +287,63 @@ describe('DetailPanel re-authorize button', () => {
   it('right-aligns the Re-authorize button using ml-auto', () => {
     expect(reauthBlock, 'expected to find the Re-authorize {#if showReauthorize} block').not.toBeNull();
     expect(reauthBlock![0]).toContain('ml-auto');
+  });
+});
+
+// ── Container-stats formatters (header metrics line) ──
+
+describe('formatBytes', () => {
+  it('formats sub-KB values as whole bytes', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1023)).toBe('1023 B');
+  });
+
+  it('formats KB/MB/GB with one decimal (base 1024)', () => {
+    expect(formatBytes(1024)).toBe('1.0 KB');
+    expect(formatBytes(1536)).toBe('1.5 KB');
+    expect(formatBytes(45.2 * 1024 * 1024)).toBe('45.2 MB');
+    expect(formatBytes(1.2 * 1024 * 1024 * 1024)).toBe('1.2 GB');
+  });
+
+  it('caps at TB for very large values', () => {
+    expect(formatBytes(2.5 * 1024 ** 4)).toBe('2.5 TB');
+    expect(formatBytes(5000 * 1024 ** 4)).toBe('5000.0 TB');
+  });
+
+  it('renders negative and non-finite inputs as 0 B', () => {
+    expect(formatBytes(-1)).toBe('0 B');
+    expect(formatBytes(NaN)).toBe('0 B');
+    expect(formatBytes(Infinity)).toBe('0 B');
+  });
+});
+
+describe('formatCpuPercent', () => {
+  it('formats with one decimal place', () => {
+    expect(formatCpuPercent(0)).toBe('0.0%');
+    expect(formatCpuPercent(1.25)).toBe('1.3%');
+    expect(formatCpuPercent(100)).toBe('100.0%');
+  });
+
+  it('renders negative and non-finite inputs as 0.0%', () => {
+    expect(formatCpuPercent(-3)).toBe('0.0%');
+    expect(formatCpuPercent(NaN)).toBe('0.0%');
+    expect(formatCpuPercent(Infinity)).toBe('0.0%');
+  });
+});
+
+// The metrics line must only render when `container_stats` is present, so
+// direct-spawn endpoints (absent/null stats) show no metrics.
+describe('DetailPanel container-stats line', () => {
+  const statsBlock = detailPanelSource.match(
+    /\{#if ep\.container_stats\}[\s\S]*?\{\/if\}/,
+  );
+
+  it('renders the metrics line under an ep.container_stats guard', () => {
+    expect(statsBlock, 'expected to find the {#if ep.container_stats} block').not.toBeNull();
+    expect(statsBlock![0]).toContain('formatCpuPercent(ep.container_stats.cpu_percent)');
+    expect(statsBlock![0]).toContain('formatBytes(ep.container_stats.mem_bytes)');
+    expect(statsBlock![0]).toContain('formatBytes(ep.container_stats.net_rx_bytes)');
+    expect(statsBlock![0]).toContain('formatBytes(ep.container_stats.net_tx_bytes)');
   });
 });

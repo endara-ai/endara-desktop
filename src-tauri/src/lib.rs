@@ -1995,6 +1995,11 @@ struct EndpointConfig {
     /// Mirrors `server_type_override` from `config.toml`; absent when no
     /// override is configured for this endpoint.
     server_type_override: Option<String>,
+    /// Mirrors `isolation` from `config.toml` (`"container"` or `"none"`);
+    /// absent for legacy endpoints that never set it (= direct spawn). The
+    /// UI passes it through on update so the relay's PUT — which rebuilds
+    /// the whole endpoint config — doesn't drop the stored value.
+    isolation: Option<String>,
 }
 
 /// Path to the DCR credentials file for an endpoint, e.g.
@@ -2082,6 +2087,11 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .filter(|s| !s.is_empty());
+                let isolation = ep
+                    .get("isolation")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty());
 
                 return Ok(EndpointConfig {
                     name: name.clone(),
@@ -2099,6 +2109,7 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     scopes,
                     token_endpoint,
                     server_type_override,
+                    isolation,
                 });
             }
         }

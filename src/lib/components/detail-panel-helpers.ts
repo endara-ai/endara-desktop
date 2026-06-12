@@ -54,3 +54,31 @@ export function shouldShowRestartButton(transport: EndpointTransport, disabled: 
 export function shouldShowRefreshButton(disabled: boolean): boolean {
   return !disabled;
 }
+
+/**
+ * Compact byte formatter for the container-stats line (base 1024).
+ * Examples: `512 B`, `1.5 KB`, `45.2 MB`, `1.2 GB`. Negative or
+ * non-finite inputs render as `0 B`.
+ */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 'B';
+  for (const u of units) {
+    if (value < 1024) break;
+    value /= 1024;
+    unit = u;
+  }
+  return `${value.toFixed(1)} ${unit}`;
+}
+
+/**
+ * CPU percentage for the container-stats line, one decimal place.
+ * Negative or non-finite inputs render as `0.0%`.
+ */
+export function formatCpuPercent(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return '0.0%';
+  return `${value.toFixed(1)}%`;
+}

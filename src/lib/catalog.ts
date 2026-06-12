@@ -23,6 +23,14 @@ export interface CatalogServer {
    * digits, `-`, `_` only (mirrors the relay's `sanitize_server_name`).
    */
   serverTypeOverride?: string;
+  /**
+   * Set to `false` for entries that must not run in a container. The add flow
+   * shows a "Not containerized" badge, hides the isolation toggle, and writes
+   * `isolation = "none"`. Absent means the entry containerizes by default.
+   */
+  containerizable?: false;
+  /** Short user-facing reason shown alongside the "Not containerized" badge. */
+  containerNote?: string;
 }
 
 export const CATALOG_SERVERS: CatalogServer[] = [
@@ -37,6 +45,8 @@ export const CATALOG_SERVERS: CatalogServer[] = [
     args: ['-y', '@modelcontextprotocol/server-filesystem'],
     envVars: [],
     userArgs: [{ label: 'Allowed directory', placeholder: '/Users/you/projects', type: 'directory' }],
+    containerizable: false,
+    containerNote: 'Needs direct access to your local filesystem.',
   },
   {
     id: 'github',
@@ -87,6 +97,8 @@ export const CATALOG_SERVERS: CatalogServer[] = [
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-puppeteer'],
     envVars: [],
+    containerizable: false,
+    containerNote: 'Needs a host browser (Chromium) that the container image does not include.',
   },
   {
     id: 'memory',
@@ -98,6 +110,8 @@ export const CATALOG_SERVERS: CatalogServer[] = [
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-memory'],
     envVars: [],
+    containerizable: false,
+    containerNote: 'Stores its knowledge graph in a file that would be lost when the container restarts.',
   },
   {
     id: 'sequential-thinking',

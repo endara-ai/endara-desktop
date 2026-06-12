@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { addEndpoint, getEndpoints, testConnection, oauthSetup, oauthSetupStatus, oauthSetupCredentials, oauthSetupCommit, oauthSetupCancel, reloadConfig, type AddEndpointParams, type TestConnectionParams, type OAuthSetupParams } from '$lib/api';
+  import { addEndpoint, getEndpoints, getStatus, testConnection, oauthSetup, oauthSetupStatus, oauthSetupCredentials, oauthSetupCommit, oauthSetupCancel, reloadConfig, type AddEndpointParams, type TestConnectionParams, type OAuthSetupParams } from '$lib/api';
   import { endpoints, selectedEndpoint } from '$lib/stores';
   import { toast } from 'svelte-sonner';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
@@ -11,6 +11,7 @@
     validateAddEndpointForm,
     firstAddEndpointFieldError,
     computeAddEndpointIsDirty,
+    resolveIsolation,
     type AddEndpointFieldErrors,
     type AddEndpointFormSnapshot,
   } from './add-endpoint-helpers';
@@ -92,6 +93,21 @@
   // value at ≤64 chars, but pasted content can occasionally bypass that on
   // some platforms. Surface a hint if it ever happens.
   let serverTypeOverrideTooLong = $derived(serverTypeOverride.length > 64);
+  // Isolation toggle for stdio endpoints — default ON so new endpoints
+  // containerize by default. The submit path always sends an explicit
+  // "container"/"none" value (see resolveIsolation).
+  let isolationEnabled = $state(true);
+  // True when the active catalog entry is flagged not-containerizable —
+  // the toggle is replaced by a "Not containerized" notice and the endpoint
+  // is created with isolation = "none".
+  let catalogNotContainerizable = $derived.by(() => selectedCatalog?.containerizable === false);
+  // null = unknown (older relay or status fetch failed); only an explicit
+  // `false` from the relay drives the "no runtime" inline notice.
+  let containerRuntimeAvailable: boolean | null = $state(null);
+  let runtimeMissing = $derived(containerRuntimeAvailable === false);
+  getStatus()
+    .then((s) => { containerRuntimeAvailable = s.container_runtime_available ?? null; })
+    .catch(() => { /* relay unreachable — leave runtime availability unknown */ });
 
   // Captured at the moment `step` transitions to `'configure'` so any
   // catalog pre-fills (name, command, args, etc.) become the dirty-check
@@ -119,6 +135,7 @@
       clientSecret,
       scopes,
       serverTypeOverride,
+      isolationEnabled,
     });
   });
   let showDiscardConfirm = $state(false);
@@ -140,6 +157,7 @@
       clientSecret,
       scopes,
       serverTypeOverride,
+      isolationEnabled,
     };
   }
 
@@ -228,6 +246,7 @@
     dcrClientSecret = '';
     serverTypeOverride = service.serverTypeOverride ?? '';
     serverTypeOverrideHasDefault = Boolean(service.serverTypeOverride);
+    isolationEnabled = true;
     error = '';
     fieldErrors = {};
     originalSnapshot = captureSnapshot();
@@ -256,6 +275,7 @@
     showingDcrFallback = false;
     serverTypeOverride = server.serverTypeOverride ?? '';
     serverTypeOverrideHasDefault = Boolean(server.serverTypeOverride);
+    isolationEnabled = true;
     error = '';
     fieldErrors = {};
     originalSnapshot = captureSnapshot();
@@ -285,6 +305,7 @@
     showingDcrFallback = false;
     serverTypeOverride = '';
     serverTypeOverrideHasDefault = false;
+    isolationEnabled = true;
     error = '';
     fieldErrors = {};
     originalSnapshot = captureSnapshot();
@@ -433,6 +454,14 @@
       if (finalArgs.length > 0) {
         params.args = finalArgs;
       }
+
+      // Always explicit for stdio — the relay treats an omitted field as
+      // direct spawn, so "container"/"none" is never left implicit.
+      params.isolation = resolveIsolation(
+        transport,
+        !catalogNotContainerizable,
+        isolationEnabled,
+      );
     } else if (transport === 'oauth') {
       params.url = url.trim();
       if (oauthServerUrl.trim()) params.oauth_server_url = oauthServerUrl.trim();
@@ -826,6 +855,14 @@
                     API Key
                   </span>
                 {/if}
+                {#if server.containerizable === false}
+                  <span
+                    class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--surface-hover) text-(--fg2) border border-(--border) font-medium"
+                    title={server.containerNote}
+                  >
+                    Not containerized
+                  </span>
+                {/if}
               </div>
             </button>
           {/if}
@@ -944,6 +981,44 @@
             <input id="modal-ep-args" type="text" bind:value={args} placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
           </div>
+
+          <!-- Isolation setting (stdio only). Flagged catalog entries can't
+               containerize — show the badge + reason instead of the toggle. -->
+          {#if catalogNotContainerizable}
+            <div class="flex items-start gap-2 px-3 py-2 rounded-lg border border-(--border) bg-(--surface-hover)">
+              <span class="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-(--surface) text-(--fg2) border border-(--border) font-medium flex-shrink-0">
+                Not containerized
+              </span>
+              <p class="text-[11px] text-(--fg2)">
+                {selectedCatalog?.containerNote} This server runs directly on your machine.
+              </p>
+            </div>
+          {:else}
+            <div>
+              <div class="flex items-center justify-between gap-2">
+                <label for="modal-ep-isolation" class="text-xs font-medium text-(--fg2)">
+                  Run in container <span class="text-(--fg2)/50">(isolation)</span>
+                </label>
+                <button
+                  id="modal-ep-isolation"
+                  type="button"
+                  class="tgl {isolationEnabled ? '' : 'tgl-off'}"
+                  role="switch"
+                  aria-checked={isolationEnabled}
+                  title={isolationEnabled ? 'Disable container isolation' : 'Enable container isolation'}
+                  onclick={() => isolationEnabled = !isolationEnabled}
+                ><span></span></button>
+              </div>
+              <p class="text-[11px] text-(--fg2) mt-0.5">
+                Runs the server in an isolated container (Docker or Podman) instead of directly on your machine.
+              </p>
+              {#if runtimeMissing && isolationEnabled}
+                <p class="text-[11px] text-(--attention) mt-1">
+                  No container runtime detected — the server will fall back to running directly on your machine. Install Docker or Podman to enable isolation.
+                </p>
+              {/if}
+            </div>
+          {/if}
         {:else if transport === 'oauth'}
           <div>
             <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">Server URL</label>
@@ -1385,4 +1460,38 @@
     </div>
   </div>
 {/if}
+
+<style>
+  /* Toggle pill (36x20) — mirrors the enable/disable switch in DetailPanel */
+  .tgl {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--healthy);
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: background-color 150ms var(--ease);
+  }
+  .tgl.tgl-off {
+    background: var(--toggle-off);
+  }
+  .tgl > span {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: #fff;
+    box-shadow: 0 1px 2px var(--scrim);
+    transition: transform 150ms var(--ease);
+  }
+  .tgl:not(.tgl-off) > span {
+    transform: translateX(16px);
+  }
+</style>
+
 

@@ -55,6 +55,11 @@
   // value at ≤64 chars, but pasted content can occasionally bypass that on
   // some platforms. Surface a hint if it ever happens.
   let serverTypeOverrideTooLong = $derived(serverTypeOverride.length > 64);
+  // Stored isolation mode, passed through verbatim on save. Not user-editable
+  // here — the relay's PUT rebuilds the whole endpoint config from the request
+  // body, so omitting it would silently revert a containerized endpoint to
+  // direct spawn.
+  let isolation = $state('');
 
   // The upstream-reported raw name from the relay's Lifecycle::Ready state,
   // used to preview what the override would replace. Null when the endpoint
@@ -185,6 +190,7 @@
         clientSecretSet = config.client_secret_set ?? false;
         scopes = config.scopes ?? '';
         serverTypeOverride = config.server_type_override ?? '';
+        isolation = config.isolation ?? '';
         snapshotOriginals();
       })
       .catch(() => {
@@ -229,6 +235,11 @@
       params.command = command.trim();
       if (args.trim()) {
         params.args = args.trim().split(/\s+/);
+      }
+      // Pass the stored isolation mode through — the relay's PUT rebuilds
+      // the endpoint config, so omitting it would clear the value.
+      if (isolation) {
+        params.isolation = isolation;
       }
     } else if (transport === 'oauth') {
       if (!url.trim()) { error = 'Server URL is required'; return; }

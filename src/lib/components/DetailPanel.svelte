@@ -19,6 +19,8 @@
     shouldShowRefreshButton,
     shouldShowReauthorizeButton,
     visibleTabs,
+    formatBytes,
+    formatCpuPercent,
   } from './detail-panel-helpers';
 
   let showRestartConfirm = $state(false);
@@ -155,6 +157,16 @@
           <div class="flex items-center gap-2 mt-0.5">
             <TransportBadge transport={ep.transport} />
             <span class="text-[11px] text-(--fg3)">{ep.tool_count} tools</span>
+            {#if ep.container_stats}
+              <span
+                class="text-[11px] text-(--fg3) truncate"
+                title="Live container resource usage (CPU, memory, network received/sent)"
+              >
+                CPU {formatCpuPercent(ep.container_stats.cpu_percent)}
+                · Mem {formatBytes(ep.container_stats.mem_bytes)}
+                · Net ↓{formatBytes(ep.container_stats.net_rx_bytes)} ↑{formatBytes(ep.container_stats.net_tx_bytes)}
+              </span>
+            {/if}
           </div>
         </div>
       </div>
