@@ -106,6 +106,17 @@ export function resolveIsolation(
 }
 
 /**
+ * Maps a stored endpoint `isolation` value to the toggle's on/off state.
+ *
+ * Only an explicit `"container"` means containerized; `"none"`, an empty
+ * string, or an absent field all mean direct spawn (the relay's default for
+ * an omitted field), so the toggle reads OFF for those.
+ */
+export function isolationEnabledFromConfig(isolation: string | undefined): boolean {
+  return isolation === 'container';
+}
+
+/**
  * Per-field error map for inputs that surface `aria-invalid` in the Add
  * Server modal. Presence of a key means that field failed validation; the
  * value is the human-readable message reused for both the inline state and

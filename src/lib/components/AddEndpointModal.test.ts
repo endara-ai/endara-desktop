@@ -12,6 +12,7 @@ import {
   firstAddEndpointFieldError,
   computeAddEndpointIsDirty,
   resolveIsolation,
+  isolationEnabledFromConfig,
   type AddEndpointFieldErrors,
   type AddEndpointFormSnapshot,
 } from './add-endpoint-helpers';
@@ -852,6 +853,29 @@ describe('resolveIsolation', () => {
       expect(resolveIsolation(t, true, true)).toBeUndefined();
       expect(resolveIsolation(t, false, false)).toBeUndefined();
     }
+  });
+});
+
+// Config-tab seeding — maps the stored isolation value to the toggle state.
+// Only an explicit "container" reads ON; "none"/empty/absent all mean direct
+// spawn (the relay's default for an omitted field).
+describe('isolationEnabledFromConfig', () => {
+  it('returns true only for an explicit "container"', () => {
+    expect(isolationEnabledFromConfig('container')).toBe(true);
+  });
+
+  it('returns false for "none"', () => {
+    expect(isolationEnabledFromConfig('none')).toBe(false);
+  });
+
+  it('returns false for empty/absent values (direct-spawn default)', () => {
+    expect(isolationEnabledFromConfig('')).toBe(false);
+    expect(isolationEnabledFromConfig(undefined)).toBe(false);
+  });
+
+  it('returns false for unrecognized values', () => {
+    expect(isolationEnabledFromConfig('CONTAINER')).toBe(false);
+    expect(isolationEnabledFromConfig('docker')).toBe(false);
   });
 });
 

@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { getEndpointConfig, updateEndpoint, getEndpoints, type UpdateEndpointParams } from '$lib/api';
+  import { getEndpointConfig, updateEndpoint, getEndpoints, getStatus, type UpdateEndpointParams } from '$lib/api';
   import { selectedEndpoint, endpoints, selectedEndpointData } from '$lib/stores';
   import { registerDirtyChecker } from '$lib/stores/unsavedChangesGuard';
+  import { resolveIsolation, isolationEnabledFromConfig } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http' | 'oauth';
@@ -55,11 +56,19 @@
   // value at ≤64 chars, but pasted content can occasionally bypass that on
   // some platforms. Surface a hint if it ever happens.
   let serverTypeOverrideTooLong = $derived(serverTypeOverride.length > 64);
-  // Stored isolation mode, passed through verbatim on save. Not user-editable
-  // here — the relay's PUT rebuilds the whole endpoint config from the request
-  // body, so omitting it would silently revert a containerized endpoint to
-  // direct spawn.
-  let isolation = $state('');
+  // Isolation toggle for stdio endpoints, seeded from the stored config.
+  // Empty/omitted/"none" all mean direct spawn → toggle OFF; only an explicit
+  // "container" reads ON. Saving always sends an explicit "container"/"none"
+  // value (see resolveIsolation) because the relay's PUT rebuilds the whole
+  // endpoint config from the request body.
+  let isolationEnabled = $state(false);
+  // null = unknown (older relay or status fetch failed); only an explicit
+  // `false` from the relay drives the "no runtime" inline notice.
+  let containerRuntimeAvailable: boolean | null = $state(null);
+  let runtimeMissing = $derived(containerRuntimeAvailable === false);
+  getStatus()
+    .then((s) => { containerRuntimeAvailable = s.container_runtime_available ?? null; })
+    .catch(() => { /* relay unreachable — leave runtime availability unknown */ });
 
   // The upstream-reported raw name from the relay's Lifecycle::Ready state,
   // used to preview what the override would replace. Null when the endpoint
@@ -84,6 +93,7 @@
   let originalClientId = $state('');
   let originalScopes = $state('');
   let originalServerTypeOverride = $state('');
+  let originalIsolationEnabled = $state(false);
 
   // Controls the Advanced <details> open state. Two-way bound so user toggles
   // stick across reactive re-renders; re-seeded from the loaded config on each
@@ -104,6 +114,7 @@
     originalClientId = clientId;
     originalScopes = scopes;
     originalServerTypeOverride = serverTypeOverride;
+    originalIsolationEnabled = isolationEnabled;
     advancedOpen = originalServerTypeOverride !== '';
   }
 
@@ -128,7 +139,8 @@
     clientId !== originalClientId ||
     clientSecretDirty ||
     scopes !== originalScopes ||
-    serverTypeOverride !== originalServerTypeOverride
+    serverTypeOverride !== originalServerTypeOverride ||
+    isolationEnabled !== originalIsolationEnabled
   );
 
   // Register a dirty-checker with the shared navigation guard so that any
@@ -190,7 +202,7 @@
         clientSecretSet = config.client_secret_set ?? false;
         scopes = config.scopes ?? '';
         serverTypeOverride = config.server_type_override ?? '';
-        isolation = config.isolation ?? '';
+        isolationEnabled = isolationEnabledFromConfig(config.isolation);
         snapshotOriginals();
       })
       .catch(() => {
@@ -236,11 +248,10 @@
       if (args.trim()) {
         params.args = args.trim().split(/\s+/);
       }
-      // Pass the stored isolation mode through — the relay's PUT rebuilds
-      // the endpoint config, so omitting it would clear the value.
-      if (isolation) {
-        params.isolation = isolation;
-      }
+      // Always explicit for stdio — the relay's PUT rebuilds the endpoint
+      // config and treats an omitted field as direct spawn, so the toggle
+      // state is sent as "container"/"none", never left implicit.
+      params.isolation = resolveIsolation(transport, true, isolationEnabled);
     } else if (transport === 'oauth') {
       if (!url.trim()) { error = 'Server URL is required'; return; }
       params.url = url.trim();
@@ -397,6 +408,31 @@
             <label for="config-ep-args" class="block text-xs font-medium mb-1 text-(--fg2)">Arguments <span class="text-(--fg2)/50">(space-separated)</span></label>
             <input id="config-ep-args" type="text" bind:value={args} placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
               class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+          </div>
+          <!-- Isolation setting (stdio only) — mirrors the toggle in AddEndpointModal. -->
+          <div>
+            <div class="flex items-center justify-between gap-2">
+              <label for="config-ep-isolation" class="text-xs font-medium text-(--fg2)">
+                Run in container <span class="text-(--fg2)/50">(isolation)</span>
+              </label>
+              <button
+                id="config-ep-isolation"
+                type="button"
+                class="tgl {isolationEnabled ? '' : 'tgl-off'}"
+                role="switch"
+                aria-checked={isolationEnabled}
+                title={isolationEnabled ? 'Disable container isolation' : 'Enable container isolation'}
+                onclick={() => isolationEnabled = !isolationEnabled}
+              ><span></span></button>
+            </div>
+            <p class="text-[11px] text-(--fg2) mt-0.5">
+              Runs the server in an isolated container (Docker or Podman) instead of directly on your machine.
+            </p>
+            {#if runtimeMissing && isolationEnabled}
+              <p class="text-[11px] text-(--attention) mt-1">
+                No container runtime detected — the server will fall back to running directly on your machine. Install Docker or Podman to enable isolation.
+              </p>
+            {/if}
           </div>
         {:else if transport === 'oauth'}
           <div>
@@ -632,5 +668,35 @@
     font-size: 12px;
     font-weight: 500;
     color: var(--fg2);
+  }
+  /* Toggle pill (36x20) — mirrors the enable/disable switch in DetailPanel */
+  .tgl {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--healthy);
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: background-color 150ms var(--ease);
+  }
+  .tgl.tgl-off {
+    background: var(--toggle-off);
+  }
+  .tgl > span {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: #fff;
+    box-shadow: 0 1px 2px var(--scrim);
+    transition: transform 150ms var(--ease);
+  }
+  .tgl:not(.tgl-off) > span {
+    transform: translateX(16px);
   }
 </style>
