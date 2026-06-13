@@ -17,6 +17,8 @@ import {
   serializeMountRows,
   mountRowError,
   hasMountRowErrors,
+  buildMountExample,
+  MOUNT_EXAMPLE_FALLBACK_HOST,
   type AddEndpointFieldErrors,
   type AddEndpointFormSnapshot,
   type MountRow,
@@ -916,6 +918,33 @@ describe('mount row helpers', () => {
   it('serializeMountRows round-trips through parseMountRows', () => {
     const serialized = ['~/.gmail-mcp:/home/node/.gmail-mcp', '/data:/srv/data'];
     expect(serializeMountRows(parseMountRows(serialized))).toEqual(serialized);
+  });
+});
+
+// buildMountExample — the host side must be a valid absolute docker arg
+// (docker rejects `~/...`); the container side is always the generic
+// `/home/node/example`, and a failed home-dir lookup falls back to an
+// absolute placeholder path.
+describe('buildMountExample', () => {
+  it('uses the resolved home directory on the host side', () => {
+    expect(buildMountExample('/Users/alex')).toBe('/Users/alex/example:/home/node/example');
+  });
+
+  it('strips a trailing slash from the home directory', () => {
+    expect(buildMountExample('/home/alex/')).toBe('/home/alex/example:/home/node/example');
+  });
+
+  it('falls back to an absolute placeholder when home is null/blank', () => {
+    expect(buildMountExample(null)).toBe(`${MOUNT_EXAMPLE_FALLBACK_HOST}:/home/node/example`);
+    expect(buildMountExample(undefined)).toBe(`${MOUNT_EXAMPLE_FALLBACK_HOST}:/home/node/example`);
+    expect(buildMountExample('   ')).toBe(`${MOUNT_EXAMPLE_FALLBACK_HOST}:/home/node/example`);
+  });
+
+  it('never produces a `~`-prefixed or product-specific example', () => {
+    const example = buildMountExample('/Users/alex');
+    expect(example).not.toContain('~');
+    expect(example.toLowerCase()).not.toContain('gmail');
+    expect(MOUNT_EXAMPLE_FALLBACK_HOST.startsWith('/')).toBe(true);
   });
 });
 

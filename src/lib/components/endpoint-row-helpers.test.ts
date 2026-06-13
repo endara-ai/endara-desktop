@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 import type { IsolationState } from '$lib/types';
-import { getIsolationBadge, getIsolationDetail } from './endpoint-row-helpers';
+import {
+  getIsolationBadge,
+  getCustomImage,
+  DEFAULT_CONTAINER_IMAGE,
+} from './endpoint-row-helpers';
 
 // The test env is Node (vitest.config.ts), so we exercise the pure helpers
 // shared by `EndpointRow.svelte` / `DetailPanel.svelte` (via
@@ -55,38 +59,67 @@ describe('getIsolationBadge', () => {
   });
 });
 
-describe('getIsolationDetail', () => {
+describe('getCustomImage', () => {
   it('returns null when isolation_state is absent or not containerized', () => {
-    expect(getIsolationDetail(undefined)).toBeNull();
-    expect(getIsolationDetail(null)).toBeNull();
-    expect(getIsolationDetail({ configured: 'container', actual: 'direct' })).toBeNull();
+    expect(getCustomImage(undefined)).toBeNull();
+    expect(getCustomImage(null)).toBeNull();
+    expect(getCustomImage({ configured: 'container', actual: 'direct' })).toBeNull();
   });
 
-  it('joins image and container name when both are reported', () => {
+  it('returns null when the image is the default runner image', () => {
+    const iso: IsolationState = {
+      configured: 'container',
+      actual: 'container',
+      runtime: 'docker',
+      image: DEFAULT_CONTAINER_IMAGE,
+    };
+    expect(getCustomImage(iso)).toBeNull();
+  });
+
+  it('returns the image string when a custom image is in effect', () => {
     const iso: IsolationState = {
       configured: 'container',
       actual: 'container',
       runtime: 'docker',
       image: 'node:20-alpine',
-      container_name: 'endara-mcp-github',
     };
-    expect(getIsolationDetail(iso)).toBe('node:20-alpine · endara-mcp-github');
+    expect(getCustomImage(iso)).toBe('node:20-alpine');
   });
 
-  it('renders whichever of image / container name is present', () => {
+  it('ignores container_name entirely (internal plumbing, never surfaced)', () => {
     expect(
-      getIsolationDetail({ configured: 'container', actual: 'container', image: 'node:20' }),
-    ).toBe('node:20');
-    expect(
-      getIsolationDetail({
+      getCustomImage({
         configured: 'container',
         actual: 'container',
-        container_name: 'endara-mcp-fetch',
+        container_name: 'endara-mcp-github',
       }),
-    ).toBe('endara-mcp-fetch');
+    ).toBeNull();
+    expect(
+      getCustomImage({
+        configured: 'container',
+        actual: 'container',
+        image: 'node:20',
+        container_name: 'endara-mcp-github',
+      }),
+    ).toBe('node:20');
   });
 
-  it('returns null when containerized but neither image nor name is reported', () => {
-    expect(getIsolationDetail({ configured: 'container', actual: 'container' })).toBeNull();
+  it('returns null when containerized but no image is reported', () => {
+    expect(getCustomImage({ configured: 'container', actual: 'container' })).toBeNull();
+  });
+});
+
+// Source-level guard: the isolation badge must live only in the detail-panel
+// header, never in the sidebar row. Mirrors the `?raw` source-assertion
+// pattern used in ToastFeed.test.ts since the test env doesn't mount Svelte.
+describe('sidebar / detail isolation badge placement', () => {
+  it('EndpointRow.svelte renders no IsolationBadge', async () => {
+    const src = (await import('./EndpointRow.svelte?raw')).default as string;
+    expect(src).not.toContain('IsolationBadge');
+  });
+
+  it('DetailPanel.svelte still renders the IsolationBadge in its header', async () => {
+    const src = (await import('./DetailPanel.svelte?raw')).default as string;
+    expect(src).toContain('IsolationBadge');
   });
 });

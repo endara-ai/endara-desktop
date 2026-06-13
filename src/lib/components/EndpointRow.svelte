@@ -5,7 +5,6 @@
   import HealthDot from './HealthDot.svelte';
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
-  import IsolationBadge from './IsolationBadge.svelte';
   import { getEndpointStatusLabel } from './endpoint-row-helpers';
 
   let { endpoint }: { endpoint: Endpoint } = $props();
@@ -48,7 +47,6 @@
     >{endpoint.name}</div>
     <div class="flex items-baseline gap-1.5 mt-px">
       <TransportBadge transport={endpoint.transport} />
-      <IsolationBadge isolation={endpoint.isolation_state} />
       {#if isFailed}
         <span
           class="text-[11px] text-(--offline) truncate max-w-[120px]"

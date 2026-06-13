@@ -9,9 +9,11 @@
     serializeMountRows,
     mountRowError,
     hasMountRowErrors,
+    buildMountExample,
     type MountRow,
   } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
+  import { homeDir } from '@tauri-apps/api/path';
 
   type TransportType = 'stdio' | 'sse' | 'http' | 'oauth';
 
@@ -75,6 +77,14 @@
   let mountRows: MountRow[] = $state([]);
   // The mount section only applies when the endpoint runs in a container.
   let showMounts = $derived(transport === 'stdio' && isolationEnabled);
+  // Resolved user home directory, used to build a valid absolute-path mount
+  // example. Left null until Tauri resolves it (or on failure), so the
+  // example falls back to a generic absolute path.
+  let homeDirPath: string | null = $state(null);
+  homeDir()
+    .then((h) => { homeDirPath = h; })
+    .catch(() => { /* leave null — buildMountExample falls back */ });
+  let mountExample = $derived(buildMountExample(homeDirPath));
   // null = unknown (older relay or status fetch failed); only an explicit
   // `false` from the relay drives the "no runtime" inline notice.
   let containerRuntimeAvailable: boolean | null = $state(null);
@@ -605,7 +615,7 @@
               {/if}
             {/each}
             <p class="text-[11px] text-(--fg2) mt-0.5">
-              Bind host paths into the container, e.g. <code>~/.gmail-mcp:/home/node/.gmail-mcp</code>.
+              Bind host paths into the container, e.g. <code>{mountExample}</code>.
             </p>
           </div>
         {/if}

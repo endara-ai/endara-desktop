@@ -183,6 +183,27 @@ export function serializeMountRows(rows: MountRow[]): string[] {
   return out;
 }
 
+/**
+ * Host-side fallback for the volume-mount example when the user's home
+ * directory can't be resolved (e.g. the Tauri `homeDir()` call fails). Must
+ * be an absolute path — docker rejects `~/...` as an invalid local volume
+ * name and requires an absolute host path.
+ */
+export const MOUNT_EXAMPLE_FALLBACK_HOST = '/path/to/example';
+
+/**
+ * Builds the `host:container` example string shown under the volume-mount
+ * editor. The host side uses the resolved home directory (e.g.
+ * `/Users/alex/example`) so it is a valid absolute docker arg; the container
+ * side is always the generic `/home/node/example`. When `home` is absent or
+ * blank, the host side falls back to {@link MOUNT_EXAMPLE_FALLBACK_HOST}.
+ */
+export function buildMountExample(home: string | null | undefined): string {
+  const trimmed = typeof home === 'string' ? home.trim() : '';
+  const host = trimmed ? `${trimmed.replace(/\/+$/, '')}/example` : MOUNT_EXAMPLE_FALLBACK_HOST;
+  return `${host}:/home/node/example`;
+}
+
 /** Structural equality for mount-row lists, used by the dirty check. */
 function sameMountList(a: MountRow[], b: MountRow[]): boolean {
   if (a.length !== b.length) return false;

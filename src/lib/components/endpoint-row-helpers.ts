@@ -61,17 +61,25 @@ export function getIsolationBadge(
 }
 
 /**
- * Secondary detail line for the detail panel: container image and name for
- * an endpoint that is actually containerized (e.g. `node:20-alpine ·
- * endara-mcp-github`). `null` when not containerized or when neither field
- * is reported.
+ * Default container image the relay runs stdio servers in. When an endpoint
+ * reports this exact image, it is the out-of-the-box default and we don't
+ * surface it in the UI — only a user-supplied custom image is worth showing.
  */
-export function getIsolationDetail(
+export const DEFAULT_CONTAINER_IMAGE = 'ghcr.io/endara-ai/mcp-runner:latest';
+
+/**
+ * Custom container image for the detail panel, shown only when the endpoint
+ * is actually containerized AND a user-supplied image is in effect (i.e. it
+ * differs from {@link DEFAULT_CONTAINER_IMAGE}). Returns `null` when not
+ * containerized, when no image is reported, or when the image is the default.
+ * The internal `container_name` (e.g. `endara-mcp-<endpoint>`) is deliberately
+ * ignored — it is plumbing and never surfaced in the normal UI.
+ */
+export function getCustomImage(
   isolation: IsolationState | null | undefined,
 ): string | null {
   if (!isolation || isolation.actual !== 'container') return null;
-  const parts = [isolation.image, isolation.container_name].filter(
-    (p): p is string => !!p,
-  );
-  return parts.length > 0 ? parts.join(' · ') : null;
+  const image = isolation.image?.trim();
+  if (!image || image === DEFAULT_CONTAINER_IMAGE) return null;
+  return image;
 }
