@@ -12,8 +12,12 @@
     firstAddEndpointFieldError,
     computeAddEndpointIsDirty,
     resolveIsolation,
+    serializeMountRows,
+    mountRowError,
+    hasMountRowErrors,
     type AddEndpointFieldErrors,
     type AddEndpointFormSnapshot,
+    type MountRow,
   } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
   import { focusTrap } from '$lib/actions/focusTrap';
@@ -101,6 +105,12 @@
   // the toggle is replaced by a "Not containerized" notice and the endpoint
   // is created with isolation = "none".
   let catalogNotContainerizable = $derived.by(() => selectedCatalog?.containerizable === false);
+  // Volume mounts (stdio + container isolation only) — host/container path
+  // pairs sent as the relay's `mounts: string[]`. Mirrors the env-var editor.
+  let mountRows: MountRow[] = $state([]);
+  // The mount section is only meaningful when the endpoint will actually run
+  // in a container — i.e. stdio, isolation ON, and not a flagged catalog entry.
+  let showMounts = $derived(transport === 'stdio' && isolationEnabled && !catalogNotContainerizable);
   // null = unknown (older relay or status fetch failed); only an explicit
   // `false` from the relay drives the "no runtime" inline notice.
   let containerRuntimeAvailable: boolean | null = $state(null);
@@ -136,6 +146,7 @@
       scopes,
       serverTypeOverride,
       isolationEnabled,
+      mounts: mountRows,
     });
   });
   let showDiscardConfirm = $state(false);
@@ -158,6 +169,7 @@
       scopes,
       serverTypeOverride,
       isolationEnabled,
+      mounts: mountRows.map((m) => ({ host: m.host, container: m.container })),
     };
   }
 
@@ -247,6 +259,7 @@
     serverTypeOverride = service.serverTypeOverride ?? '';
     serverTypeOverrideHasDefault = Boolean(service.serverTypeOverride);
     isolationEnabled = true;
+    mountRows = [];
     error = '';
     fieldErrors = {};
     originalSnapshot = captureSnapshot();
@@ -276,6 +289,7 @@
     serverTypeOverride = server.serverTypeOverride ?? '';
     serverTypeOverrideHasDefault = Boolean(server.serverTypeOverride);
     isolationEnabled = true;
+    mountRows = [];
     error = '';
     fieldErrors = {};
     originalSnapshot = captureSnapshot();
@@ -306,6 +320,7 @@
     serverTypeOverride = '';
     serverTypeOverrideHasDefault = false;
     isolationEnabled = true;
+    mountRows = [];
     error = '';
     fieldErrors = {};
     originalSnapshot = captureSnapshot();
@@ -462,6 +477,19 @@
         !catalogNotContainerizable,
         isolationEnabled,
       );
+
+      // Volume mounts only apply to containerized stdio endpoints. Block on
+      // any malformed row, then send the serialized array (omitted when empty).
+      if (params.isolation === 'container') {
+        if (hasMountRowErrors(mountRows)) {
+          error = 'Fix the highlighted volume mount rows before continuing.';
+          return;
+        }
+        const mounts = serializeMountRows(mountRows);
+        if (mounts.length > 0) {
+          params.mounts = mounts;
+        }
+      }
     } else if (transport === 'oauth') {
       params.url = url.trim();
       if (oauthServerUrl.trim()) params.oauth_server_url = oauthServerUrl.trim();
@@ -1215,6 +1243,49 @@
             </div>
           {/each}
         </div>
+
+        <!-- Volume mounts (containerized stdio only) — host/container bind
+             pairs sent to the relay as `mounts: string[]`. -->
+        {#if showMounts}
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="block text-xs font-medium text-(--fg2)">
+                Volume mounts
+                <span class="text-(--fg2)/50">(optional)</span>
+              </span>
+              <button
+                type="button"
+                class="text-xs text-(--accent) hover:text-(--accent-hover)"
+                onclick={() => mountRows = [...mountRows, { host: '', container: '' }]}
+              >
+                + Add
+              </button>
+            </div>
+            {#each mountRows as mount, i}
+              {@const rowError = mountRowError(mount)}
+              <div class="flex gap-1 mb-1">
+                <input type="text" bind:value={mount.host} placeholder="/host/path"
+                  aria-invalid={!!rowError}
+                  class="flex-1 text-sm px-2 py-1 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono {rowError ? 'border-(--offline)' : 'border-(--border)'}" />
+                <span class="self-center text-xs text-(--fg2)">:</span>
+                <input type="text" bind:value={mount.container} placeholder="/container/path"
+                  aria-invalid={!!rowError}
+                  class="flex-1 text-sm px-2 py-1 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono {rowError ? 'border-(--offline)' : 'border-(--border)'}" />
+                <button
+                  type="button"
+                  class="text-xs px-1.5 text-(--fg2) hover:text-(--offline)"
+                  onclick={() => mountRows = mountRows.filter((_, idx) => idx !== i)}
+                >✕</button>
+              </div>
+              {#if rowError}
+                <p class="text-[11px] text-(--offline) mb-1">{rowError}</p>
+              {/if}
+            {/each}
+            <p class="text-[11px] text-(--fg2) mt-0.5">
+              Bind host paths into the container, e.g. <code>~/.gmail-mcp:/home/node/.gmail-mcp</code>.
+            </p>
+          </div>
+        {/if}
 
         <!-- Custom HTTP headers (SSE/HTTP only) -->
         {#if transport !== 'stdio'}

@@ -117,6 +117,82 @@ export function isolationEnabledFromConfig(isolation: string | undefined): boole
 }
 
 /**
+ * A single editable volume-mount row in the Add/Config mount editors. Mirrors
+ * the env-var `{ key, value }` shape: two separate inputs whose `:`-joined
+ * form is the verbatim docker `-v` bind-mount string the relay stores in the
+ * stdio config's `mounts` array.
+ */
+export interface MountRow {
+  host: string;
+  container: string;
+}
+
+/**
+ * Seeds the mount editor from a stored `mounts: string[]` array. Each entry is
+ * split on its first `:` into host/container halves (trimmed); an entry with
+ * no `:` becomes a host-only row so the user can finish it. Absent/empty input
+ * yields no rows.
+ */
+export function parseMountRows(mounts: string[] | undefined): MountRow[] {
+  if (!mounts) return [];
+  return mounts.map((entry) => {
+    const idx = entry.indexOf(':');
+    if (idx === -1) return { host: entry.trim(), container: '' };
+    return { host: entry.slice(0, idx).trim(), container: entry.slice(idx + 1).trim() };
+  });
+}
+
+/**
+ * Validates a single mount row. Returns an inline error message, or `null`
+ * when the row is OK (including a fully-empty row, which is skipped on
+ * submit). Enforces a single `:` separator with non-empty host and container
+ * parts — since the two halves are separate inputs, a literal `:` in either
+ * one would produce a malformed `host:container` string, so it is rejected.
+ */
+export function mountRowError(row: MountRow): string | null {
+  const host = row.host.trim();
+  const container = row.container.trim();
+  if (!host && !container) return null;
+  if (!host) return 'Host path is required';
+  if (!container) return 'Container path is required';
+  if (host.includes(':') || container.includes(':')) {
+    return 'Paths must not contain ":"';
+  }
+  return null;
+}
+
+/** True when any row fails {@link mountRowError}. Blocks submit. */
+export function hasMountRowErrors(rows: MountRow[]): boolean {
+  return rows.some((row) => mountRowError(row) !== null);
+}
+
+/**
+ * Serializes mount rows into the relay's `mounts: string[]` form. Trims each
+ * half, skips fully-empty rows, and joins the rest as `host:container`.
+ * Callers should gate submit on {@link hasMountRowErrors} first; this does no
+ * validation of its own.
+ */
+export function serializeMountRows(rows: MountRow[]): string[] {
+  const out: string[] = [];
+  for (const row of rows) {
+    const host = row.host.trim();
+    const container = row.container.trim();
+    if (!host && !container) continue;
+    out.push(`${host}:${container}`);
+  }
+  return out;
+}
+
+/** Structural equality for mount-row lists, used by the dirty check. */
+function sameMountList(a: MountRow[], b: MountRow[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].host !== b[i].host || a[i].container !== b[i].container) return false;
+  }
+  return true;
+}
+
+/**
  * Per-field error map for inputs that surface `aria-invalid` in the Add
  * Server modal. Presence of a key means that field failed validation; the
  * value is the human-readable message reused for both the inline state and
@@ -195,6 +271,7 @@ export interface AddEndpointFormSnapshot {
   scopes: string;
   serverTypeOverride: string;
   isolationEnabled: boolean;
+  mounts: MountRow[];
 }
 
 function sameKvList(
@@ -250,6 +327,7 @@ export function computeAddEndpointIsDirty(
   if (snapshot.scopes !== current.scopes) return true;
   if (snapshot.serverTypeOverride !== current.serverTypeOverride) return true;
   if (snapshot.isolationEnabled !== current.isolationEnabled) return true;
+  if (!sameMountList(snapshot.mounts, current.mounts)) return true;
   if (!sameKvList(snapshot.envVars, current.envVars)) return true;
   if (!sameKvList(snapshot.headerVars, current.headerVars)) return true;
   if (!sameRecord(snapshot.catalogEnvValues, current.catalogEnvValues)) return true;

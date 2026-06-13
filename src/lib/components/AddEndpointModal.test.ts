@@ -13,8 +13,13 @@ import {
   computeAddEndpointIsDirty,
   resolveIsolation,
   isolationEnabledFromConfig,
+  parseMountRows,
+  serializeMountRows,
+  mountRowError,
+  hasMountRowErrors,
   type AddEndpointFieldErrors,
   type AddEndpointFormSnapshot,
+  type MountRow,
 } from './add-endpoint-helpers';
 
 // `sanitizeName` mirrors the relay's `sanitize_server_name`
@@ -726,6 +731,7 @@ describe('computeAddEndpointIsDirty', () => {
       scopes: '',
       serverTypeOverride: '',
       isolationEnabled: true,
+      mounts: [],
       ...overrides,
     };
   }
@@ -828,6 +834,88 @@ describe('computeAddEndpointIsDirty', () => {
     const snap = makeSnapshot();
     expect(computeAddEndpointIsDirty(snap, makeSnapshot({ isolationEnabled: false }))).toBe(true);
     expect(computeAddEndpointIsDirty(snap, makeSnapshot({ isolationEnabled: true }))).toBe(false);
+  });
+
+  it('flags mount rows when added, edited, or removed', () => {
+    const snap = makeSnapshot();
+    expect(
+      computeAddEndpointIsDirty(snap, makeSnapshot({ mounts: [{ host: '', container: '' }] })),
+    ).toBe(true);
+    const withMount = makeSnapshot({ mounts: [{ host: '/a', container: '/b' }] });
+    expect(
+      computeAddEndpointIsDirty(withMount, makeSnapshot({ mounts: [{ host: '/a', container: '/c' }] })),
+    ).toBe(true);
+    expect(computeAddEndpointIsDirty(withMount, makeSnapshot({ mounts: [] }))).toBe(true);
+  });
+
+  it('returns false when mount rows match element-for-element', () => {
+    const snap = makeSnapshot({ mounts: [{ host: '/a', container: '/b' }] });
+    const current = makeSnapshot({ mounts: [{ host: '/a', container: '/b' }] });
+    expect(computeAddEndpointIsDirty(snap, current)).toBe(false);
+  });
+});
+
+// Volume-mount editor helpers — parse stored `mounts: string[]` into rows,
+// validate the two-input host/container pairs, and serialize back to the
+// relay's `host:container` array form.
+describe('mount row helpers', () => {
+  it('parseMountRows splits each entry on its first colon and trims', () => {
+    expect(parseMountRows(['~/.gmail-mcp:/home/node/.gmail-mcp'])).toEqual([
+      { host: '~/.gmail-mcp', container: '/home/node/.gmail-mcp' },
+    ]);
+    expect(parseMountRows(['  /host  :  /container  '])).toEqual([
+      { host: '/host', container: '/container' },
+    ]);
+  });
+
+  it('parseMountRows yields a host-only row for an entry with no colon', () => {
+    expect(parseMountRows(['/host-only'])).toEqual([{ host: '/host-only', container: '' }]);
+  });
+
+  it('parseMountRows treats only the first colon as the separator', () => {
+    expect(parseMountRows(['/a:/b:/c'])).toEqual([{ host: '/a', container: '/b:/c' }]);
+  });
+
+  it('parseMountRows returns [] for undefined/empty input', () => {
+    expect(parseMountRows(undefined)).toEqual([]);
+    expect(parseMountRows([])).toEqual([]);
+  });
+
+  it('mountRowError accepts a valid pair and a fully-empty row', () => {
+    expect(mountRowError({ host: '/a', container: '/b' })).toBeNull();
+    expect(mountRowError({ host: '  ', container: '' })).toBeNull();
+  });
+
+  it('mountRowError flags a missing host or container', () => {
+    expect(mountRowError({ host: '', container: '/b' })).toBe('Host path is required');
+    expect(mountRowError({ host: '/a', container: '' })).toBe('Container path is required');
+  });
+
+  it('mountRowError rejects a colon inside either half', () => {
+    expect(mountRowError({ host: '/a:/x', container: '/b' })).toBe('Paths must not contain ":"');
+    expect(mountRowError({ host: '/a', container: '/b:ro' })).toBe('Paths must not contain ":"');
+  });
+
+  it('hasMountRowErrors is true when any row is malformed', () => {
+    expect(hasMountRowErrors([{ host: '/a', container: '/b' }, { host: '', container: '' }])).toBe(false);
+    expect(hasMountRowErrors([{ host: '/a', container: '' }])).toBe(true);
+  });
+
+  it('serializeMountRows trims, skips empty rows, and joins with a colon', () => {
+    const rows: MountRow[] = [
+      { host: '  /host  ', container: '  /container  ' },
+      { host: '', container: '' },
+      { host: '~/.gmail-mcp', container: '/home/node/.gmail-mcp' },
+    ];
+    expect(serializeMountRows(rows)).toEqual([
+      '/host:/container',
+      '~/.gmail-mcp:/home/node/.gmail-mcp',
+    ]);
+  });
+
+  it('serializeMountRows round-trips through parseMountRows', () => {
+    const serialized = ['~/.gmail-mcp:/home/node/.gmail-mcp', '/data:/srv/data'];
+    expect(serializeMountRows(parseMountRows(serialized))).toEqual(serialized);
   });
 });
 

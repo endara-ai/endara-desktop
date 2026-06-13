@@ -2,7 +2,15 @@
   import { getEndpointConfig, updateEndpoint, getEndpoints, getStatus, type UpdateEndpointParams } from '$lib/api';
   import { selectedEndpoint, endpoints, selectedEndpointData } from '$lib/stores';
   import { registerDirtyChecker } from '$lib/stores/unsavedChangesGuard';
-  import { resolveIsolation, isolationEnabledFromConfig } from './add-endpoint-helpers';
+  import {
+    resolveIsolation,
+    isolationEnabledFromConfig,
+    parseMountRows,
+    serializeMountRows,
+    mountRowError,
+    hasMountRowErrors,
+    type MountRow,
+  } from './add-endpoint-helpers';
   import { sanitizeName } from '$lib/utils';
 
   type TransportType = 'stdio' | 'sse' | 'http' | 'oauth';
@@ -62,6 +70,11 @@
   // value (see resolveIsolation) because the relay's PUT rebuilds the whole
   // endpoint config from the request body.
   let isolationEnabled = $state(false);
+  // Volume mounts (stdio + container isolation only), seeded from the stored
+  // `mounts` array. Mirrors the env-var editor; serialized on save.
+  let mountRows: MountRow[] = $state([]);
+  // The mount section only applies when the endpoint runs in a container.
+  let showMounts = $derived(transport === 'stdio' && isolationEnabled);
   // null = unknown (older relay or status fetch failed); only an explicit
   // `false` from the relay drives the "no runtime" inline notice.
   let containerRuntimeAvailable: boolean | null = $state(null);
@@ -94,6 +107,7 @@
   let originalScopes = $state('');
   let originalServerTypeOverride = $state('');
   let originalIsolationEnabled = $state(false);
+  let originalMountRows = $state('[]');
 
   // Controls the Advanced <details> open state. Two-way bound so user toggles
   // stick across reactive re-renders; re-seeded from the loaded config on each
@@ -115,6 +129,7 @@
     originalScopes = scopes;
     originalServerTypeOverride = serverTypeOverride;
     originalIsolationEnabled = isolationEnabled;
+    originalMountRows = JSON.stringify(mountRows);
     advancedOpen = originalServerTypeOverride !== '';
   }
 
@@ -140,7 +155,8 @@
     clientSecretDirty ||
     scopes !== originalScopes ||
     serverTypeOverride !== originalServerTypeOverride ||
-    isolationEnabled !== originalIsolationEnabled
+    isolationEnabled !== originalIsolationEnabled ||
+    JSON.stringify(mountRows) !== originalMountRows
   );
 
   // Register a dirty-checker with the shared navigation guard so that any
@@ -203,6 +219,7 @@
         scopes = config.scopes ?? '';
         serverTypeOverride = config.server_type_override ?? '';
         isolationEnabled = isolationEnabledFromConfig(config.isolation);
+        mountRows = parseMountRows(config.mounts);
         snapshotOriginals();
       })
       .catch(() => {
@@ -252,6 +269,14 @@
       // config and treats an omitted field as direct spawn, so the toggle
       // state is sent as "container"/"none", never left implicit.
       params.isolation = resolveIsolation(transport, true, isolationEnabled);
+      // Block on any malformed mount row while the editor is visible, then
+      // always send an explicit array (possibly empty, to clear stored mounts)
+      // since the relay's PUT rebuilds the whole config from the body.
+      if (isolationEnabled && hasMountRowErrors(mountRows)) {
+        error = 'Fix the highlighted volume mount rows before saving.';
+        return;
+      }
+      params.mounts = serializeMountRows(mountRows);
     } else if (transport === 'oauth') {
       if (!url.trim()) { error = 'Server URL is required'; return; }
       params.url = url.trim();
@@ -541,6 +566,49 @@
             </div>
           {/each}
         </div>
+
+        <!-- Volume mounts (containerized stdio only) — host/container bind
+             pairs sent to the relay as `mounts: string[]`. -->
+        {#if showMounts}
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="block text-xs font-medium text-(--fg2)">
+                Volume mounts
+                <span class="text-(--fg2)/50">(optional)</span>
+              </span>
+              <button
+                type="button"
+                class="text-xs text-(--accent) hover:text-(--accent-hover)"
+                onclick={() => mountRows = [...mountRows, { host: '', container: '' }]}
+              >
+                + Add
+              </button>
+            </div>
+            {#each mountRows as mount, i}
+              {@const rowError = mountRowError(mount)}
+              <div class="flex gap-1 mb-1">
+                <input type="text" bind:value={mount.host} placeholder="/host/path"
+                  aria-invalid={!!rowError}
+                  class="flex-1 text-sm px-2 py-1 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono {rowError ? 'border-(--offline)' : 'border-(--border)'}" />
+                <span class="self-center text-xs text-(--fg2)">:</span>
+                <input type="text" bind:value={mount.container} placeholder="/container/path"
+                  aria-invalid={!!rowError}
+                  class="flex-1 text-sm px-2 py-1 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) font-mono {rowError ? 'border-(--offline)' : 'border-(--border)'}" />
+                <button
+                  type="button"
+                  class="text-xs px-1.5 text-(--fg2) hover:text-(--offline)"
+                  onclick={() => mountRows = mountRows.filter((_, idx) => idx !== i)}
+                >✕</button>
+              </div>
+              {#if rowError}
+                <p class="text-[11px] text-(--offline) mb-1">{rowError}</p>
+              {/if}
+            {/each}
+            <p class="text-[11px] text-(--fg2) mt-0.5">
+              Bind host paths into the container, e.g. <code>~/.gmail-mcp:/home/node/.gmail-mcp</code>.
+            </p>
+          </div>
+        {/if}
 
         <!-- HTTP Headers (SSE/HTTP only) -->
         {#if transport !== 'stdio'}

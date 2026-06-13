@@ -146,6 +146,12 @@ export interface AddEndpointParams {
    * omitted — because the relay treats an absent field as direct spawn.
    */
   isolation?: 'container' | 'none';
+  /**
+   * Bind mounts for containerized stdio endpoints. Each entry is a verbatim
+   * docker `-v` `"host_path:container_path"` pair (relative host paths are
+   * resolved by the relay). Omitted when empty.
+   */
+  mounts?: string[];
 }
 
 /**
@@ -263,6 +269,11 @@ export interface EndpointConfig {
    * Absent for legacy endpoints that never set it (= direct spawn).
    */
   isolation?: string;
+  /**
+   * Bind mounts stored for containerized stdio endpoints, as verbatim docker
+   * `-v` `"host_path:container_path"` pairs. Absent when none are configured.
+   */
+  mounts?: string[];
 }
 
 export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
@@ -303,6 +314,13 @@ export interface UpdateEndpointParams {
    * direct spawn on save.
    */
   isolation?: string;
+  /**
+   * Bind mounts for containerized stdio endpoints, as verbatim docker `-v`
+   * `"host_path:container_path"` pairs. The relay's PUT rebuilds the whole
+   * endpoint config from the body, so the desktop always sends an explicit
+   * array (possibly empty, to clear) for stdio endpoints.
+   */
+  mounts?: string[];
 }
 
 export async function startOAuth(name: string): Promise<OAuthStartResult> {
