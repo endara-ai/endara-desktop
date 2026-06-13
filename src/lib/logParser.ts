@@ -257,9 +257,11 @@ export function parseLogLine(
     }
     cleanMessage = cleanMessage.replace(full, '');
   }
-  // After span removal we may be left with leading whitespace and a stray
-  // ": " separator that preceded the message text. Collapse both.
-  cleanMessage = cleanMessage.replace(/^\s+/, '').replace(/^:\s*/, '').trim();
+  // After span removal we may be left with leading whitespace and one or more
+  // stray ":" separators (one per removed span, e.g. nested spans leave `::`)
+  // that preceded the message text. Strip every leading whitespace/colon in a
+  // single pass; in-message colons are untouched.
+  cleanMessage = cleanMessage.replace(/^[\s:]+/, '').trim();
 
   // Scan with a regex (not split-on-whitespace) so quoted multi-word values
   // such as `endpoint="Two Words"` stay intact instead of leaking the trailing

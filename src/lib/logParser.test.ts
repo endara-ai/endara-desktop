@@ -702,3 +702,52 @@ describe('parseLogLine — trailing event fields (defense-in-depth)', () => {
   });
 });
 
+describe('parseLogLine — leading colon cleanup after span removal', () => {
+  // A single span leaves one `: ` separator before the message text. The
+  // cleanup must drop it so users never see a leading colon on the row.
+  it('strips the leading colon left by a single endpoint span', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: MCP server process spawned',
+    );
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.message).toBe('MCP server process spawned');
+    expect(parsed.message.startsWith(':')).toBe(false);
+  });
+
+  // Nested spans (e.g. the watcher's `endpoint{…}` wrapping the adapter's
+  // `endpoint{…}`) leave `::` once both are removed. All leading colons go.
+  it('strips the double colon left by two nested endpoint spans', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}:endpoint{endpoint="github"}: MCP server process spawned',
+    );
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.message).toBe('MCP server process spawned');
+    expect(parsed.message.startsWith(':')).toBe(false);
+  });
+
+  // No span at all, but a stray leading colon (e.g. left after timestamp/level
+  // stripping) must still be removed.
+  it('strips a stray leading colon when no span is present', () => {
+    const parsed = parseLogLine(
+      'info',
+      '2026-05-20T17:54:47.123Z INFO : MCP server process spawned',
+    );
+    expect(parsed.level).toBe('info');
+    expect(parsed.message).toBe('MCP server process spawned');
+    expect(parsed.message.startsWith(':')).toBe(false);
+  });
+
+  // Only leading colons are stripped — a colon inside the message body
+  // (e.g. `Reason: foo`) must be preserved.
+  it('preserves colons inside the message body', () => {
+    const parsed = parseLogLine(
+      'info',
+      'endpoint{endpoint="github"}: Reason: connection refused',
+    );
+    expect(parsed.endpoint).toBe('github');
+    expect(parsed.message).toBe('Reason: connection refused');
+  });
+});
+
