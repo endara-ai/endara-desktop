@@ -31,7 +31,7 @@ describe('getIsolationBadge', () => {
     };
     const badge = getIsolationBadge(iso);
     expect(badge?.kind).toBe('container');
-    expect(badge?.label).toBe('Containerized (docker)');
+    expect(badge?.label).toBe('CONTAINERIZED (docker)');
   });
 
   it('names podman when that is the reported runtime', () => {
@@ -40,21 +40,21 @@ describe('getIsolationBadge', () => {
       actual: 'container',
       runtime: 'podman',
     };
-    expect(getIsolationBadge(iso)?.label).toBe('Containerized (podman)');
+    expect(getIsolationBadge(iso)?.label).toBe('CONTAINERIZED (podman)');
   });
 
   it('omits the runtime suffix when the relay does not report one', () => {
     const iso: IsolationState = { configured: 'container', actual: 'container' };
     const badge = getIsolationBadge(iso);
     expect(badge?.kind).toBe('container');
-    expect(badge?.label).toBe('Containerized');
+    expect(badge?.label).toBe('CONTAINERIZED');
   });
 
   it('returns a warning fallback badge when configured = container but actual = direct', () => {
     const iso: IsolationState = { configured: 'container', actual: 'direct' };
     const badge = getIsolationBadge(iso);
     expect(badge?.kind).toBe('fallback');
-    expect(badge?.label).toBe('Direct (fallback)');
+    expect(badge?.label).toBe('DIRECT (fallback)');
     expect(badge?.title).toContain('fell back');
   });
 });

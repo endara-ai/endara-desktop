@@ -32,8 +32,8 @@ export interface IsolationBadgeInfo {
 /**
  * Compute the isolation badge for an endpoint, or `null` when no badge
  * should render:
- * - actual = container → "Containerized (runtime)" badge.
- * - configured = container but actual = direct → warning "Direct (fallback)"
+ * - actual = container → "CONTAINERIZED (runtime)" badge.
+ * - configured = container but actual = direct → warning "DIRECT (fallback)"
  *   badge so silent fallbacks are visible.
  * - absent (non-stdio / older relay) or a normal direct spawn
  *   (configured = none, actual = direct) → no badge.
@@ -45,14 +45,14 @@ export function getIsolationBadge(
   if (isolation.actual === 'container') {
     return {
       kind: 'container',
-      label: isolation.runtime ? `Containerized (${isolation.runtime})` : 'Containerized',
+      label: isolation.runtime ? `CONTAINERIZED (${isolation.runtime})` : 'CONTAINERIZED',
       title: 'This server runs inside an isolated container',
     };
   }
   if (isolation.configured === 'container') {
     return {
       kind: 'fallback',
-      label: 'Direct (fallback)',
+      label: 'DIRECT (fallback)',
       title:
         'Container isolation is configured, but the server fell back to running directly on the host (no usable container runtime)',
     };
