@@ -40,10 +40,13 @@
 
   // Per-card dismiss bar lives inside `OverlayCard` and reads its
   // timing state from `group.dismissTick` + `group.inflight`/
-  // `group.success`/`group.error`. The duration is supplied reactively
-  // by the parent (`OverlayApp` passes the live
-  // `$overlaySettings.auto_dismiss_ms`) and piped down so the CSS
-  // keyframe and the per-group `setTimeout` in `toastStore` stay aligned.
+  // `group.success`/`group.error`. An armed group carries the exact
+  // duration its per-group `setTimeout` was armed with on
+  // `group.dismissDurationMs`, and the card's CSS keyframe reads THAT —
+  // so the bar and the timer can never desync mid-countdown. This piped
+  // `dismissMs` (the live `$overlaySettings.auto_dismiss_ms` from
+  // `OverlayApp`) is forwarded only as the card's fallback default for
+  // groups that are not currently counting down.
   const dismissDurationMs = $derived(dismissMs);
 
   // Right-anchored corners slide in/out toward +x, left-anchored toward

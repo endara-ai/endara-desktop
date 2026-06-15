@@ -35,6 +35,7 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     requests: [],
     lastUpdatedAt: 0,
     dismissAt: null,
+    dismissDurationMs: null,
     dismissTick: 0,
     ...over,
   };
@@ -362,7 +363,7 @@ describe('OverlayCard — per-card dismiss bar', () => {
     expect(src).toMatch(/class="tf-dismiss-bar"/);
     expect(src).toMatch(/class="tf-dismiss-fill"/);
     expect(src).toMatch(/style:background=\{barColor\}/);
-    expect(src).toMatch(/style:animation-duration="\{dismissDurationMs\}ms"/);
+    expect(src).toMatch(/style:animation-duration="\{barDurationMs\}ms"/);
     // No animation-play-state binding — hover-pause is gone.
     expect(src).not.toMatch(/animation-play-state/);
   });
@@ -370,5 +371,25 @@ describe('OverlayCard — per-card dismiss bar', () => {
   it('OverlayCard.svelte derives barTick from `group.dismissTick`', async () => {
     const src = (await import('./OverlayCard.svelte?raw')).default as string;
     expect(src).toMatch(/const barTick = \$derived\(group\.dismissTick\)/);
+  });
+
+  // The bar's CSS keyframe duration must read the value the store
+  // captured for THIS countdown (`group.dismissDurationMs`) so it stays
+  // in sync with the per-group `setTimeout`, falling back to the
+  // `dismissDurationMs` prop only when the group is not counting down.
+  it('OverlayCard.svelte derives barDurationMs from group.dismissDurationMs with the prop fallback', async () => {
+    const src = (await import('./OverlayCard.svelte?raw')).default as string;
+    expect(src).toMatch(
+      /const barDurationMs = \$derived\(group\.dismissDurationMs \?\? dismissDurationMs\)/,
+    );
+  });
+
+  // Logic mirror of the `$derived` above: an armed group's captured
+  // duration wins; a null (not-counting-down) group uses the prop.
+  it('bar duration uses group.dismissDurationMs when set, else the prop fallback', () => {
+    const barDurationMs = (group: ToolCallGroup, prop: number) =>
+      group.dismissDurationMs ?? prop;
+    expect(barDurationMs(g({ dismissDurationMs: 6000 }), 2000)).toBe(6000);
+    expect(barDurationMs(g({ dismissDurationMs: null }), 2000)).toBe(2000);
   });
 });

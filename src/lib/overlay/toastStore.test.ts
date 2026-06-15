@@ -469,4 +469,77 @@ describe('toastStore', () => {
       expect(b.dismissTick).toBe(0);
     });
   });
+
+  // `dismissDurationMs` captures, ON the group, the exact duration the
+  // per-group `setTimeout` was armed with — so the bar's CSS keyframe
+  // (which reads `group.dismissDurationMs`) can never desync from the
+  // timer. A `setOpts` mid-countdown only affects FUTURE arms.
+  describe('per-group captured dismiss duration', () => {
+    it('new group starts with dismissDurationMs=null', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissDurationMs).toBeNull();
+    });
+
+    it('settle while inflight remains > 0 does NOT capture a duration (stays null)', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.addStarted(started({ request_id: 'req-2' }));
+      store.settle(completed('req-1', 'ok'));
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissDurationMs).toBeNull();
+    });
+
+    it('settle-arm captures dismissDurationMs equal to the current opts.dismissMs', () => {
+      const store = createToastStore({ dismissMs: 1500 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissDurationMs).toBe(1500);
+      expect(store.getOpts().dismissMs).toBe(1500);
+    });
+
+    it('changing opts mid-countdown does NOT change an already-armed group dismissDurationMs', () => {
+      const store = createToastStore({ dismissMs: 2000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      expect((get(store) as ToolCallGroup[])[0].dismissDurationMs).toBe(2000);
+      // Settings change while the card is counting down: future arms get
+      // 6000, but the already-armed group keeps the 2000 it was armed with.
+      store.setOpts({ dismissMs: 6000 });
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissDurationMs).toBe(2000);
+      expect(g.dismissAt).toBe(g.lastUpdatedAt + 2000);
+    });
+
+    it('a new arm after setOpts picks up the new duration for BOTH bar and timer', () => {
+      const store = createToastStore({ dismissMs: 2000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      // Cancel the countdown with a same-group started, then change opts.
+      store.addStarted(started({ request_id: 'req-2' }));
+      expect((get(store) as ToolCallGroup[])[0].dismissDurationMs).toBeNull();
+      store.setOpts({ dismissMs: 6000 });
+      const t0 = Date.now();
+      store.settle(completed('req-2', 'ok'));
+      const g = (get(store) as ToolCallGroup[])[0];
+      expect(g.dismissDurationMs).toBe(6000);
+      expect(g.dismissAt as number).toBe(t0 + 6000);
+      // And the timer fires at the new 6000 offset, not the old 2000.
+      vi.advanceTimersByTime(5999);
+      expect(get(store)).toHaveLength(1);
+      vi.advanceTimersByTime(2);
+      expect(get(store)).toEqual([]);
+    });
+
+    it('cancellation by same-group addStarted resets dismissDurationMs to null', () => {
+      const store = createToastStore({ dismissMs: 1000 });
+      store.addStarted(started({ request_id: 'req-1' }));
+      store.settle(completed('req-1', 'ok'));
+      expect((get(store) as ToolCallGroup[])[0].dismissDurationMs).toBe(1000);
+      store.addStarted(started({ request_id: 'req-2' }));
+      expect((get(store) as ToolCallGroup[])[0].dismissDurationMs).toBeNull();
+    });
+  });
 });

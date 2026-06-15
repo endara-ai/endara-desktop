@@ -75,6 +75,13 @@ export type ToolCallGroup = {
   // When this group started its own countdown (`Date.now() + opts.dismissMs`
   // at arm time), or `null` when no timer is running for this group.
   dismissAt: number | null;
+  // The exact duration (ms) the current countdown's `setTimeout` was
+  // armed with — captured from `opts.dismissMs` at arm time so the bar's
+  // CSS `animation-duration` reads the SAME value the timer is using. A
+  // later `setOpts` (e.g. `auto_dismiss_ms` changing mid-countdown) only
+  // affects FUTURE arms, never a card already counting down. `null` when
+  // no timer is running for this group.
+  dismissDurationMs: number | null;
   // Monotonically increasing per-group arm counter. The `OverlayCard`
   // uses this in `{#key group.dismissTick}` so the CSS keyframe on the
   // dismiss-fill remounts from 0% on every (re)arm.
@@ -181,6 +188,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         profile: event.profile ?? null,
         client: event.client ?? existing.client,
         dismissAt: wasCountingDown ? null : existing.dismissAt,
+        dismissDurationMs: wasCountingDown ? null : existing.dismissDurationMs,
         dismissTick: wasCountingDown ? existing.dismissTick + 1 : existing.dismissTick,
       };
       // Move to end (newest position).
@@ -200,6 +208,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         requests: [req],
         lastUpdatedAt: now,
         dismissAt: null,
+        dismissDurationMs: null,
         dismissTick: 0,
       });
     }
@@ -249,6 +258,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       error: target.error + (isError ? 1 : 0),
       lastUpdatedAt: now,
       dismissAt: willArm ? now + opts.dismissMs : target.dismissAt,
+      dismissDurationMs: willArm ? opts.dismissMs : target.dismissDurationMs,
       dismissTick: willArm ? target.dismissTick + 1 : target.dismissTick,
     };
     groups = groups.map((g) => (g.id === target.id ? updated : g));
