@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime;
 use tauri::webview::Color;
@@ -156,6 +157,7 @@ pub struct OverlaySubscriberState {
 
 /// Poll interval for the cursor poller while hit rects are present. Fast
 /// enough that hover feels immediate, slow enough to be negligible CPU.
+#[cfg(not(target_os = "macos"))]
 const HIT_RECT_POLL_INTERVAL: Duration = Duration::from_millis(90);
 
 /// Axis-aligned card hit rect in overlay-window viewport coordinates
@@ -187,6 +189,7 @@ pub fn any_rect_contains(rects: &[HitRect], x: f64, y: f64) -> bool {
 /// overlay window is undecorated, so its outer position IS the viewport
 /// origin. A non-positive scale factor (defensive; never expected from
 /// Tauri) falls back to 1.0 rather than dividing by zero.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn cursor_to_viewport(
     cursor: PhysicalPosition<f64>,
     window_pos: PhysicalPosition<i32>,
@@ -203,29 +206,53 @@ pub fn cursor_to_viewport(
     )
 }
 
-/// Tauri-managed state for the cursor poller. `rects` is shared with the
-/// running poller task (refreshed in place on every renderer report);
-/// `poller` holds the task handle so an empty report can abort it.
+/// Tauri-managed shared state for overlay click routing. `rects` holds the
+/// renderer-reported card rects (viewport / CSS px). On macOS the overlay's
+/// `hitTest:` override reads them lock-free on the AppKit main thread; on
+/// other platforms the cursor poller reads them and `poller` holds its task
+/// handle so an empty report can abort it.
 #[derive(Default)]
 pub struct OverlayHitState {
-    rects: Arc<std::sync::Mutex<Vec<HitRect>>>,
+    rects: Arc<ArcSwap<Vec<HitRect>>>,
+    #[cfg(not(target_os = "macos"))]
     poller: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
-/// Apply a renderer hit-rect report: store the rects, then start or stop the
-/// poller as needed. Empty report → abort the poller and restore
+/// Apply a renderer hit-rect report.
+///
+/// On macOS the overlay's `hitTest:` override (see [`macos_panel`]) reads the
+/// rects directly on the AppKit main thread, so all this does is a single
+/// lock-free store per renderer report — no poller, no `setIgnoresMouseEvents`
+/// toggle. On other platforms it drives the cursor poller.
+pub fn update_hit_rects(app: &AppHandle, state: &OverlayHitState, rects: Vec<HitRect>) {
+    #[cfg(target_os = "macos")]
+    {
+        // The overlay content view's `hitTest:` override consults these rects
+        // synchronously on every mouse event; storing them is the whole job.
+        let _ = app;
+        state.rects.store(Arc::new(rects));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        update_hit_rects_polled(app, state, rects);
+    }
+}
+
+/// Cursor-poller variant of [`update_hit_rects`] for platforms without the
+/// macOS `hitTest:` override. Empty report → abort the poller and restore
 /// click-through (covers "last card dismissed while hovered"). Non-empty →
 /// ensure exactly one poller task is running.
 ///
 /// Debug builds are a no-op: `build_overlay_window` never enables
 /// click-through there (the window stays fully interactive for devtools), so
 /// a poller toggling the ignore flag would only break that.
-pub fn update_hit_rects(app: &AppHandle, state: &OverlayHitState, rects: Vec<HitRect>) {
+#[cfg(not(target_os = "macos"))]
+fn update_hit_rects_polled(app: &AppHandle, state: &OverlayHitState, rects: Vec<HitRect>) {
     if cfg!(debug_assertions) {
         return;
     }
     let empty = rects.is_empty();
-    *state.rects.lock().expect("hit-rect mutex poisoned") = rects;
+    state.rects.store(Arc::new(rects));
 
     let mut poller = state.poller.lock().expect("poller mutex poisoned");
     if empty {
@@ -258,7 +285,8 @@ pub fn update_hit_rects(app: &AppHandle, state: &OverlayHitState, rects: Vec<Hit
 /// transitions only (the underlying OS call is not free). Exits when the
 /// overlay window is gone (overlay disabled); `update_hit_rects` aborts it
 /// when the rect list empties.
-async fn cursor_poll_loop(app: AppHandle, rects: Arc<std::sync::Mutex<Vec<HitRect>>>) {
+#[cfg(not(target_os = "macos"))]
+async fn cursor_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>>>) {
     let mut hovering = false;
     loop {
         tokio::time::sleep(HIT_RECT_POLL_INTERVAL).await;
@@ -273,7 +301,7 @@ async fn cursor_poll_loop(app: AppHandle, rects: Arc<std::sync::Mutex<Vec<HitRec
             (Ok(cursor), Ok(pos)) => {
                 let scale = window.scale_factor().unwrap_or(1.0);
                 let (x, y) = cursor_to_viewport(cursor, pos, scale);
-                let rects = rects.lock().expect("hit-rect mutex poisoned");
+                let rects = rects.load();
                 any_rect_contains(&rects, x, y)
             }
             _ => false,
@@ -288,6 +316,138 @@ async fn cursor_poll_loop(app: AppHandle, rects: Arc<std::sync::Mutex<Vec<HitRec
             }
             hovering = inside;
         }
+    }
+}
+
+/// macOS-native overlay click routing: a non-activating panel plus an
+/// `NSView` `hitTest:` override that consults renderer-reported card rects so
+/// clicks inside a card reach the WKWebView and clicks elsewhere pass through
+/// to whatever window is underneath. Replaces the cursor poller +
+/// `setIgnoresMouseEvents` toggle, which raced AppKit's event routing and let
+/// clicks activate Endara instead of reaching the webview.
+#[cfg(target_os = "macos")]
+mod macos_panel {
+    use std::sync::Arc;
+
+    use arc_swap::ArcSwap;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker};
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindow, NSWindowStyleMask};
+    use objc2_foundation::NSPoint;
+
+    use super::{any_rect_contains, HitRect};
+
+    /// Instance state for [`OverlayHitTestView`]: the shared, lock-free card
+    /// rects refreshed by `set_overlay_hit_rects`.
+    pub(super) struct OverlayHitTestIvars {
+        rects: Arc<ArcSwap<Vec<HitRect>>>,
+    }
+
+    define_class!(
+        /// Thin wrapper installed as the overlay window's content view.
+        /// `hitTest:` consults the renderer-reported card rects so clicks
+        /// inside a card reach the WKWebView while clicks elsewhere return
+        /// `nil` and pass through to whatever window is underneath.
+        #[unsafe(super(NSView))]
+        #[ivars = OverlayHitTestIvars]
+        pub(super) struct OverlayHitTestView;
+
+        impl OverlayHitTestView {
+            /// `point` arrives in the superview's coordinate system; convert it
+            /// into our local (flipped, top-left) space so it lines up with the
+            /// renderer's CSS-pixel rects, then route the click.
+            #[unsafe(method(hitTest:))]
+            fn hit_test(&self, point: NSPoint) -> *mut NSView {
+                // SAFETY: `superview` returns a borrowed view we use only for
+                // the immediately-following coordinate conversion.
+                let superview = unsafe { self.superview() };
+                let local = self.convertPoint_fromView(point, superview.as_deref());
+                let guard = self.ivars().rects.load();
+                let rects: &[HitRect] = &guard;
+                if any_rect_contains(rects, local.x, local.y) {
+                    // Inside a card → let NSView descend to the WKWebView.
+                    unsafe { msg_send![super(self), hitTest: point] }
+                } else {
+                    // Outside every card → pass the click through.
+                    std::ptr::null_mut()
+                }
+            }
+
+            /// Top-left origin so local coordinates match the renderer's
+            /// `getBoundingClientRect` values (CSS px, top-left) with no Y flip.
+            #[unsafe(method(isFlipped))]
+            fn is_flipped(&self) -> bool {
+                true
+            }
+
+            /// Deliver the very first click immediately even when the panel was
+            /// not previously key — no separate activation click.
+            #[unsafe(method(acceptsFirstMouse:))]
+            fn accepts_first_mouse(&self, _event: *mut AnyObject) -> bool {
+                true
+            }
+        }
+    );
+
+    impl OverlayHitTestView {
+        fn new(mtm: MainThreadMarker, rects: Arc<ArcSwap<Vec<HitRect>>>) -> Retained<Self> {
+            let this = mtm
+                .alloc::<OverlayHitTestView>()
+                .set_ivars(OverlayHitTestIvars { rects });
+            unsafe { msg_send![super(this), init] }
+        }
+    }
+
+    /// Convert the overlay window into a non-activating panel and wrap its
+    /// content view with [`OverlayHitTestView`]. Must run on the AppKit main
+    /// thread. `ns_window_addr` is the live `NSWindow` pointer smuggled across
+    /// the closure boundary as a `usize` (raw pointers are not `Send`).
+    pub(super) fn configure(ns_window_addr: usize, rects: Arc<ArcSwap<Vec<HitRect>>>) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            log::warn!(target: "overlay", "overlay panel setup skipped: not on the main thread");
+            return;
+        };
+        // SAFETY: `ns_window_addr` is the live `NSWindow` returned by
+        // `ns_window()`, only dereferenced here on the main thread.
+        let ns_window: &NSWindow = unsafe { &*(ns_window_addr as *const NSWindow) };
+
+        // Keep the overlay anchored to its computed corner (NSWindow defaults
+        // to `isMovable = true`, which would let the user drag it anywhere by
+        // clicking-and-holding any part of it, including transparent regions).
+        ns_window.setMovable(false);
+
+        // Non-activating panel: clicking the overlay must not activate Endara
+        // or raise its main window. `NSWindowStyleMaskNonactivatingPanel`
+        // (1 << 7) is the style every macOS HUD/overlay uses.
+        let style = ns_window.styleMask();
+        ns_window.setStyleMask(style | NSWindowStyleMask::NonactivatingPanel);
+
+        let Some(content) = ns_window.contentView() else {
+            log::warn!(target: "overlay", "overlay panel setup: window has no content view to wrap");
+            return;
+        };
+
+        let wrapper = OverlayHitTestView::new(mtm, rects);
+        wrapper.setFrame(content.frame());
+        let resize = NSAutoresizingMaskOptions::ViewWidthSizable
+            | NSAutoresizingMaskOptions::ViewHeightSizable;
+        wrapper.setAutoresizingMask(resize);
+
+        // `setContentView:` detaches `content` from the window; our retained
+        // handle keeps it alive so we can re-parent it under the wrapper.
+        let wrapper_view: &NSView = &wrapper;
+        ns_window.setContentView(Some(wrapper_view));
+
+        let content_view: &NSView = &content;
+        content_view.setFrame(wrapper.bounds());
+        content_view.setAutoresizingMask(resize);
+        wrapper.addSubview(content_view);
+
+        log::info!(
+            target: "overlay",
+            "overlay configured as non-activating panel with hitTest passthrough"
+        );
     }
 }
 
@@ -578,71 +738,65 @@ pub fn build_overlay_window(
 
     let window = builder.build()?;
 
-    // Disable native window dragging on macOS. `NSWindow` defaults to
-    // `isMovable = true`, which lets the user drag the entire overlay
-    // window by clicking-and-holding anywhere on it (including
-    // transparent regions) — wrong for an overlay that must stay
-    // anchored to its computed corner. Tauri 2's `WebviewWindowBuilder`
-    // does not expose this knob, so call `setMovable:` on the
-    // underlying `NSWindow` directly. Dispatch onto the macOS main
-    // thread because `build_overlay_window` can be invoked from a
-    // Tauri command worker thread (`set_overlay_settings` → enable
-    // overlay from Settings) where calling AppKit selectors directly
-    // aborts the process. The window is built hidden (`visible(false)`
-    // above) and only revealed via the `overlay-render-ready` event /
-    // 500ms safety net below, both of which themselves go through the
-    // main thread, so the `setMovable:` message lands before the
-    // window can appear in a draggable state.
+    // On macOS, convert the overlay into a non-activating panel and wrap its
+    // content view with an `NSView` `hitTest:` override (see `macos_panel`):
+    // clicks inside a renderer-reported card rect reach the WKWebView, clicks
+    // elsewhere pass through to the window underneath, and the overlay never
+    // activates Endara. This also pins the window in place (`setMovable:
+    // false`) so it can't be dragged off its computed corner. Dispatch onto
+    // the macOS main thread because `build_overlay_window` can be invoked from
+    // a Tauri command worker thread (`set_overlay_settings` → enable overlay
+    // from Settings) where calling AppKit selectors directly aborts the
+    // process. The window is built hidden (`visible(false)` above) and only
+    // revealed via the `overlay-render-ready` event / 500ms safety net below,
+    // both of which themselves go through the main thread, so this lands before
+    // the window can appear.
     #[cfg(target_os = "macos")]
     {
-        use objc2::msg_send;
-        use objc2::runtime::AnyObject;
+        let rects = Arc::clone(&app.state::<OverlayHitState>().rects);
         match window.ns_window() {
             Ok(ptr) if !ptr.is_null() => {
                 // Raw pointers are not `Send`; smuggle the `NSWindow`
                 // address across the closure boundary as a `usize`.
                 let ns_window_addr = ptr as usize;
                 if let Err(e) = app.run_on_main_thread(move || {
-                    let ns_window = ns_window_addr as *mut AnyObject;
-                    // SAFETY: `ns_window()` returned the live
-                    // `NSWindow` pointer owned by AppKit; we only
-                    // borrow it for a single Obj-C message send,
-                    // dispatched on the macOS main thread.
-                    unsafe {
-                        let _: () = msg_send![&*ns_window, setMovable: false];
-                    }
+                    macos_panel::configure(ns_window_addr, rects);
                 }) {
                     log::warn!(
                         target: "overlay",
-                        "run_on_main_thread for setMovable failed: {e}; overlay window remains draggable"
+                        "run_on_main_thread for overlay panel setup failed: {e}; overlay stays a plain activating window"
                     );
                 }
             }
             Ok(_) => log::warn!(
                 target: "overlay",
-                "ns_window() returned null; overlay window remains draggable"
+                "ns_window() returned null; overlay panel setup skipped"
             ),
             Err(e) => log::warn!(
                 target: "overlay",
-                "ns_window() failed: {e}; overlay window remains draggable"
+                "ns_window() failed: {e}; overlay panel setup skipped"
             ),
         }
     }
 
-    // Click-through by default — the Rust-side cursor poller (see
+    // Non-macOS: click-through by default — the Rust-side cursor poller (see
     // `update_hit_rects` / `cursor_poll_loop` above) flips this while the
-    // global cursor is over a renderer-reported card rect. In debug builds
-    // we skip the global click-through so the overlay window is fully
-    // interactive and right-click → Inspect works from devtools; production
-    // builds keep the original click-through behaviour so the overlay never
-    // steals input from the user's other windows.
-    if cfg!(debug_assertions) {
-        log::info!(
-            target: "overlay",
-            "debug build: overlay window is interactive (set_ignore_cursor_events skipped); right-click → Inspect to open devtools"
-        );
-    } else if let Err(e) = window.set_ignore_cursor_events(true) {
-        log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
+    // global cursor is over a renderer-reported card rect. In debug builds we
+    // skip the global click-through so the overlay window is fully interactive
+    // and right-click → Inspect works from devtools; production builds keep the
+    // click-through behaviour so the overlay never steals input from the user's
+    // other windows. macOS routes clicks via the panel + `hitTest:` override
+    // installed above and never toggles `set_ignore_cursor_events`.
+    #[cfg(not(target_os = "macos"))]
+    {
+        if cfg!(debug_assertions) {
+            log::info!(
+                target: "overlay",
+                "debug build: overlay window is interactive (set_ignore_cursor_events skipped); right-click → Inspect to open devtools"
+            );
+        } else if let Err(e) = window.set_ignore_cursor_events(true) {
+            log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
+        }
     }
 
     // Primary reveal path: the renderer emits `overlay-render-ready` after a
@@ -987,6 +1141,37 @@ mod tests {
         assert!(any_rect_contains(&rects, 105.0, 105.0));
         assert!(!any_rect_contains(&rects, 50.0, 50.0));
         assert!(!any_rect_contains(&[], 5.0, 5.0));
+    }
+
+    #[test]
+    fn hit_test_passthrough_matches_card_rects_in_local_coords() {
+        // Decision logic of the macOS `hitTest:` override: the wrapper view is
+        // flipped (top-left origin), so renderer rects compare directly against
+        // the view-local point with no Y inversion. Inside a card → capture
+        // (return super.hitTest); outside every card → pass through (return
+        // nil). Coordinates mirror a real diagnostic-log report.
+        let cards = [
+            HitRect {
+                x: 40.0,
+                y: 1032.0,
+                width: 340.0,
+                height: 100.0,
+            },
+            HitRect {
+                x: 40.0,
+                y: 900.0,
+                width: 340.0,
+                height: 100.0,
+            },
+        ];
+        // Point inside the first card → captured.
+        assert!(any_rect_contains(&cards, 47.3, 1060.6));
+        // Gap between the two cards → passed through.
+        assert!(!any_rect_contains(&cards, 200.0, 1010.0));
+        // Transparent strip left of the cards → passed through.
+        assert!(!any_rect_contains(&cards, 10.0, 1060.0));
+        // No cards at all → everything passes through.
+        assert!(!any_rect_contains(&[], 47.3, 1060.6));
     }
 
     #[test]
