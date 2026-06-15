@@ -37,10 +37,12 @@ http-body-util = "0.1"
 regex = "1.12.3"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 time = { version = "0.3.47", features = ["formatting"] }
+arc-swap = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
-objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSRunningApplication"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSObjCRuntime"] }
 objc2-web-kit = { version = "0.3.2", features = ["WKNavigationDelegate", "WKNavigation", "WKWebView"] }
 
 [target.'cfg(unix)'.dependencies]

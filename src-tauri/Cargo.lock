@@ -85,6 +85,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a3a1fd6f75306b68087b831f025c712524bcb19aad54e557b1129cfa0a2b207"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1116,6 +1125,7 @@ dependencies = [
 name = "endara-desktop"
 version = "0.1.9"
 dependencies = [
+ "arc-swap",
  "dirs 5.0.1",
  "hostname",
  "http-body-util",
@@ -1126,6 +1136,7 @@ dependencies = [
  "log",
  "objc2",
  "objc2-app-kit",
+ "objc2-foundation",
  "objc2-web-kit",
  "regex",
  "reqwest",
@@ -5100,7 +5111,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.18",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.2+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
