@@ -966,7 +966,7 @@
           </fieldset>
         {/if}
 
-        <div>
+        <div class="mt-2">
           <label for="modal-ep-name" class="block text-xs font-medium mb-1 text-(--fg2)">Name</label>
           <input id="modal-ep-name" type="text" bind:value={name} placeholder="my-server"
             aria-invalid={!!fieldErrors.name}
