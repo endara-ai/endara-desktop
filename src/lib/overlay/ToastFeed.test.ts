@@ -336,11 +336,22 @@ describe('ToastFeed — per-card dismiss bar plumbing', () => {
     expect(overlayCardMatches).toHaveLength(1);
   });
 
-  it('ToastFeed.svelte derives dismissDurationMs from `store.getOpts().dismissMs`', async () => {
+  it('ToastFeed.svelte accepts a `dismissMs` prop and derives dismissDurationMs from it', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    expect(src).toMatch(
-      /const dismissDurationMs = \$derived\(store\.getOpts\(\)\.dismissMs\)/,
-    );
+    // `dismissMs` is a declared prop (typed in `Props` + destructured from
+    // `$props()`), so the duration tracks the parent reactively rather than
+    // reading the seed value off `store.getOpts()`.
+    expect(src).toMatch(/dismissMs\?: number;/);
+    expect(src).toMatch(/dismissMs = 6000,/);
+    expect(src).toMatch(/const dismissDurationMs = \$derived\(dismissMs\)/);
+    // The old `store.getOpts().dismissMs` derivation must be gone so the
+    // bar duration is not stuck at the store's seed value.
+    expect(src).not.toMatch(/\$derived\(store\.getOpts\(\)\.dismissMs\)/);
+  });
+
+  it('OverlayApp.svelte passes $overlaySettings.auto_dismiss_ms to <ToastFeed>', async () => {
+    const src = (await import('./OverlayApp.svelte?raw')).default as string;
+    expect(src).toMatch(/dismissMs=\{\$overlaySettings\.auto_dismiss_ms\}/);
   });
 
   it('ToastFeed.svelte does NOT expose any hover-pause state to OverlayCard', async () => {

@@ -23,6 +23,7 @@
     maxVisible?: number;
     cardWidth?: number;
     showProfile?: boolean;
+    dismissMs?: number;
   };
   let {
     store,
@@ -30,6 +31,7 @@
     maxVisible = 7,
     cardWidth = 340,
     showProfile = true,
+    dismissMs = 6000,
   }: Props = $props();
 
   const groups = $derived($store);
@@ -38,11 +40,11 @@
 
   // Per-card dismiss bar lives inside `OverlayCard` and reads its
   // timing state from `group.dismissTick` + `group.inflight`/
-  // `group.success`/`group.error`. The duration captured by the
-  // matching `setTimeout` in `toastStore` is exposed via
-  // `store.getOpts().dismissMs` and piped down so the CSS keyframe
-  // and the JS timeout stay aligned.
-  const dismissDurationMs = $derived(store.getOpts().dismissMs);
+  // `group.success`/`group.error`. The duration is supplied reactively
+  // by the parent (`OverlayApp` passes the live
+  // `$overlaySettings.auto_dismiss_ms`) and piped down so the CSS
+  // keyframe and the per-group `setTimeout` in `toastStore` stay aligned.
+  const dismissDurationMs = $derived(dismissMs);
 
   // Right-anchored corners slide in/out toward +x, left-anchored toward
   // −x. The transition directives live on the `.tf-feed-inner` container

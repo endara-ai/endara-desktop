@@ -106,6 +106,7 @@
     position={$overlaySettings.position}
     maxVisible={$overlaySettings.max_visible}
     showProfile={$overlaySettings.show_profile}
+    dismissMs={$overlaySettings.auto_dismiss_ms}
   />
 </div>
 
