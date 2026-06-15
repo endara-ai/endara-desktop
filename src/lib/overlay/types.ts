@@ -23,6 +23,10 @@ export type ClientIdentity = {
   version?: string | null;
   user_agent?: string | null;
   origin?: string | null;
+  // Friendly display label the relay serializes for the embedded `client`
+  // object (see the custom `Serialize` on `ClientIdentity` in
+  // `packages/relay/src/events.rs`); preferred over the raw `name`.
+  label?: string | null;
 };
 
 export type StartedEvent = {

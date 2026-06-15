@@ -230,6 +230,29 @@ describe('OverlayCard — caller label on row 2', () => {
     expect(callerLabel(group.client)).toBe('Claude Desktop');
   });
 
+  it('prefers the relay friendly label over the raw client.name', async () => {
+    const group = g({
+      client: {
+        name: 'local-agent-mode-Endara Relay (via mcp-remote 0.1.37)',
+        label: 'Claude Cowork',
+      },
+      serverType: 'Linear',
+    });
+    const { callerLabel } = await import('./overlay-helpers');
+    expect(callerLabel(group.client)).toBe('Claude Cowork');
+  });
+
+  it('falls back to the name when the friendly label is absent', async () => {
+    const group = g({
+      client: { name: 'local-agent-mode-Endara Relay (via mcp-remote 0.1.37)' },
+      serverType: 'Linear',
+    });
+    const { callerLabel } = await import('./overlay-helpers');
+    expect(callerLabel(group.client)).toBe(
+      'local-agent-mode-Endara Relay (via mcp-remote 0.1.37)',
+    );
+  });
+
   it('falls back to user_agent product token when name is absent', async () => {
     const group = g({
       client: { user_agent: 'claude-ai/0.1.0' },

@@ -146,6 +146,28 @@ describe('callerLabel', () => {
     expect(callerLabel({ origin: 'https://example.com' })).toBeNull();
   });
 
+  it('prefers a non-empty client.label over the raw name / user_agent fallback', () => {
+    expect(
+      callerLabel({
+        name: 'local-agent-mode-Endara Relay (via mcp-remote 0.1.37)',
+        label: 'Claude Cowork',
+      }),
+    ).toBe('Claude Cowork');
+    // trims whitespace and wins over user_agent too
+    expect(callerLabel({ label: '  Claude Cowork  ', user_agent: 'claude-ai/0.1.0' })).toBe(
+      'Claude Cowork',
+    );
+  });
+
+  it('falls back to name / user_agent when label is absent or empty', () => {
+    // empty / whitespace-only label behaves exactly as today
+    expect(
+      callerLabel({ label: '', name: 'local-agent-mode-Endara Relay (via mcp-remote 0.1.37)' }),
+    ).toBe('local-agent-mode-Endara Relay (via mcp-remote 0.1.37)');
+    expect(callerLabel({ label: '   ', user_agent: 'claude-ai/0.1.0' })).toBe('claude-ai');
+    expect(callerLabel({ label: null, name: 'Cursor' })).toBe('Cursor');
+  });
+
   it('prefers client.name (without version) when present', () => {
     expect(callerLabel({ name: 'Claude Desktop', version: '0.7.0' })).toBe('Claude Desktop');
   });

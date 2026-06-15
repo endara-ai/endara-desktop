@@ -119,13 +119,16 @@ export const DEFAULT_OVERLAY_POSITION: OverlayPosition = 'bottom-right';
 /**
  * Resolve a short, friendly caller label for the overlay card.
  *
- * Returns `client.name` (trimmed, without version) when present; otherwise a
+ * Returns `client.label` (trimmed) when present — the relay's friendly display
+ * label; otherwise `client.name` (trimmed, without version); otherwise a
  * friendly label derived from `user_agent` (the leading product token, before
  * the first `/`); otherwise `null` when no caller signal is known. "Missing
  * key" and explicit `null`/empty values are treated identically.
  */
 export function callerLabel(client: ClientIdentity | null | undefined): string | null {
   if (!client) return null;
+  const label = typeof client.label === 'string' ? client.label.trim() : '';
+  if (label.length > 0) return label;
   const name = typeof client.name === 'string' ? client.name.trim() : '';
   if (name.length > 0) return name;
   const ua = typeof client.user_agent === 'string' ? client.user_agent.trim() : '';
