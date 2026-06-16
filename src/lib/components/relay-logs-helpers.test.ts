@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { findRequestRowIndex, toggleEndpointFilter } from './relay-logs-helpers';
+import {
+  findRequestRowIndex,
+  resolvePendingHighlight,
+  toggleEndpointFilter,
+} from './relay-logs-helpers';
 
 describe('toggleEndpointFilter', () => {
   it('selects an endpoint when nothing is selected', () => {
@@ -44,5 +48,83 @@ describe('findRequestRowIndex', () => {
   it('ignores rows whose requestId is undefined', () => {
     const lines = [{}, { requestId: '42' }, {}];
     expect(findRequestRowIndex(lines, '42')).toBe(1);
+  });
+});
+
+describe('resolvePendingHighlight', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves synchronously when the row is already present', () => {
+    const onFound = vi.fn();
+    const onTimeout = vi.fn();
+    const lines = [{ requestId: 'a' }, { requestId: '7' }];
+    resolvePendingHighlight({ jsonrpcId: '7', getLines: () => lines, onFound, onTimeout });
+    expect(onFound).toHaveBeenCalledExactlyOnceWith(1);
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('resolves once a matching row is pushed in before the budget elapses', () => {
+    const onFound = vi.fn();
+    const onTimeout = vi.fn();
+    let lines: { requestId?: string }[] = [];
+    resolvePendingHighlight({
+      jsonrpcId: '7',
+      getLines: () => lines,
+      onFound,
+      onTimeout,
+      budgetMs: 2000,
+      intervalMs: 100,
+    });
+    expect(onFound).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    expect(onFound).not.toHaveBeenCalled();
+
+    lines = [{ requestId: 'other' }, { requestId: '7' }];
+    vi.advanceTimersByTime(100);
+    expect(onFound).toHaveBeenCalledExactlyOnceWith(1);
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('calls onTimeout when no row appears within the budget', () => {
+    const onFound = vi.fn();
+    const onTimeout = vi.fn();
+    resolvePendingHighlight({
+      jsonrpcId: 'missing',
+      getLines: () => [{ requestId: 'a' }],
+      onFound,
+      onTimeout,
+      budgetMs: 2000,
+      intervalMs: 100,
+    });
+
+    vi.advanceTimersByTime(2000);
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+    expect(onFound).not.toHaveBeenCalled();
+  });
+
+  it('stops polling after cancel and never fires the callbacks', () => {
+    const onFound = vi.fn();
+    const onTimeout = vi.fn();
+    let lines: { requestId?: string }[] = [];
+    const cancel = resolvePendingHighlight({
+      jsonrpcId: '7',
+      getLines: () => lines,
+      onFound,
+      onTimeout,
+      budgetMs: 2000,
+      intervalMs: 100,
+    });
+
+    cancel();
+    lines = [{ requestId: '7' }];
+    vi.advanceTimersByTime(5000);
+    expect(onFound).not.toHaveBeenCalled();
+    expect(onTimeout).not.toHaveBeenCalled();
   });
 });

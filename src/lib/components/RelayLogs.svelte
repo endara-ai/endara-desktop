@@ -6,7 +6,7 @@
   import { isAtBottom } from '$lib/scrollUtils';
   import LogFilterBar from './LogFilterBar.svelte';
   import LogRow from './LogRow.svelte';
-  import { findRequestRowIndex, toggleEndpointFilter } from './relay-logs-helpers';
+  import { resolvePendingHighlight, toggleEndpointFilter } from './relay-logs-helpers';
 
   /** Duration the matched row stays highlighted after an overlay:focus-log event. */
   const HIGHLIGHT_DURATION_MS = 2000;
@@ -27,6 +27,9 @@
   // Set by the overlay:focus-log handler; cleared after HIGHLIGHT_DURATION_MS.
   let highlightedRequestId = $state<string | null>(null);
   let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+  // Cancels any in-flight pending-highlight poll (overlay click before the
+  // target row has rendered). Replaced on each new click, cleared on destroy.
+  let cancelPendingHighlight: (() => void) | null = null;
 
   // Filter state — local, not persisted (engineering spec §2.2).
   let activeLevels = $state<Set<LogLevel>>(new Set(['error', 'warn', 'info', 'debug', 'trace']));
@@ -155,6 +158,28 @@
     };
   });
 
+  // Scroll the row at `idx` (within filteredLines) into view and paint the
+  // fade-out highlight. The DOM query falls back to the last matching row if
+  // the :nth-of-type selector did not resolve.
+  function highlightRow(jsonrpcId: string, idx: number) {
+    const container = scrollContainer;
+    if (!container) return;
+    const row = container.querySelector<HTMLElement>(
+      `[data-request-id="${CSS.escape(jsonrpcId)}"]:nth-of-type(${idx + 1})`,
+    );
+    const rows = container.querySelectorAll<HTMLElement>(
+      `[data-request-id="${CSS.escape(jsonrpcId)}"]`,
+    );
+    const target = row ?? rows[rows.length - 1];
+    target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    highlightedRequestId = jsonrpcId;
+    if (highlightTimer) clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(() => {
+      highlightedRequestId = null;
+      highlightTimer = null;
+    }, HIGHLIGHT_DURATION_MS);
+  }
+
   // Handle the overlay:focus-log window event. The host (Rust) emits this
   // from `focus_main_window_on_log` after focusing the main window. We:
   //   1. switch to the relay-logs tab,
@@ -162,9 +187,10 @@
   //   3. find the latest row whose `requestId === jsonrpcId`,
   //   4. scroll it into view (centered) and paint the fade-out highlight.
   //
-  // If the matching row is filtered out, scrollIntoView is a no-op — the
-  // user can clear filters and the toast can still be clicked again. We
-  // log a warning to surface the dropped target in dev-tools.
+  // The window may have just been brought back from a hidden/closed state, so
+  // the target row can take a moment to mount/populate. When it is not found
+  // synchronously we hold a short-lived pending highlight and poll until the
+  // row appears or a ~2s budget elapses, instead of giving up after one pass.
   onMount(() => {
     let unlisten: UnlistenFn | undefined;
     listen<{ jsonrpcId: string }>('overlay:focus-log', async (event) => {
@@ -174,36 +200,30 @@
       // Disable auto-scroll so scrollIntoView is not immediately undone by
       // the bottom-pin effect when new log lines arrive mid-flight.
       autoScroll = false;
+      // A newer click supersedes any unresolved pending highlight.
+      cancelPendingHighlight?.();
+      cancelPendingHighlight = null;
       await tick();
-      const idx = findRequestRowIndex(filteredLines, jsonrpcId);
-      if (idx === -1) {
-        console.warn(`[overlay] no log row found for jsonrpcId=${jsonrpcId}`);
-        return;
-      }
-      const container = scrollContainer;
-      if (!container) return;
-      const row = container.querySelector<HTMLElement>(
-        `[data-request-id="${CSS.escape(jsonrpcId)}"]:nth-of-type(${idx + 1})`,
-      );
-      // Fall back to the last matching row if :nth-of-type selector did not
-      // resolve (e.g. siblings other than the row grid intermixed). The
-      // helper already guarantees the newest occurrence is at `idx`.
-      const rows = container.querySelectorAll<HTMLElement>(
-        `[data-request-id="${CSS.escape(jsonrpcId)}"]`,
-      );
-      const target = row ?? rows[rows.length - 1];
-      target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      highlightedRequestId = jsonrpcId;
-      if (highlightTimer) clearTimeout(highlightTimer);
-      highlightTimer = setTimeout(() => {
-        highlightedRequestId = null;
-        highlightTimer = null;
-      }, HIGHLIGHT_DURATION_MS);
+      cancelPendingHighlight = resolvePendingHighlight({
+        jsonrpcId,
+        getLines: () => filteredLines,
+        onFound: (idx) => {
+          // Wait one tick in case the row mounted on the same store update
+          // that satisfied the poll, then scroll + highlight.
+          tick().then(() => highlightRow(jsonrpcId, idx));
+        },
+        onTimeout: () => {
+          console.warn(`[overlay] no log row found for jsonrpcId=${jsonrpcId}`);
+        },
+        budgetMs: HIGHLIGHT_DURATION_MS,
+      });
     }).then((fn) => {
       unlisten = fn;
     });
     return () => {
       unlisten?.();
+      cancelPendingHighlight?.();
+      cancelPendingHighlight = null;
       if (highlightTimer) clearTimeout(highlightTimer);
     };
   });

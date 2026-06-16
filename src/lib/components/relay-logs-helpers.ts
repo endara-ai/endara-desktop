@@ -56,3 +56,56 @@ export function findRequestRowIndex<T extends { requestId?: string }>(
   }
   return -1;
 }
+
+/**
+ * Resolve an overlay highlight target that may not be rendered yet.
+ *
+ * When the main window is brought back from a hidden/closed state, the
+ * relay-log rows can take a moment to mount/populate, so the row for
+ * `jsonrpcId` is not in `getLines()` on the first synchronous pass. Rather
+ * than warn-and-give-up, this polls `getLines()` until a matching row appears
+ * (firing `onFound` with its index) or the `budgetMs` budget elapses (firing
+ * `onTimeout`). If a matching row is already present it resolves synchronously.
+ *
+ * Returns a cancel function — call it to abort an in-flight poll (e.g. when a
+ * newer overlay click supersedes this one, or on component destroy). The cancel
+ * is idempotent.
+ */
+export function resolvePendingHighlight<T extends { requestId?: string }>(opts: {
+  jsonrpcId: string;
+  getLines: () => readonly T[];
+  onFound: (idx: number) => void;
+  onTimeout: () => void;
+  budgetMs?: number;
+  intervalMs?: number;
+}): () => void {
+  const { jsonrpcId, getLines, onFound, onTimeout, budgetMs = 2000, intervalMs = 100 } = opts;
+
+  const immediate = findRequestRowIndex(getLines(), jsonrpcId);
+  if (immediate !== -1) {
+    onFound(immediate);
+    return () => {};
+  }
+
+  const deadline = Date.now() + budgetMs;
+  let interval: ReturnType<typeof setInterval> | null = null;
+  const cancel = () => {
+    if (interval !== null) {
+      clearInterval(interval);
+      interval = null;
+    }
+  };
+  interval = setInterval(() => {
+    const idx = findRequestRowIndex(getLines(), jsonrpcId);
+    if (idx !== -1) {
+      cancel();
+      onFound(idx);
+      return;
+    }
+    if (Date.now() >= deadline) {
+      cancel();
+      onTimeout();
+    }
+  }, intervalMs);
+  return cancel;
+}
