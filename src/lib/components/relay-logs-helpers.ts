@@ -36,14 +36,16 @@ export function applyGoToEndpoint(name: string): void {
 }
 
 /**
- * Find the index of the latest log row whose `request{id="..."}` span
- * matches `jsonrpcId`. Used by the RelayLogs view to scroll to and
- * highlight the row that the overlay card click selected.
+ * Find the index of the latest log row whose request span's `request_uid`
+ * (the canonical relay-minted UUID) matches `jsonrpcId`. Collision-free
+ * across multiple MCP clients sending the same JSON-RPC id concurrently.
+ * Used by the RelayLogs view to scroll to and highlight the row that the
+ * overlay card click selected.
  *
- * Scans newest-first so a JSON-RPC id reused across reconnections (the
- * relay numbers from 0 on each fresh MCP session) resolves to the most
- * recent occurrence rather than an earlier one that has scrolled off
- * the user's attention.
+ * Scans newest-first so the most recent occurrence wins rather than an
+ * earlier one that has scrolled off the user's attention. (request_uid is
+ * fresh per HTTP request, so collisions are not expected; newest-first
+ * remains the safe tie-breaker.)
  *
  * Returns `-1` when no row matches.
  */

@@ -40,10 +40,14 @@ export type StartedEvent = {
   server_type?: string | null;
   server_name?: string | null;
   profile?: string | null;
-  // JSON-RPC envelope id captured from the surrounding `request` span. Used by
-  // the overlay card click handler to focus the matching `request{id="..."}`
-  // log row in the main window. `None` when no `request` span was on the stack
-  // when the event was emitted (e.g. internal callers).
+  // Relay-minted per-HTTP-request UUID (see `request_uid` on the relay's
+  // `request` tracing span). This is the canonical key the overlay card click
+  // handler uses to focus the matching log row in the main window —
+  // collision-free across multiple MCP clients sending the same JSON-RPC id
+  // concurrently. The relay always emits it on Started events.
+  request_uid: string;
+  // JSON-RPC envelope id captured from the surrounding `request` span. Retained
+  // on the wire for diagnostic context only; no longer used as the row/card key.
   jsonrpc_id?: string | null;
   tool: string;
   annotations?: ToolCallAnnotations;

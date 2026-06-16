@@ -146,7 +146,7 @@ describe('OverlayCard — click handler', () => {
 
     await cardClick(group);
     expect(mockInvoke).toHaveBeenCalledWith('focus_main_window_on_log', {
-      jsonrpcId: 'rpc-2',
+      logId: 'rpc-2',
     });
   });
 

@@ -21,6 +21,7 @@ function makeStarted(overrides: Partial<StartedEvent> = {}): StartedEvent {
     server_type: 'github',
     server_name: 'github',
     profile: null,
+    request_uid: 'req-uid-1',
     tool: 'list_issues',
     ...overrides,
   };

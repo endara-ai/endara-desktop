@@ -13,6 +13,7 @@ function started(overrides: Partial<StartedEvent> = {}): StartedEvent {
     server_type: 'github',
     server_name: 'github',
     profile: 'default',
+    request_uid: 'req-uid-1',
     tool: 'list_issues',
     annotations: { read_only: true },
     ...overrides,
@@ -195,34 +196,19 @@ describe('toastStore', () => {
     expect(labels).toContain('Cursor');
   });
 
-  it('persists jsonrpcId from started event onto the request', () => {
+  it('sources jsonrpcId from the started event request_uid', () => {
     const store = createToastStore();
-    store.addStarted(started({ request_id: 'req-1', jsonrpc_id: '42' }));
+    store.addStarted(started({ request_id: 'req-1', request_uid: 'uid-abc' }));
     const groups = get(store) as ToolCallGroup[];
-    expect(groups[0].requests[0].jsonrpcId).toBe('42');
+    expect(groups[0].requests[0].jsonrpcId).toBe('uid-abc');
   });
 
-  it('defaults jsonrpcId to null when the relay event omits it', () => {
+  it('settle propagates the request_uid-sourced jsonrpcId unchanged', () => {
     const store = createToastStore();
-    store.addStarted(started({ request_id: 'req-1' }));
-    const groups = get(store) as ToolCallGroup[];
-    expect(groups[0].requests[0].jsonrpcId).toBeNull();
-  });
-
-  it('settle backfills jsonrpcId when the started event lacked one', () => {
-    const store = createToastStore();
-    store.addStarted(started({ request_id: 'req-1' }));
-    store.settle({ ...completed('req-1'), jsonrpc_id: '7' });
-    const groups = get(store) as ToolCallGroup[];
-    expect(groups[0].requests[0].jsonrpcId).toBe('7');
-  });
-
-  it('settle never downgrades a known jsonrpcId back to null', () => {
-    const store = createToastStore();
-    store.addStarted(started({ request_id: 'req-1', jsonrpc_id: '42' }));
+    store.addStarted(started({ request_id: 'req-1', request_uid: 'uid-abc' }));
     store.settle(completed('req-1'));
     const groups = get(store) as ToolCallGroup[];
-    expect(groups[0].requests[0].jsonrpcId).toBe('42');
+    expect(groups[0].requests[0].jsonrpcId).toBe('uid-abc');
   });
 
   // Regression for the Phase 4 grouping bug: `OverlayCard` is keyed by

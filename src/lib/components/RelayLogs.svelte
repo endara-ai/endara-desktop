@@ -194,7 +194,7 @@
   // from `focus_main_window_on_log` after focusing the main window. We:
   //   1. switch to the relay-logs tab,
   //   2. wait one tick so the scroll container is mounted + visible,
-  //   3. find the latest row whose `requestId === jsonrpcId`,
+  //   3. find the latest row whose `requestId === logId`,
   //   4. scroll it into view (centered) and paint the fade-out highlight.
   //
   // The window may have just been brought back from a hidden/closed state, so
@@ -209,9 +209,9 @@
   // finishes while the tab is hidden and the pulse is never seen.
   onMount(() => {
     let unlisten: UnlistenFn | undefined;
-    listen<{ jsonrpcId: string }>('overlay:focus-log', async (event) => {
-      const { jsonrpcId } = event.payload;
-      if (!jsonrpcId) return;
+    listen<{ logId: string }>('overlay:focus-log', async (event) => {
+      const { logId } = event.payload;
+      if (!logId) return;
       const generation = ++highlightGeneration;
       activeTopLevelTab.set('relay-logs');
       // Disable auto-scroll so scrollIntoView is not immediately undone by
@@ -229,11 +229,11 @@
       const visible = await waitForVisibleContainer(() => scrollContainer, HIGHLIGHT_DURATION_MS);
       if (generation !== highlightGeneration) return;
       if (!visible) {
-        console.warn(`[overlay] relay-logs tab never became visible for jsonrpcId=${jsonrpcId}`);
+        console.warn(`[overlay] relay-logs tab never became visible for logId=${logId}`);
         return;
       }
       cancelPendingHighlight = resolvePendingHighlight({
-        jsonrpcId,
+        jsonrpcId: logId,
         getLines: () => filteredLines,
         onFound: (idx) => {
           // Wait one tick in case the row mounted on the same store update
@@ -242,11 +242,11 @@
           // meantime is not clobbered by this now-stale highlight.
           tick().then(() => {
             if (generation !== highlightGeneration) return;
-            highlightRow(jsonrpcId, idx);
+            highlightRow(logId, idx);
           });
         },
         onTimeout: () => {
-          console.warn(`[overlay] no log row found for jsonrpcId=${jsonrpcId}`);
+          console.warn(`[overlay] no log row found for logId=${logId}`);
         },
         budgetMs: HIGHLIGHT_DURATION_MS,
       });

@@ -55,15 +55,23 @@ describe('parseLogLine', () => {
   it('extracts inline fields (tool, status, duration_ms) and request span', () => {
     const parsed = parseLogLine(
       'info',
-      'request{method="tools/call" id=42} endpoint{endpoint="github"}: Tool call completed tool=get_file_contents status=ok duration_ms=312'
+      'request{method="tools/call" id=42 request_uid=3f1a2b4c-5d6e-7f80-9a1b-2c3d4e5f6071} endpoint{endpoint="github"}: Tool call completed tool=get_file_contents status=ok duration_ms=312'
     );
     expect(parsed.endpoint).toBe('github');
     expect(parsed.method).toBe('tools/call');
-    expect(parsed.requestId).toBe('42');
+    expect(parsed.requestId).toBe('3f1a2b4c-5d6e-7f80-9a1b-2c3d4e5f6071');
     expect(parsed.tool).toBe('get_file_contents');
     expect(parsed.status).toBe('ok');
     expect(parsed.durationMs).toBe(312);
     expect(parsed.message).toBe('Tool call completed');
+  });
+
+  it('sources requestId from the request span request_uid (text path)', () => {
+    const parsed = parseLogLine(
+      'info',
+      'request{method=tools/call id=1 request_uid=11111111-2222-3333-4444-555555555555}: MCP request',
+    );
+    expect(parsed.requestId).toBe('11111111-2222-3333-4444-555555555555');
   });
 
   it('handles lines with no span context (relay-level events)', () => {
@@ -293,7 +301,12 @@ describe('parseLogLine — JSON-first structured lines (Wave C)', () => {
       spans: [
         { name: 'endpoint', endpoint: 'github', transport: 'stdio', server_type: 'http' },
         { name: 'mcp_request', profile: 'default' },
-        { name: 'request', method: 'tools/call', id: '7' },
+        {
+          name: 'request',
+          method: 'tools/call',
+          id: '7',
+          request_uid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        },
       ],
     });
     const parsed = parseLogLine('info', line);
@@ -302,7 +315,7 @@ describe('parseLogLine — JSON-first structured lines (Wave C)', () => {
     expect(parsed.transport).toBe('stdio');
     expect(parsed.serverType).toBe('http');
     expect(parsed.method).toBe('tools/call');
-    expect(parsed.requestId).toBe('7');
+    expect(parsed.requestId).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
     expect(parsed.profile).toBe('default');
     expect(parsed.tool).toBe('get_file_contents');
     expect(parsed.status).toBe('ok');
@@ -314,6 +327,16 @@ describe('parseLogLine — JSON-first structured lines (Wave C)', () => {
     expect(parsed.message).not.toContain('}: ');
     expect(parsed.message).not.toContain('client=');
     expect(parsed.isToolCall).toBe(true);
+  });
+
+  it('sources requestId from the request span request_uid (JSON path)', () => {
+    const line = JSON.stringify({
+      level: 'INFO',
+      fields: { message: 'MCP request' },
+      spans: [{ name: 'request', id: '1', request_uid: 'abcdef01-2345-6789-abcd-ef0123456789' }],
+    });
+    const parsed = parseLogLine('info', line);
+    expect(parsed.requestId).toBe('abcdef01-2345-6789-abcd-ef0123456789');
   });
 
   it('does not leak a nested client={…} blob into the message (regression)', () => {

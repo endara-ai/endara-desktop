@@ -48,10 +48,11 @@ export type ToolCallRequest = {
   status: 'inflight' | 'success' | 'error';
   durationMs?: number;
   errorMessage?: string;
-  // JSON-RPC envelope id captured from the originating event's `jsonrpc_id`
-  // field. Surfaced on each request so the overlay card click handler can
-  // emit it to the main window to scroll the matching log row into view.
-  // `null` when the relay event had no `request` span on the stack.
+  // Canonical log-row key sourced from the originating event's `request_uid`
+  // (the relay-minted per-HTTP-request UUID). Surfaced on each request so the
+  // overlay card click handler can emit it to the main window to scroll the
+  // matching log row into view. (Field name retained for minimal touch surface;
+  // a future cleanup pass can rename to `logId`.)
   jsonrpcId: string | null;
 };
 
@@ -163,7 +164,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       requestId: event.request_id,
       ts: event.ts,
       status: 'inflight',
-      jsonrpcId: event.jsonrpc_id ?? null,
+      jsonrpcId: event.request_uid,
     };
     if (existing) {
       // If this group was counting down (inflight had been 0), a new
@@ -227,19 +228,15 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     const existingReq = target.requests.find((r) => r.requestId === event.request_id);
     if (!existingReq || existingReq.status !== 'inflight') return;
     const isError = event.kind === 'failed' || event.status === 'error';
-    // Build a fresh ToolCallRequest with the settled fields. Carry the
-    // JSON-RPC id from the terminal event when the started event lacked
-    // one (broadcast subscribers joining mid-request); never downgrade a
-    // known id back to null.
+    // Build a fresh ToolCallRequest with the settled fields. The relay always
+    // populates `request_uid` on Started, so `jsonrpcId` is already set on the
+    // existing request — just propagate it forward unchanged.
     const settledReq: ToolCallRequest = {
       ...existingReq,
       status: isError ? 'error' : 'success',
       durationMs: event.duration_ms,
       ...(event.kind === 'failed' ? { errorMessage: event.error_message } : {}),
-      jsonrpcId:
-        existingReq.jsonrpcId === null && event.jsonrpc_id != null
-          ? event.jsonrpc_id
-          : existingReq.jsonrpcId,
+      jsonrpcId: existingReq.jsonrpcId,
     };
     const newInflight = Math.max(0, target.inflight - 1);
     const willArm = newInflight === 0;

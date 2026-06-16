@@ -50,7 +50,7 @@ describe('cardClick', () => {
     );
 
     expect(mockInvoke).toHaveBeenCalledWith('focus_main_window_on_log', {
-      jsonrpcId: 'rpc-7',
+      logId: 'rpc-7',
     });
   });
 
