@@ -332,8 +332,8 @@ mod macos_panel {
     use arc_swap::ArcSwap;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
-    use objc2::{define_class, msg_send, ClassType, DefinedClass, MainThreadMarker};
-    use objc2_app_kit::{NSAutoresizingMaskOptions, NSPanel, NSView, NSWindow, NSWindowStyleMask};
+    use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker};
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindow, NSWindowStyleMask};
     use objc2_foundation::NSPoint;
 
     use super::{any_rect_contains, HitRect};
@@ -365,18 +365,7 @@ mod macos_panel {
                 let local = self.convertPoint_fromView(point, superview.as_deref());
                 let guard = self.ivars().rects.load();
                 let rects: &[HitRect] = &guard;
-                let inside = any_rect_contains(rects, local.x, local.y);
-                log::debug!(
-                    target: "overlay",
-                    "hitTest super=({:.1},{:.1}) local=({:.1},{:.1}) rects={} inside={}",
-                    point.x,
-                    point.y,
-                    local.x,
-                    local.y,
-                    rects.len(),
-                    inside
-                );
-                if inside {
+                if any_rect_contains(rects, local.x, local.y) {
                     // Inside a card → let NSView descend to the WKWebView.
                     unsafe { msg_send![super(self), hitTest: point] }
                 } else {
@@ -423,30 +412,14 @@ mod macos_panel {
         // `ns_window()`, only dereferenced here on the main thread.
         let ns_window: &NSWindow = unsafe { &*(ns_window_addr as *const NSWindow) };
 
-        // `NSWindowStyleMaskNonactivatingPanel` is only honored on `NSPanel`
-        // instances; Tauri builds the overlay as a plain `NSWindow`, so setting
-        // the bit alone is a no-op (a card click still activates Endara). Swap
-        // the live object's Obj-C class to `NSPanel` first via `object_setClass`.
-        // This only rewrites the isa pointer — `NSPanel` subclasses `NSWindow`,
-        // adds no ivars, and same instance size — so existing instance state
-        // (set below) and Tauri's later `msg_send` selectors (`setMovable:`,
-        // `set_ignore_cursor_events`, etc.) keep working unchanged.
-        // SAFETY: `ns_window` is the live, main-thread window; `NSPanel` is a
-        // subclass of its current `NSWindow` class with no extra ivars.
-        let overlay_obj: &AnyObject = ns_window;
-        let _prev_class = unsafe { AnyObject::set_class(overlay_obj, NSPanel::class()) };
-        log::info!(target: "overlay", "overlay window class swapped to NSPanel");
-
         // Keep the overlay anchored to its computed corner (NSWindow defaults
         // to `isMovable = true`, which would let the user drag it anywhere by
         // clicking-and-holding any part of it, including transparent regions).
-        // Applied after the class swap so it lands on the `NSPanel` instance.
         ns_window.setMovable(false);
 
         // Non-activating panel: clicking the overlay must not activate Endara
         // or raise its main window. `NSWindowStyleMaskNonactivatingPanel`
-        // (1 << 7) is the style every macOS HUD/overlay uses — now honored
-        // because the window's runtime class is `NSPanel`.
+        // (1 << 7) is the style every macOS HUD/overlay uses.
         let style = ns_window.styleMask();
         ns_window.setStyleMask(style | NSWindowStyleMask::NonactivatingPanel);
 
