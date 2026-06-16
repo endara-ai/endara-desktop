@@ -28,6 +28,7 @@
     hintsForAnnotations,
     isDestructive,
     isStacked,
+    latestRequest,
   } from './overlay-helpers';
   import { serverIconFor } from './icons';
   import { cardClick } from './overlay-actions';
@@ -90,7 +91,9 @@
   // When null we fall back to the unchanged server-type-only rendering.
   const caller = $derived(callerLabel(group.client));
 
-  async function onClick() {
+  async function onClick(ev: MouseEvent) {
+    const logId = latestRequest(group)?.jsonrpcId ?? null;
+    console.info('[overlay] card clicked', { logId, x: ev.clientX, y: ev.clientY });
     await cardClick(group);
   }
 </script>

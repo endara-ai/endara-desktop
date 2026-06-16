@@ -1455,6 +1455,12 @@ async fn set_overlay_hit_rects(
     state: State<'_, overlay::OverlayHitState>,
     rects: Vec<overlay::HitRect>,
 ) -> Result<(), String> {
+    log::info!(
+        target: "overlay",
+        "set_overlay_hit_rects: {} rect(s); first={:?}",
+        rects.len(),
+        rects.first()
+    );
     overlay::update_hit_rects(&app, &state, rects);
     Ok(())
 }
@@ -1662,6 +1668,11 @@ struct FocusLogPayload {
 /// behaviour.
 #[tauri::command]
 async fn focus_main_window_on_log(app: AppHandle, jsonrpc_id: String) -> Result<(), String> {
+    log::info!(
+        target: "overlay",
+        "focus_main_window_on_log invoked: log_id={}",
+        jsonrpc_id
+    );
     #[cfg(target_os = "macos")]
     set_macos_activation_policy(true);
     if let Some(window) = app.get_webview_window("main") {

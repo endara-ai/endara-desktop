@@ -365,7 +365,18 @@ mod macos_panel {
                 let local = self.convertPoint_fromView(point, superview.as_deref());
                 let guard = self.ivars().rects.load();
                 let rects: &[HitRect] = &guard;
-                if any_rect_contains(rects, local.x, local.y) {
+                let inside = any_rect_contains(rects, local.x, local.y);
+                log::info!(
+                    target: "overlay",
+                    "hitTest super=({:.1},{:.1}) local=({:.1},{:.1}) rects={} inside={}",
+                    point.x,
+                    point.y,
+                    local.x,
+                    local.y,
+                    rects.len(),
+                    inside
+                );
+                if inside {
                     // Inside a card → let NSView descend to the WKWebView.
                     unsafe { msg_send![super(self), hitTest: point] }
                 } else {
@@ -438,6 +449,16 @@ mod macos_panel {
         // handle keeps it alive so we can re-parent it under the wrapper.
         let wrapper_view: &NSView = &wrapper;
         ns_window.setContentView(Some(wrapper_view));
+
+        let frame = wrapper.frame();
+        log::info!(
+            target: "overlay",
+            "OverlayHitTestView installed as contentView frame=({:.1},{:.1},{:.1},{:.1})",
+            frame.origin.x,
+            frame.origin.y,
+            frame.size.width,
+            frame.size.height
+        );
 
         let content_view: &NSView = &content;
         content_view.setFrame(wrapper.bounds());
