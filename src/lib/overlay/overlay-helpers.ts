@@ -85,20 +85,25 @@ export function isDestructive(g: ToolCallGroup): boolean {
 
 /**
  * Axis-aligned card hit rect in overlay-window viewport coordinates (CSS /
- * logical pixels). Mirrors the `HitRect` struct in `src-tauri/src/overlay.rs`
- * consumed by the Rust-side cursor poller.
+ * logical pixels). Mirrors the `HitRect` struct in `src-tauri/src/overlay.rs`.
+ * `log_id` carries the card's JSON-RPC id so the macOS click-catcher can emit
+ * `overlay:card-clicked` with the right target (empty string when the card has
+ * no JSON-RPC id captured yet). The snake_case key matches the wire shape serde
+ * deserializes on the Rust side.
  */
-export type HitRect = { x: number; y: number; width: number; height: number };
+export type HitRect = { x: number; y: number; width: number; height: number; log_id: string };
 
 /** Minimal element shape needed to measure a hit rect (testable without jsdom). */
 type Measurable = {
   getBoundingClientRect(): { x: number; y: number; width: number; height: number };
+  dataset?: { logId?: string };
 };
 
 /**
- * Measure the bounding rects of the visible card elements. Zero-area rects
- * (display:none, not yet laid out) are dropped so the Rust poller never
- * treats a collapsed element as a hover target.
+ * Measure the bounding rects of the visible card elements, tagging each with
+ * the `data-log-id` the renderer stamped on the slot. Zero-area rects
+ * (display:none, not yet laid out) are dropped so the Rust side never treats a
+ * collapsed element as a click target.
  */
 export function collectHitRects(elements: Iterable<Measurable | null | undefined>): HitRect[] {
   const out: HitRect[] = [];
@@ -106,7 +111,7 @@ export function collectHitRects(elements: Iterable<Measurable | null | undefined
     if (!el) continue;
     const r = el.getBoundingClientRect();
     if (!(r.width > 0) || !(r.height > 0)) continue;
-    out.push({ x: r.x, y: r.y, width: r.width, height: r.height });
+    out.push({ x: r.x, y: r.y, width: r.width, height: r.height, log_id: el.dataset?.logId ?? '' });
   }
   return out;
 }

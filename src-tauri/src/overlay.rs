@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
+#[cfg(target_os = "macos")]
+use objc2::MainThreadMarker;
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime;
 use tauri::webview::Color;
@@ -163,12 +165,19 @@ const HIT_RECT_POLL_INTERVAL: Duration = Duration::from_millis(90);
 /// Axis-aligned card hit rect in overlay-window viewport coordinates
 /// (CSS / logical pixels), as reported by the renderer. Mirrors the
 /// `HitRect` type in `src/lib/overlay/overlay-helpers.ts`.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+///
+/// `log_id` carries the JSON-RPC id of the request the card represents so the
+/// click-catcher's `mouseDown:` can emit `overlay:card-clicked` with the right
+/// target. `#[serde(default)]` keeps the field optional on the wire (empty
+/// string when a card has no JSON-RPC id captured yet).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct HitRect {
     pub x: f64,
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    #[serde(default)]
+    pub log_id: String,
 }
 
 impl HitRect {
@@ -207,27 +216,34 @@ pub fn cursor_to_viewport(
 }
 
 /// Tauri-managed shared state for overlay click routing. `rects` holds the
-/// renderer-reported card rects (viewport / CSS px). On macOS the overlay's
-/// `hitTest:` override reads them lock-free on the AppKit main thread; on
-/// other platforms the cursor poller reads them and `poller` holds its task
-/// handle so an empty report can abort it.
+/// renderer-reported card rects (viewport / CSS px). On macOS the
+/// click-catcher panel's `hitTest:` / `mouseDown:` read them lock-free on the
+/// AppKit main thread, and `click_catcher` holds the raw `NSPanel` address (as
+/// a `usize`, since AppKit pointers are not `Send`) so frame-sync / teardown
+/// can reach it; on other platforms the cursor poller reads the rects and
+/// `poller` holds its task handle so an empty report can abort it.
 #[derive(Default)]
 pub struct OverlayHitState {
     rects: Arc<ArcSwap<Vec<HitRect>>>,
     #[cfg(not(target_os = "macos"))]
     poller: std::sync::Mutex<Option<JoinHandle<()>>>,
+    /// Raw `NSPanel` pointer for the click-catcher, smuggled as a `usize`.
+    /// Only ever dereferenced on the AppKit main thread.
+    #[cfg(target_os = "macos")]
+    click_catcher: std::sync::Mutex<Option<usize>>,
 }
 
 /// Apply a renderer hit-rect report.
 ///
-/// On macOS the overlay's `hitTest:` override (see [`macos_panel`]) reads the
-/// rects directly on the AppKit main thread, so all this does is a single
-/// lock-free store per renderer report — no poller, no `setIgnoresMouseEvents`
-/// toggle. On other platforms it drives the cursor poller.
+/// On macOS the click-catcher panel's `hitTest:` / `mouseDown:` (see
+/// [`macos_click_catcher`]) read the rects directly on the AppKit main thread,
+/// so all this does is a single lock-free store per renderer report — no
+/// poller, no `setIgnoresMouseEvents` toggle. On other platforms it drives the
+/// cursor poller.
 pub fn update_hit_rects(app: &AppHandle, state: &OverlayHitState, rects: Vec<HitRect>) {
     #[cfg(target_os = "macos")]
     {
-        // The overlay content view's `hitTest:` override consults these rects
+        // The click-catcher panel's content view consults these rects
         // synchronously on every mouse event; storing them is the whole job.
         let _ = app;
         state.rects.store(Arc::new(rects));
@@ -319,68 +335,74 @@ async fn cursor_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>>>) {
     }
 }
 
-/// macOS-native overlay click routing: a non-activating panel plus an
-/// `NSView` `hitTest:` override that consults renderer-reported card rects so
-/// clicks inside a card reach the WKWebView and clicks elsewhere pass through
-/// to whatever window is underneath. Replaces the cursor poller +
-/// `setIgnoresMouseEvents` toggle, which raced AppKit's event routing and let
-/// clicks activate Endara instead of reaching the webview.
+/// macOS-native overlay click routing: a transparent, non-activating
+/// "click-catcher" `NSPanel` layered exactly over the overlay window. Its
+/// content view's `hitTest:` consults renderer-reported card rects so clicks
+/// inside a card are captured by the panel (which never activates Endara) and
+/// forwarded to the overlay webview via an `overlay:card-clicked` Tauri event,
+/// while clicks elsewhere return `nil` and fall through to whatever window is
+/// underneath. Replaces the in-place `hitTest:` override on Tauri's overlay
+/// window, which never received `mouseDown:` because the OS gates the first
+/// click of an inactive app on activation (the click that should reach the
+/// webview is swallowed to activate Endara instead).
 #[cfg(target_os = "macos")]
-mod macos_panel {
+mod macos_click_catcher {
     use std::sync::Arc;
 
     use arc_swap::ArcSwap;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker};
-    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindow, NSWindowStyleMask};
-    use objc2_foundation::NSPoint;
+    use objc2_app_kit::{
+        NSBackingStoreType, NSColor, NSEvent, NSPanel, NSView, NSWindow, NSWindowOrderingMode,
+        NSWindowStyleMask,
+    };
+    use objc2_foundation::{NSPoint, NSRect};
+    use serde::Serialize;
+    use tauri::{AppHandle, Emitter, Manager};
 
-    use super::{any_rect_contains, HitRect};
+    use super::{any_rect_contains, HitRect, OverlayHitState, OVERLAY_WINDOW_LABEL};
 
-    /// Instance state for [`OverlayHitTestView`]: the shared, lock-free card
-    /// rects refreshed by `set_overlay_hit_rects`.
-    pub(super) struct OverlayHitTestIvars {
+    /// Payload for the `overlay:card-clicked` event emitted to the overlay
+    /// webview when a click lands inside a reported card rect.
+    #[derive(Clone, Serialize)]
+    struct CardClickedPayload {
+        log_id: String,
+    }
+
+    /// Instance state for [`ClickCatcherView`]: the shared, lock-free card
+    /// rects refreshed by `set_overlay_hit_rects`, plus an `AppHandle` so
+    /// `mouseDown:` can emit the forward event to the overlay webview.
+    pub(super) struct ClickCatcherIvars {
         rects: Arc<ArcSwap<Vec<HitRect>>>,
+        app: AppHandle,
     }
 
     define_class!(
-        /// Thin wrapper installed as the overlay window's content view.
-        /// `hitTest:` consults the renderer-reported card rects so clicks
-        /// inside a card reach the WKWebView while clicks elsewhere return
-        /// `nil` and pass through to whatever window is underneath.
+        /// Transparent content view of the click-catcher panel. `hitTest:`
+        /// captures clicks inside a reported card rect (returns `self`) and
+        /// lets every other click fall through (`nil`); `mouseDown:` forwards
+        /// the captured click to the overlay webview.
         #[unsafe(super(NSView))]
-        #[ivars = OverlayHitTestIvars]
-        pub(super) struct OverlayHitTestView;
+        #[ivars = ClickCatcherIvars]
+        pub(super) struct ClickCatcherView;
 
-        impl OverlayHitTestView {
+        impl ClickCatcherView {
             /// `point` arrives in the superview's coordinate system; convert it
             /// into our local (flipped, top-left) space so it lines up with the
-            /// renderer's CSS-pixel rects, then route the click.
+            /// renderer's CSS-pixel rects. Inside a card → capture (return
+            /// self); otherwise → `nil` so the click falls through.
             #[unsafe(method(hitTest:))]
             fn hit_test(&self, point: NSPoint) -> *mut NSView {
-                // SAFETY: `superview` returns a borrowed view we use only for
-                // the immediately-following coordinate conversion.
+                // SAFETY: `superview` returns a borrowed view used only for the
+                // immediately-following coordinate conversion.
                 let superview = unsafe { self.superview() };
                 let local = self.convertPoint_fromView(point, superview.as_deref());
                 let guard = self.ivars().rects.load();
-                let rects: &[HitRect] = &guard;
-                let inside = any_rect_contains(rects, local.x, local.y);
-                log::info!(
-                    target: "overlay",
-                    "hitTest super=({:.1},{:.1}) local=({:.1},{:.1}) rects={} inside={}",
-                    point.x,
-                    point.y,
-                    local.x,
-                    local.y,
-                    rects.len(),
-                    inside
-                );
-                if inside {
-                    // Inside a card → let NSView descend to the WKWebView.
-                    unsafe { msg_send![super(self), hitTest: point] }
+                if any_rect_contains(&guard, local.x, local.y) {
+                    let this: *const ClickCatcherView = self;
+                    this as *mut NSView
                 } else {
-                    // Outside every card → pass the click through.
                     std::ptr::null_mut()
                 }
             }
@@ -398,79 +420,223 @@ mod macos_panel {
             fn accepts_first_mouse(&self, _event: *mut AnyObject) -> bool {
                 true
             }
+
+            /// Forward a captured click to the overlay webview. `hitTest:` only
+            /// returns self inside a card, so this normally lands inside a rect;
+            /// the passthrough branch is defensive against a rect list that
+            /// changed between hit-test and mouse-down.
+            #[unsafe(method(mouseDown:))]
+            fn mouse_down(&self, event: *mut NSEvent) {
+                // SAFETY: AppKit hands us a valid event for the call duration.
+                let window_point = unsafe { (*event).locationInWindow() };
+                // `nil` source view → convert from window base coords into our
+                // local (flipped, top-left) space.
+                let local = self.convertPoint_fromView(window_point, None);
+                let ivars = self.ivars();
+                let guard = ivars.rects.load();
+                match guard.iter().find(|r| r.contains(local.x, local.y)) {
+                    Some(rect) => {
+                        log::info!(
+                            target: "overlay",
+                            "click-catcher click forwarded log_id={}",
+                            rect.log_id
+                        );
+                        if let Err(e) = ivars.app.emit_to(
+                            OVERLAY_WINDOW_LABEL,
+                            "overlay:card-clicked",
+                            CardClickedPayload {
+                                log_id: rect.log_id.clone(),
+                            },
+                        ) {
+                            log::warn!(target: "overlay", "emit overlay:card-clicked failed: {e}");
+                        }
+                    }
+                    None => {
+                        log::info!(
+                            target: "overlay",
+                            "click-catcher click passthrough at x={:.1},y={:.1}",
+                            local.x,
+                            local.y
+                        );
+                    }
+                }
+            }
         }
     );
 
-    impl OverlayHitTestView {
-        fn new(mtm: MainThreadMarker, rects: Arc<ArcSwap<Vec<HitRect>>>) -> Retained<Self> {
+    impl ClickCatcherView {
+        fn new(
+            mtm: MainThreadMarker,
+            rects: Arc<ArcSwap<Vec<HitRect>>>,
+            app: AppHandle,
+        ) -> Retained<Self> {
             let this = mtm
-                .alloc::<OverlayHitTestView>()
-                .set_ivars(OverlayHitTestIvars { rects });
+                .alloc::<ClickCatcherView>()
+                .set_ivars(ClickCatcherIvars { rects, app });
             unsafe { msg_send![super(this), init] }
         }
     }
 
-    /// Convert the overlay window into a non-activating panel and wrap its
-    /// content view with [`OverlayHitTestView`]. Must run on the AppKit main
-    /// thread. `ns_window_addr` is the live `NSWindow` pointer smuggled across
-    /// the closure boundary as a `usize` (raw pointers are not `Send`).
-    pub(super) fn configure(ns_window_addr: usize, rects: Arc<ArcSwap<Vec<HitRect>>>) {
+    /// Create the click-catcher panel + content view and store its address on
+    /// [`OverlayHitState`]. Runs on the AppKit main thread. `ns_window_addr` is
+    /// the live overlay `NSWindow` pointer smuggled across the closure boundary
+    /// as a `usize` (raw pointers are not `Send`).
+    fn create_and_store(app: &AppHandle, ns_window_addr: usize, rects: Arc<ArcSwap<Vec<HitRect>>>) {
         let Some(mtm) = MainThreadMarker::new() else {
-            log::warn!(target: "overlay", "overlay panel setup skipped: not on the main thread");
+            log::warn!(target: "overlay", "click-catcher setup skipped: not on the main thread");
             return;
         };
-        // SAFETY: `ns_window_addr` is the live `NSWindow` returned by
-        // `ns_window()`, only dereferenced here on the main thread.
-        let ns_window: &NSWindow = unsafe { &*(ns_window_addr as *const NSWindow) };
+        // SAFETY: live overlay `NSWindow`, only dereferenced on the main thread.
+        let overlay_ns: &NSWindow = unsafe { &*(ns_window_addr as *const NSWindow) };
 
-        // Keep the overlay anchored to its computed corner (NSWindow defaults
-        // to `isMovable = true`, which would let the user drag it anywhere by
-        // clicking-and-holding any part of it, including transparent regions).
-        ns_window.setMovable(false);
-
-        // Non-activating panel: clicking the overlay must not activate Endara
-        // or raise its main window. `NSWindowStyleMaskNonactivatingPanel`
-        // (1 << 7) is the style every macOS HUD/overlay uses.
-        let style = ns_window.styleMask();
-        ns_window.setStyleMask(style | NSWindowStyleMask::NonactivatingPanel);
-
-        let Some(content) = ns_window.contentView() else {
-            log::warn!(target: "overlay", "overlay panel setup: window has no content view to wrap");
-            return;
+        let frame = overlay_ns.frame();
+        // Borderless + non-activating: clicks must not activate Endara, and the
+        // panel carries no title bar / chrome of its own.
+        let style = NSWindowStyleMask::NonactivatingPanel | NSWindowStyleMask::Borderless;
+        // SAFETY: standard `NSPanel` designated initializer on a fresh alloc.
+        let panel: Retained<NSPanel> = unsafe {
+            let alloc = mtm.alloc::<NSPanel>();
+            msg_send![
+                alloc,
+                initWithContentRect: frame,
+                styleMask: style,
+                backing: NSBackingStoreType::Buffered,
+                defer: false,
+            ]
         };
 
-        let wrapper = OverlayHitTestView::new(mtm, rects);
-        wrapper.setFrame(content.frame());
-        let resize = NSAutoresizingMaskOptions::ViewWidthSizable
-            | NSAutoresizingMaskOptions::ViewHeightSizable;
-        wrapper.setAutoresizingMask(resize);
+        // Transparent, shadowless, click-receiving panel pinned just above the
+        // overlay window and sharing its space-collection behavior so it tracks
+        // the overlay across Spaces / full-screen.
+        panel.setOpaque(false);
+        panel.setBackgroundColor(Some(&NSColor::clearColor()));
+        panel.setHasShadow(false);
+        panel.setIgnoresMouseEvents(false);
+        panel.setLevel(overlay_ns.level() + 1);
+        panel.setCollectionBehavior(overlay_ns.collectionBehavior());
 
-        // `setContentView:` detaches `content` from the window; our retained
-        // handle keeps it alive so we can re-parent it under the wrapper.
-        let wrapper_view: &NSView = &wrapper;
-        ns_window.setContentView(Some(wrapper_view));
+        let view = ClickCatcherView::new(mtm, rects, app.clone());
+        view.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), frame.size));
+        let panel_view: &NSView = &view;
+        panel.setContentView(Some(panel_view));
 
-        let frame = wrapper.frame();
-        log::info!(
-            target: "overlay",
-            "OverlayHitTestView installed as contentView frame=({:.1},{:.1},{:.1},{:.1})",
-            frame.origin.x,
-            frame.origin.y,
-            frame.size.width,
-            frame.size.height
-        );
+        let addr = Retained::into_raw(panel) as usize;
+        let state = app.state::<OverlayHitState>();
+        if let Ok(mut guard) = state.click_catcher.lock() {
+            if let Some(old) = guard.replace(addr) {
+                // SAFETY: reclaim the previously-stored panel and release it.
+                if let Some(old_panel) = unsafe { Retained::from_raw(old as *mut NSPanel) } {
+                    old_panel.orderOut(None);
+                }
+            }
+        }
+        log::info!(target: "overlay", "click-catcher NSPanel created");
+        sync(app);
+    }
 
-        let content_view: &NSView = &content;
-        content_view.setFrame(wrapper.bounds());
-        content_view.setAutoresizingMask(resize);
-        wrapper.addSubview(content_view);
+    /// Mirror the overlay window's frame onto the click-catcher panel and match
+    /// its visibility (order above the overlay when visible, `orderOut:` when
+    /// hidden). Must run on the AppKit main thread.
+    pub(super) fn sync(app: &AppHandle) {
+        if MainThreadMarker::new().is_none() {
+            return;
+        }
+        let state = app.state::<OverlayHitState>();
+        let Some(addr) = state.click_catcher.lock().ok().and_then(|g| *g) else {
+            return;
+        };
+        // SAFETY: stored panel pointer, only dereferenced on the main thread.
+        let panel: &NSPanel = unsafe { &*(addr as *const NSPanel) };
 
-        log::info!(
-            target: "overlay",
-            "overlay configured as non-activating panel with hitTest passthrough"
-        );
+        let Some(overlay_win) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
+            panel.orderOut(None);
+            return;
+        };
+        let ns_ptr = match overlay_win.ns_window() {
+            Ok(p) if !p.is_null() => p,
+            _ => return,
+        };
+        // SAFETY: live overlay `NSWindow`, only dereferenced on the main thread.
+        let overlay_ns: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
+        panel.setFrame_display(overlay_ns.frame(), true);
+
+        if overlay_win.is_visible().unwrap_or(false) {
+            // Order directly above the overlay window so z-order is correct.
+            panel.orderWindow_relativeTo(NSWindowOrderingMode::Above, overlay_ns.windowNumber());
+        } else {
+            panel.orderOut(None);
+        }
+    }
+
+    /// Reclaim and release the click-catcher panel (overlay disabled / app
+    /// exit). Must run on the AppKit main thread.
+    pub(super) fn destroy(app: &AppHandle) {
+        if MainThreadMarker::new().is_none() {
+            return;
+        }
+        let state = app.state::<OverlayHitState>();
+        let Ok(mut guard) = state.click_catcher.lock() else {
+            return;
+        };
+        if let Some(addr) = guard.take() {
+            // SAFETY: reclaim the stored panel; dropping the `Retained` releases it.
+            if let Some(panel) = unsafe { Retained::from_raw(addr as *mut NSPanel) } {
+                panel.orderOut(None);
+            }
+            log::info!(target: "overlay", "click-catcher NSPanel destroyed");
+        }
+    }
+
+    /// Entry point from `build_overlay_window`: capture the overlay `NSWindow`
+    /// address and dispatch panel creation onto the AppKit main thread.
+    pub(super) fn setup(app: &AppHandle, ns_window_addr: usize, rects: Arc<ArcSwap<Vec<HitRect>>>) {
+        let app2 = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            create_and_store(&app2, ns_window_addr, rects);
+        }) {
+            log::warn!(target: "overlay", "click-catcher setup dispatch failed: {e}");
+        }
     }
 }
+
+/// Mirror the overlay window's frame + visibility onto the macOS click-catcher
+/// panel. Runs the work inline when already on the AppKit main thread,
+/// otherwise dispatches onto it. No-op on non-macOS and when no click-catcher
+/// has been created yet.
+#[cfg(target_os = "macos")]
+pub fn sync_click_catcher_frame(app: &AppHandle) {
+    if MainThreadMarker::new().is_some() {
+        macos_click_catcher::sync(app);
+    } else {
+        let app2 = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || macos_click_catcher::sync(&app2)) {
+            log::warn!(target: "overlay", "sync_click_catcher_frame dispatch failed: {e}");
+        }
+    }
+}
+
+/// No-op on non-macOS: click routing there uses the cursor poller.
+#[cfg(not(target_os = "macos"))]
+pub fn sync_click_catcher_frame(_app: &AppHandle) {}
+
+/// Tear down the macOS click-catcher panel (overlay disabled / app exit). Runs
+/// inline when already on the AppKit main thread (e.g. the `RunEvent::Exit`
+/// callback) so teardown is not lost to a dispatch that never runs.
+#[cfg(target_os = "macos")]
+pub fn destroy_click_catcher(app: &AppHandle) {
+    if MainThreadMarker::new().is_some() {
+        macos_click_catcher::destroy(app);
+    } else {
+        let app2 = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || macos_click_catcher::destroy(&app2)) {
+            log::warn!(target: "overlay", "destroy_click_catcher dispatch failed: {e}");
+        }
+    }
+}
+
+/// No-op on non-macOS.
+#[cfg(not(target_os = "macos"))]
+pub fn destroy_click_catcher(_app: &AppHandle) {}
 
 /// Resolve the overlay's effective settings on startup, writing migration
 /// state to disk on first run / first upgrade.
@@ -759,19 +925,18 @@ pub fn build_overlay_window(
 
     let window = builder.build()?;
 
-    // On macOS, convert the overlay into a non-activating panel and wrap its
-    // content view with an `NSView` `hitTest:` override (see `macos_panel`):
-    // clicks inside a renderer-reported card rect reach the WKWebView, clicks
-    // elsewhere pass through to the window underneath, and the overlay never
-    // activates Endara. This also pins the window in place (`setMovable:
-    // false`) so it can't be dragged off its computed corner. Dispatch onto
-    // the macOS main thread because `build_overlay_window` can be invoked from
-    // a Tauri command worker thread (`set_overlay_settings` → enable overlay
-    // from Settings) where calling AppKit selectors directly aborts the
-    // process. The window is built hidden (`visible(false)` above) and only
-    // revealed via the `overlay-render-ready` event / 500ms safety net below,
-    // both of which themselves go through the main thread, so this lands before
-    // the window can appear.
+    // On macOS, create a transparent, non-activating "click-catcher" `NSPanel`
+    // layered exactly over the overlay window (see `macos_click_catcher`):
+    // clicks inside a renderer-reported card rect are captured by the panel and
+    // forwarded to the overlay webview via `overlay:card-clicked`, clicks
+    // elsewhere pass through to whatever window is underneath, and the panel
+    // never activates Endara. The overlay `NSWindow` itself is left untouched.
+    // Dispatch onto the macOS main thread because `build_overlay_window` can be
+    // invoked from a Tauri command worker thread (`set_overlay_settings` →
+    // enable overlay from Settings) where calling AppKit selectors directly
+    // aborts the process. The window is built hidden (`visible(false)` above)
+    // and only revealed via the `overlay-render-ready` event / 500ms safety net
+    // below, both of which sync the click-catcher's frame + visibility.
     #[cfg(target_os = "macos")]
     {
         let rects = Arc::clone(&app.state::<OverlayHitState>().rects);
@@ -780,22 +945,15 @@ pub fn build_overlay_window(
                 // Raw pointers are not `Send`; smuggle the `NSWindow`
                 // address across the closure boundary as a `usize`.
                 let ns_window_addr = ptr as usize;
-                if let Err(e) = app.run_on_main_thread(move || {
-                    macos_panel::configure(ns_window_addr, rects);
-                }) {
-                    log::warn!(
-                        target: "overlay",
-                        "run_on_main_thread for overlay panel setup failed: {e}; overlay stays a plain activating window"
-                    );
-                }
+                macos_click_catcher::setup(app, ns_window_addr, rects);
             }
             Ok(_) => log::warn!(
                 target: "overlay",
-                "ns_window() returned null; overlay panel setup skipped"
+                "ns_window() returned null; click-catcher setup skipped"
             ),
             Err(e) => log::warn!(
                 target: "overlay",
-                "ns_window() failed: {e}; overlay panel setup skipped"
+                "ns_window() failed: {e}; click-catcher setup skipped"
             ),
         }
     }
@@ -806,8 +964,8 @@ pub fn build_overlay_window(
     // skip the global click-through so the overlay window is fully interactive
     // and right-click → Inspect works from devtools; production builds keep the
     // click-through behaviour so the overlay never steals input from the user's
-    // other windows. macOS routes clicks via the panel + `hitTest:` override
-    // installed above and never toggles `set_ignore_cursor_events`.
+    // other windows. macOS routes clicks via the click-catcher panel installed
+    // above and never toggles `set_ignore_cursor_events`.
     #[cfg(not(target_os = "macos"))]
     {
         if cfg!(debug_assertions) {
@@ -832,6 +990,8 @@ pub fn build_overlay_window(
         if let Err(e) = ready_target.show() {
             log::warn!("[overlay] show on render-ready failed: {e}");
         }
+        // Bring the click-catcher over the now-visible overlay (no-op off macOS).
+        sync_click_catcher_frame(ready_target.app_handle());
     });
 
     // Safety net: if the renderer never emits `overlay-render-ready`
@@ -852,6 +1012,8 @@ pub fn build_overlay_window(
         if let Err(e) = safety.show() {
             log::warn!("[overlay] safety-net show failed: {e}");
         }
+        // Keep the click-catcher in lock-step with the (now shown) overlay.
+        sync_click_catcher_frame(safety.app_handle());
     });
 
     Ok(window)
@@ -886,6 +1048,9 @@ pub fn reposition_overlay_window(app: &AppHandle, position: OverlayPosition) -> 
         window.set_size(size)?;
         window.set_position(pos)?;
     }
+    // Mirror the new frame onto the click-catcher panel (no-op off macOS). This
+    // is the move/resize/display-reconfiguration entry point for the overlay.
+    sync_click_catcher_frame(app);
     Ok(())
 }
 
@@ -1133,6 +1298,7 @@ mod tests {
             y: 100.0,
             width: 340.0,
             height: 72.0,
+            log_id: String::new(),
         };
         assert!(r.contains(20.0, 100.0), "top-left corner is inclusive");
         assert!(r.contains(189.0, 135.0), "interior point");
@@ -1150,12 +1316,14 @@ mod tests {
                 y: 0.0,
                 width: 10.0,
                 height: 10.0,
+                log_id: String::new(),
             },
             HitRect {
                 x: 100.0,
                 y: 100.0,
                 width: 10.0,
                 height: 10.0,
+                log_id: String::new(),
             },
         ];
         assert!(any_rect_contains(&rects, 5.0, 5.0));
@@ -1166,10 +1334,10 @@ mod tests {
 
     #[test]
     fn hit_test_passthrough_matches_card_rects_in_local_coords() {
-        // Decision logic of the macOS `hitTest:` override: the wrapper view is
-        // flipped (top-left origin), so renderer rects compare directly against
-        // the view-local point with no Y inversion. Inside a card → capture
-        // (return super.hitTest); outside every card → pass through (return
+        // Decision logic of the macOS click-catcher `hitTest:`: the content
+        // view is flipped (top-left origin), so renderer rects compare directly
+        // against the view-local point with no Y inversion. Inside a card →
+        // capture (return self); outside every card → pass through (return
         // nil). Coordinates mirror a real diagnostic-log report.
         let cards = [
             HitRect {
@@ -1177,12 +1345,14 @@ mod tests {
                 y: 1032.0,
                 width: 340.0,
                 height: 100.0,
+                log_id: String::new(),
             },
             HitRect {
                 x: 40.0,
                 y: 900.0,
                 width: 340.0,
                 height: 100.0,
+                log_id: String::new(),
             },
         ];
         // Point inside the first card → captured.
@@ -1230,7 +1400,7 @@ mod tests {
 
     #[test]
     fn hit_rect_deserializes_from_renderer_shape() {
-        let json = r#"{"x":20.5,"y":100.0,"width":340.0,"height":72.25}"#;
+        let json = r#"{"x":20.5,"y":100.0,"width":340.0,"height":72.25,"log_id":"req-7"}"#;
         let r: HitRect = serde_json::from_str(json).unwrap();
         assert_eq!(
             r,
@@ -1239,8 +1409,17 @@ mod tests {
                 y: 100.0,
                 width: 340.0,
                 height: 72.25,
+                log_id: "req-7".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn hit_rect_defaults_log_id_when_absent() {
+        // `#[serde(default)]` keeps older payloads (no `log_id`) decodable.
+        let json = r#"{"x":1.0,"y":2.0,"width":3.0,"height":4.0}"#;
+        let r: HitRect = serde_json::from_str(json).unwrap();
+        assert_eq!(r.log_id, "");
     }
 
     #[test]

@@ -140,8 +140,11 @@ describe('ToastFeed — group-level slide direction + container gate', () => {
 
   it('per-card slot uses a short in:fade only (no per-card outro)', async () => {
     const src = (await import('./ToastFeed.svelte?raw')).default as string;
-    // `.tf-card-slot` wrapper carries an `in:fade` for the 1 → N fade-in.
-    expect(src).toMatch(/<div class="tf-card-slot" in:fade=\{\{ duration: 120 \}\}>/);
+    // `.tf-card-slot` wrapper carries an `in:fade` for the 1 → N fade-in and
+    // a `data-log-id` so the native click-catcher can resolve the target row.
+    expect(src).toMatch(/class="tf-card-slot"/);
+    expect(src).toMatch(/data-log-id=\{latestRequest\(g\)\?\.jsonrpcId \?\? ''\}/);
+    expect(src).toMatch(/in:fade=\{\{ duration: 120 \}\}/);
     // No `out:` transition on the per-card slot — the outro is feed-level.
     const slotIdx = src.indexOf('class="tf-card-slot"');
     const eachEndIdx = src.indexOf('{/each}', slotIdx);

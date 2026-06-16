@@ -78,7 +78,7 @@ describe('reportOverlayHitRects', () => {
   it('invokes set_overlay_hit_rects with the measured rects', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
-    const rects = [{ x: 20, y: 100, width: 340, height: 72 }];
+    const rects = [{ x: 20, y: 100, width: 340, height: 72, log_id: 'req-1' }];
     await reportOverlayHitRects(rects);
     expect(mockInvoke).toHaveBeenCalledWith('set_overlay_hit_rects', { rects });
   });

@@ -9,6 +9,7 @@
   import {
     collectHitRects,
     hiddenGroupCount,
+    latestRequest,
     visibleGroups,
     type OverlayPosition,
   } from './overlay-helpers';
@@ -142,7 +143,11 @@
         <div class="tf-more" data-testid="more-earlier">+{hidden} earlier</div>
       {/if}
       {#each visible as g (g.id)}
-        <div class="tf-card-slot" in:fade={{ duration: 120 }}>
+        <div
+          class="tf-card-slot"
+          data-log-id={latestRequest(g)?.jsonrpcId ?? ''}
+          in:fade={{ duration: 120 }}
+        >
           <OverlayCard group={g} {showProfile} {dismissDurationMs} />
         </div>
       {/each}

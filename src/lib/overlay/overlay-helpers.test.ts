@@ -190,14 +190,21 @@ describe('visibleGroups / hiddenGroupCount', () => {
 });
 
 describe('collectHitRects', () => {
-  const el = (x: number, y: number, width: number, height: number) => ({
+  const el = (x: number, y: number, width: number, height: number, logId?: string) => ({
     getBoundingClientRect: () => ({ x, y, width, height }),
+    dataset: { logId },
   });
 
-  it('maps elements to their bounding rects in order', () => {
-    expect(collectHitRects([el(20, 100, 340, 72), el(20, 184, 340, 64)])).toEqual([
-      { x: 20, y: 100, width: 340, height: 72 },
-      { x: 20, y: 184, width: 340, height: 64 },
+  it('maps elements to their bounding rects in order, tagging log_id', () => {
+    expect(collectHitRects([el(20, 100, 340, 72, 'a'), el(20, 184, 340, 64, 'b')])).toEqual([
+      { x: 20, y: 100, width: 340, height: 72, log_id: 'a' },
+      { x: 20, y: 184, width: 340, height: 64, log_id: 'b' },
+    ]);
+  });
+
+  it('defaults log_id to empty string when the slot has no data-log-id', () => {
+    expect(collectHitRects([el(20, 100, 340, 72)])).toEqual([
+      { x: 20, y: 100, width: 340, height: 72, log_id: '' },
     ]);
   });
 
@@ -206,15 +213,15 @@ describe('collectHitRects', () => {
   });
 
   it('skips null/undefined entries', () => {
-    expect(collectHitRects([null, el(1, 2, 3, 4), undefined])).toEqual([
-      { x: 1, y: 2, width: 3, height: 4 },
+    expect(collectHitRects([null, el(1, 2, 3, 4, 'x'), undefined])).toEqual([
+      { x: 1, y: 2, width: 3, height: 4, log_id: 'x' },
     ]);
   });
 
   it('drops zero-area rects (collapsed / not yet laid out elements)', () => {
     expect(
-      collectHitRects([el(0, 0, 0, 50), el(0, 0, 50, 0), el(5, 5, 10, 10)]),
-    ).toEqual([{ x: 5, y: 5, width: 10, height: 10 }]);
+      collectHitRects([el(0, 0, 0, 50), el(0, 0, 50, 0), el(5, 5, 10, 10, 'k')]),
+    ).toEqual([{ x: 5, y: 5, width: 10, height: 10, log_id: 'k' }]);
   });
 
   it('accepts any iterable (e.g. a NodeList-like)', () => {

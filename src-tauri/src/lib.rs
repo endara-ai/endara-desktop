@@ -1433,6 +1433,8 @@ async fn get_mgmt_api_socket_path() -> Result<String, String> {
 async fn show_overlay(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window(overlay::OVERLAY_WINDOW_LABEL) {
         w.show().map_err(|e| e.to_string())?;
+        // Bring the macOS click-catcher panel over the now-visible overlay.
+        overlay::sync_click_catcher_frame(&app);
     }
     Ok(())
 }
@@ -1441,6 +1443,8 @@ async fn show_overlay(app: AppHandle) -> Result<(), String> {
 async fn hide_overlay(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window(overlay::OVERLAY_WINDOW_LABEL) {
         w.hide().map_err(|e| e.to_string())?;
+        // Hide the macOS click-catcher panel alongside the overlay.
+        overlay::sync_click_catcher_frame(&app);
     }
     Ok(())
 }
@@ -1588,6 +1592,8 @@ async fn apply_overlay_settings(
                 log::warn!("[overlay] destroy on disable failed: {e}");
             }
         }
+        // Tear down the macOS click-catcher panel that mirrored the overlay.
+        overlay::destroy_click_catcher(app);
         log::info!("[overlay] settings update enabled=false applied");
     } else if enabled_changed && new_settings.enabled {
         // Enable: rebuild the overlay window. The renderer auto-invokes
@@ -1673,8 +1679,15 @@ async fn focus_main_window_on_log(app: AppHandle, jsonrpc_id: String) -> Result<
         "focus_main_window_on_log invoked: log_id={}",
         jsonrpc_id
     );
+    // `focus_main_window_on_log` is an async command that runs on a tokio
+    // worker thread. `set_macos_activation_policy` asserts it is on the main
+    // thread via `MainThreadMarker::new()`, so dispatch the AppKit work onto
+    // the main thread instead of calling it directly here.
     #[cfg(target_os = "macos")]
-    set_macos_activation_policy(true);
+    app.run_on_main_thread(|| {
+        set_macos_activation_policy(true);
+    })
+    .map_err(|e| e.to_string())?;
     if let Some(window) = app.get_webview_window("main") {
         window.show().map_err(|e| e.to_string())?;
         window.unminimize().map_err(|e| e.to_string())?;
@@ -2710,6 +2723,10 @@ pub fn run() {
             }
             RunEvent::Exit => {
                 log::info!("app exit");
+                // Release the macOS click-catcher panel while still on the main
+                // thread (the event loop has stopped, so a dispatched teardown
+                // would never run).
+                overlay::destroy_click_catcher(app);
                 // Suppress any in-flight supervisor logic so the upcoming SIGTERM
                 // is treated as an intentional shutdown, then abort a pending
                 // auto-restart task if one is sleeping out its backoff window.
