@@ -237,8 +237,13 @@
         getLines: () => filteredLines,
         onFound: (idx) => {
           // Wait one tick in case the row mounted on the same store update
-          // that satisfied the poll, then scroll + highlight.
-          tick().then(() => highlightRow(jsonrpcId, idx));
+          // that satisfied the poll, then scroll + highlight. Re-check the
+          // generation after the tick so a newer click that arrived in the
+          // meantime is not clobbered by this now-stale highlight.
+          tick().then(() => {
+            if (generation !== highlightGeneration) return;
+            highlightRow(jsonrpcId, idx);
+          });
         },
         onTimeout: () => {
           console.warn(`[overlay] no log row found for jsonrpcId=${jsonrpcId}`);

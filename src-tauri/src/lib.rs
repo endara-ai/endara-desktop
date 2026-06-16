@@ -1459,12 +1459,6 @@ async fn set_overlay_hit_rects(
     state: State<'_, overlay::OverlayHitState>,
     rects: Vec<overlay::HitRect>,
 ) -> Result<(), String> {
-    log::info!(
-        target: "overlay",
-        "set_overlay_hit_rects: {} rect(s); first={:?}",
-        rects.len(),
-        rects.first()
-    );
     overlay::update_hit_rects(&app, &state, rects);
     Ok(())
 }

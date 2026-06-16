@@ -89,7 +89,6 @@
     let cardClickUnlisten: UnlistenFn | null = null;
     listen<{ log_id: string }>('overlay:card-clicked', (event) => {
       const logId = event.payload?.log_id || null;
-      console.info('[overlay] overlay:card-clicked received', { logId });
       void focusLogForRequest(logId);
     })
       .then((un) => { cardClickUnlisten = un; })
