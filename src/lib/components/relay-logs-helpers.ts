@@ -109,3 +109,37 @@ export function resolvePendingHighlight<T extends { requestId?: string }>(opts: 
   }, intervalMs);
   return cancel;
 }
+
+/**
+ * Wait until the scroll container reports real layout (a non-zero
+ * `getBoundingClientRect()`), i.e. the relay-logs tab has actually been
+ * painted after its `style:display:none` → `block` toggle.
+ *
+ * The overlay:focus-log handler switches tabs and then runs `scrollIntoView`
+ * plus the `highlight-row-fade` CSS animation. Because that animation uses
+ * `forwards`, if it starts while the tab is still hidden it finishes at the
+ * transparent end state and the user never sees the pulse. Gating the
+ * highlight on real container dimensions guarantees the animation starts on a
+ * visible row.
+ *
+ * Resolves `true` as soon as the element has non-zero dimensions (immediately
+ * when already visible, so the working same-tab case adds no delay), or
+ * `false` once `deadlineMs` elapses without the tab becoming visible (e.g. the
+ * user navigated away again before resolution).
+ */
+export async function waitForVisibleContainer(
+  getEl: () => { getBoundingClientRect: () => { width: number; height: number } } | null | undefined,
+  deadlineMs = 2000,
+  intervalMs = 16,
+): Promise<boolean> {
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    const el = getEl();
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return true;
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}

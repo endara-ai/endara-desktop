@@ -4,7 +4,12 @@ import {
   findRequestRowIndex,
   resolvePendingHighlight,
   toggleEndpointFilter,
+  waitForVisibleContainer,
 } from './relay-logs-helpers';
+
+function rectEl(getRect: () => { width: number; height: number }) {
+  return { getBoundingClientRect: getRect };
+}
 
 describe('toggleEndpointFilter', () => {
   it('selects an endpoint when nothing is selected', () => {
@@ -126,5 +131,40 @@ describe('resolvePendingHighlight', () => {
     vi.advanceTimersByTime(5000);
     expect(onFound).not.toHaveBeenCalled();
     expect(onTimeout).not.toHaveBeenCalled();
+  });
+});
+
+describe('waitForVisibleContainer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves true immediately when the container already has layout', async () => {
+    const el = rectEl(() => ({ width: 800, height: 600 }));
+    await expect(waitForVisibleContainer(() => el, 2000, 16)).resolves.toBe(true);
+  });
+
+  it('resolves true once the container gains dimensions within the budget', async () => {
+    let frames = 0;
+    const el = rectEl(() => (frames++ < 3 ? { width: 0, height: 0 } : { width: 800, height: 600 }));
+    const promise = waitForVisibleContainer(() => el, 2000, 16);
+    await vi.advanceTimersByTimeAsync(64);
+    await expect(promise).resolves.toBe(true);
+  });
+
+  it('resolves false after the deadline when the container stays hidden', async () => {
+    const el = rectEl(() => ({ width: 0, height: 0 }));
+    const promise = waitForVisibleContainer(() => el, 200, 16);
+    await vi.advanceTimersByTimeAsync(400);
+    await expect(promise).resolves.toBe(false);
+  });
+
+  it('resolves false when the element is missing for the whole budget', async () => {
+    const promise = waitForVisibleContainer(() => null, 200, 16);
+    await vi.advanceTimersByTimeAsync(400);
+    await expect(promise).resolves.toBe(false);
   });
 });

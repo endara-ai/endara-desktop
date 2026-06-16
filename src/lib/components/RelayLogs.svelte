@@ -6,7 +6,14 @@
   import { isAtBottom } from '$lib/scrollUtils';
   import LogFilterBar from './LogFilterBar.svelte';
   import LogRow from './LogRow.svelte';
-  import { resolvePendingHighlight, toggleEndpointFilter } from './relay-logs-helpers';
+  import {
+    resolvePendingHighlight,
+    toggleEndpointFilter,
+    waitForVisibleContainer,
+  } from './relay-logs-helpers';
+
+  /** Resolve after the browser has scheduled a paint (one animation frame). */
+  const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
   /** Duration the matched row stays highlighted after an overlay:focus-log event. */
   const HIGHLIGHT_DURATION_MS = 2000;
@@ -30,6 +37,9 @@
   // Cancels any in-flight pending-highlight poll (overlay click before the
   // target row has rendered). Replaced on each new click, cleared on destroy.
   let cancelPendingHighlight: (() => void) | null = null;
+  // Bumped on every overlay:focus-log click so a stale visibility wait from an
+  // earlier click bails instead of highlighting after a newer click superseded it.
+  let highlightGeneration = 0;
 
   // Filter state — local, not persisted (engineering spec §2.2).
   let activeLevels = $state<Set<LogLevel>>(new Set(['error', 'warn', 'info', 'debug', 'trace']));
@@ -191,11 +201,18 @@
   // the target row can take a moment to mount/populate. When it is not found
   // synchronously we hold a short-lived pending highlight and poll until the
   // row appears or a ~2s budget elapses, instead of giving up after one pass.
+  //
+  // The relay-logs tab is rendered with `style:display:none` until activated,
+  // so when the click arrives from another tab the container has no layout yet.
+  // We await two animation frames (a layout + paint pass) and then poll its
+  // dimensions before highlighting, otherwise the `forwards` CSS animation
+  // finishes while the tab is hidden and the pulse is never seen.
   onMount(() => {
     let unlisten: UnlistenFn | undefined;
     listen<{ jsonrpcId: string }>('overlay:focus-log', async (event) => {
       const { jsonrpcId } = event.payload;
       if (!jsonrpcId) return;
+      const generation = ++highlightGeneration;
       activeTopLevelTab.set('relay-logs');
       // Disable auto-scroll so scrollIntoView is not immediately undone by
       // the bottom-pin effect when new log lines arrive mid-flight.
@@ -204,6 +221,17 @@
       cancelPendingHighlight?.();
       cancelPendingHighlight = null;
       await tick();
+      // Two animation frames so the just-toggled tab gets a display:none→block
+      // layout pass and a paint before we check its dimensions.
+      await nextFrame();
+      await nextFrame();
+      if (generation !== highlightGeneration) return;
+      const visible = await waitForVisibleContainer(() => scrollContainer, HIGHLIGHT_DURATION_MS);
+      if (generation !== highlightGeneration) return;
+      if (!visible) {
+        console.warn(`[overlay] relay-logs tab never became visible for jsonrpcId=${jsonrpcId}`);
+        return;
+      }
       cancelPendingHighlight = resolvePendingHighlight({
         jsonrpcId,
         getLines: () => filteredLines,
