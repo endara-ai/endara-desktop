@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 
 // Re-implement the pure logic from AuthTab.svelte so we can unit-test it.
 // These must stay in sync with the component implementation.
@@ -220,6 +220,45 @@ describe('actionBusy', () => {
 
   it('is true when both actions are in progress', () => {
     expect(actionBusy(true, true)).toBe(true);
+  });
+});
+
+// The vitest environment here is `node`, so we can't mount the component and
+// inspect a live DOM. Instead, assert against the component source so these
+// tests are meaningfully tied to the real `disabled` bindings and handler
+// guards (not just the mirrored `actionBusy` helper above). This guards the
+// regression where each button only disabled on its own in-progress flag,
+// allowing an overlapping token refresh + browser OAuth flow.
+describe('AuthTab busy-guard wiring (source contract)', () => {
+  let source = '';
+
+  beforeAll(async () => {
+    // @ts-expect-error node builtin types not installed
+    const { readFileSync } = await import('node:fs');
+    // @ts-expect-error node builtin types not installed
+    const { fileURLToPath } = await import('node:url');
+    source = readFileSync(fileURLToPath(new URL('./AuthTab.svelte', import.meta.url)), 'utf8') as string;
+  });
+
+  it('derives a shared actionBusy guard from both in-progress flags', () => {
+    expect(source).toMatch(
+      /actionBusy\s*=\s*\$derived\(\s*actionInProgress\s*\|\|\s*reauthInProgress\s*\)/,
+    );
+  });
+
+  it('binds both Refresh Now and Re-authenticate buttons to the shared guard', () => {
+    const disabledBindings = source.match(/disabled=\{actionBusy\}/g) ?? [];
+    expect(disabledBindings).toHaveLength(2);
+    // Neither button should bind disabled to a single per-flow flag anymore.
+    expect(source).not.toMatch(/disabled=\{actionInProgress\}/);
+    expect(source).not.toMatch(/disabled=\{reauthInProgress\}/);
+  });
+
+  it('early-returns from both handlers while either flow is active', () => {
+    const guards =
+      source.match(/if\s*\(!name\s*\|\|\s*actionInProgress\s*\|\|\s*reauthInProgress\)\s*return;/g) ??
+      [];
+    expect(guards).toHaveLength(2);
   });
 });
 

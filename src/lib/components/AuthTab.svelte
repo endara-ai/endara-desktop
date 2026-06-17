@@ -76,7 +76,7 @@
 
   async function handleRefresh() {
     const name = $selectedEndpoint;
-    if (!name || actionInProgress) return;
+    if (!name || actionInProgress || reauthInProgress) return;
     actionInProgress = true;
     try {
       await refreshOAuth(name);
@@ -90,7 +90,7 @@
 
   async function handleReauthorize() {
     const name = $selectedEndpoint;
-    if (!name || reauthInProgress) return;
+    if (!name || actionInProgress || reauthInProgress) return;
     reauthInProgress = true;
     try {
       await reauthorize(name, {
