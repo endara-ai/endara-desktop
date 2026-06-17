@@ -196,19 +196,19 @@ describe('toastStore', () => {
     expect(labels).toContain('Cursor');
   });
 
-  it('sources jsonrpcId from the started event request_uid', () => {
+  it('sources logId from the started event request_uid', () => {
     const store = createToastStore();
     store.addStarted(started({ request_id: 'req-1', request_uid: 'uid-abc' }));
     const groups = get(store) as ToolCallGroup[];
-    expect(groups[0].requests[0].jsonrpcId).toBe('uid-abc');
+    expect(groups[0].requests[0].logId).toBe('uid-abc');
   });
 
-  it('settle propagates the request_uid-sourced jsonrpcId unchanged', () => {
+  it('settle propagates the request_uid-sourced logId unchanged', () => {
     const store = createToastStore();
     store.addStarted(started({ request_id: 'req-1', request_uid: 'uid-abc' }));
     store.settle(completed('req-1'));
     const groups = get(store) as ToolCallGroup[];
-    expect(groups[0].requests[0].jsonrpcId).toBe('uid-abc');
+    expect(groups[0].requests[0].logId).toBe('uid-abc');
   });
 
   // Regression for the Phase 4 grouping bug: `OverlayCard` is keyed by

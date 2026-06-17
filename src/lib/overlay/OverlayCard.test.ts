@@ -17,7 +17,7 @@ import { cardClick } from './overlay-actions';
 import type { ToolCallGroup, ToolCallRequest } from './toastStore';
 
 function req(over: Partial<ToolCallRequest> = {}): ToolCallRequest {
-  return { requestId: 'r-1', ts: 'ts', status: 'inflight', jsonrpcId: null, ...over };
+  return { requestId: 'r-1', ts: 'ts', status: 'inflight', logId: null, ...over };
 }
 
 function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
@@ -131,14 +131,14 @@ describe('OverlayCard — hint pills', () => {
 describe('OverlayCard — click handler', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('invokes focus_main_window_on_log with the latest request jsonrpcId', async () => {
+  it('invokes focus_main_window_on_log with the latest request logId', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
 
     const group = g({
       requests: [
-        req({ requestId: 'a', status: 'success', durationMs: 12, jsonrpcId: 'rpc-1' }),
-        req({ requestId: 'b', status: 'success', durationMs: 14, jsonrpcId: 'rpc-2' }),
+        req({ requestId: 'a', status: 'success', durationMs: 12, logId: 'rpc-1' }),
+        req({ requestId: 'b', status: 'success', durationMs: 14, logId: 'rpc-2' }),
       ],
       success: 2,
     });
@@ -150,12 +150,12 @@ describe('OverlayCard — click handler', () => {
     });
   });
 
-  it('is a soft no-op when the latest request has null jsonrpcId', async () => {
+  it('is a soft no-op when the latest request has null logId', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
 
     const group = g({
-      requests: [req({ jsonrpcId: null })],
+      requests: [req({ logId: null })],
       inflight: 1,
     });
     expect(canFocusLog(group)).toBe(false);

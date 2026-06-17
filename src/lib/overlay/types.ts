@@ -46,9 +46,6 @@ export type StartedEvent = {
   // collision-free across multiple MCP clients sending the same JSON-RPC id
   // concurrently. The relay always emits it on Started events.
   request_uid: string;
-  // JSON-RPC envelope id captured from the surrounding `request` span. Retained
-  // on the wire for diagnostic context only; no longer used as the row/card key.
-  jsonrpc_id?: string | null;
   tool: string;
   annotations?: ToolCallAnnotations;
   // Identity of the calling MCP client. Omitted by the relay when no caller
@@ -62,7 +59,6 @@ export type CompletedEvent = {
   ts: string;
   duration_ms: number;
   status: 'ok' | 'error';
-  jsonrpc_id?: string | null;
 };
 
 export type FailedEvent = {
@@ -72,7 +68,6 @@ export type FailedEvent = {
   duration_ms: number;
   status: 'error';
   error_message?: string;
-  jsonrpc_id?: string | null;
 };
 
 export type ToolCallEvent = StartedEvent | CompletedEvent | FailedEvent;

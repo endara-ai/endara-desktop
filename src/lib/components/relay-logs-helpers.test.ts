@@ -68,7 +68,7 @@ describe('resolvePendingHighlight', () => {
     const onFound = vi.fn();
     const onTimeout = vi.fn();
     const lines = [{ requestId: 'a' }, { requestId: '7' }];
-    resolvePendingHighlight({ jsonrpcId: '7', getLines: () => lines, onFound, onTimeout });
+    resolvePendingHighlight({ logId: '7', getLines: () => lines, onFound, onTimeout });
     expect(onFound).toHaveBeenCalledExactlyOnceWith(1);
     expect(onTimeout).not.toHaveBeenCalled();
   });
@@ -78,7 +78,7 @@ describe('resolvePendingHighlight', () => {
     const onTimeout = vi.fn();
     let lines: { requestId?: string }[] = [];
     resolvePendingHighlight({
-      jsonrpcId: '7',
+      logId: '7',
       getLines: () => lines,
       onFound,
       onTimeout,
@@ -100,7 +100,7 @@ describe('resolvePendingHighlight', () => {
     const onFound = vi.fn();
     const onTimeout = vi.fn();
     resolvePendingHighlight({
-      jsonrpcId: 'missing',
+      logId: 'missing',
       getLines: () => [{ requestId: 'a' }],
       onFound,
       onTimeout,
@@ -118,7 +118,7 @@ describe('resolvePendingHighlight', () => {
     const onTimeout = vi.fn();
     let lines: { requestId?: string }[] = [];
     const cancel = resolvePendingHighlight({
-      jsonrpcId: '7',
+      logId: '7',
       getLines: () => lines,
       onFound,
       onTimeout,

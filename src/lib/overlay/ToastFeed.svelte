@@ -150,7 +150,7 @@
       {#each visible as g (g.id)}
         <div
           class="tf-card-slot"
-          data-log-id={latestRequest(g)?.jsonrpcId ?? ''}
+          data-log-id={latestRequest(g)?.logId ?? ''}
           in:fade={{ duration: 120 }}
         >
           <OverlayCard group={g} {showProfile} {dismissDurationMs} />

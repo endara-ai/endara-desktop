@@ -51,9 +51,9 @@ export type ToolCallRequest = {
   // Canonical log-row key sourced from the originating event's `request_uid`
   // (the relay-minted per-HTTP-request UUID). Surfaced on each request so the
   // overlay card click handler can emit it to the main window to scroll the
-  // matching log row into view. (Field name retained for minimal touch surface;
-  // a future cleanup pass can rename to `logId`.)
-  jsonrpcId: string | null;
+  // matching log row into view. Named `logId` to reflect its generic
+  // semantic — it is the relay-minted UUID, not a JSON-RPC id.
+  logId: string | null;
 };
 
 export type ToolCallGroup = {
@@ -164,7 +164,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       requestId: event.request_id,
       ts: event.ts,
       status: 'inflight',
-      jsonrpcId: event.request_uid,
+      logId: event.request_uid,
     };
     if (existing) {
       // If this group was counting down (inflight had been 0), a new
@@ -229,14 +229,14 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     if (!existingReq || existingReq.status !== 'inflight') return;
     const isError = event.kind === 'failed' || event.status === 'error';
     // Build a fresh ToolCallRequest with the settled fields. The relay always
-    // populates `request_uid` on Started, so `jsonrpcId` is already set on the
+    // populates `request_uid` on Started, so `logId` is already set on the
     // existing request — just propagate it forward unchanged.
     const settledReq: ToolCallRequest = {
       ...existingReq,
       status: isError ? 'error' : 'success',
       durationMs: event.duration_ms,
       ...(event.kind === 'failed' ? { errorMessage: event.error_message } : {}),
-      jsonrpcId: existingReq.jsonrpcId,
+      logId: existingReq.logId,
     };
     const newInflight = Math.max(0, target.inflight - 1);
     const willArm = newInflight === 0;

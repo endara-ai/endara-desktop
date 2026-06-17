@@ -19,7 +19,7 @@ function req(overrides: Partial<ToolCallRequest> = {}): ToolCallRequest {
     requestId: 'r-1',
     ts: 'ts',
     status: 'inflight',
-    jsonrpcId: null,
+    logId: null,
     ...overrides,
   };
 }
@@ -119,11 +119,11 @@ describe('latestRequest', () => {
 });
 
 describe('canFocusLog', () => {
-  it('false when latest request has null jsonrpcId', () => {
-    expect(canFocusLog(makeGroup({ requests: [req({ jsonrpcId: null })] }))).toBe(false);
+  it('false when latest request has null logId', () => {
+    expect(canFocusLog(makeGroup({ requests: [req({ logId: null })] }))).toBe(false);
   });
-  it('true when latest request has a jsonrpcId', () => {
-    expect(canFocusLog(makeGroup({ requests: [req({ jsonrpcId: '7' })] }))).toBe(true);
+  it('true when latest request has a logId', () => {
+    expect(canFocusLog(makeGroup({ requests: [req({ logId: '7' })] }))).toBe(true);
   });
 });
 

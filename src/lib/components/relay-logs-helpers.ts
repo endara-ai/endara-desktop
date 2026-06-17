@@ -37,7 +37,7 @@ export function applyGoToEndpoint(name: string): void {
 
 /**
  * Find the index of the latest log row whose request span's `request_uid`
- * (the canonical relay-minted UUID) matches `jsonrpcId`. Collision-free
+ * (the canonical relay-minted UUID) matches `logId`. Collision-free
  * across multiple MCP clients sending the same JSON-RPC id concurrently.
  * Used by the RelayLogs view to scroll to and highlight the row that the
  * overlay card click selected.
@@ -51,10 +51,10 @@ export function applyGoToEndpoint(name: string): void {
  */
 export function findRequestRowIndex<T extends { requestId?: string }>(
   lines: readonly T[],
-  jsonrpcId: string,
+  logId: string,
 ): number {
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].requestId === jsonrpcId) return i;
+    if (lines[i].requestId === logId) return i;
   }
   return -1;
 }
@@ -64,7 +64,7 @@ export function findRequestRowIndex<T extends { requestId?: string }>(
  *
  * When the main window is brought back from a hidden/closed state, the
  * relay-log rows can take a moment to mount/populate, so the row for
- * `jsonrpcId` is not in `getLines()` on the first synchronous pass. Rather
+ * `logId` is not in `getLines()` on the first synchronous pass. Rather
  * than warn-and-give-up, this polls `getLines()` until a matching row appears
  * (firing `onFound` with its index) or the `budgetMs` budget elapses (firing
  * `onTimeout`). If a matching row is already present it resolves synchronously.
@@ -74,16 +74,16 @@ export function findRequestRowIndex<T extends { requestId?: string }>(
  * is idempotent.
  */
 export function resolvePendingHighlight<T extends { requestId?: string }>(opts: {
-  jsonrpcId: string;
+  logId: string;
   getLines: () => readonly T[];
   onFound: (idx: number) => void;
   onTimeout: () => void;
   budgetMs?: number;
   intervalMs?: number;
 }): () => void {
-  const { jsonrpcId, getLines, onFound, onTimeout, budgetMs = 2000, intervalMs = 100 } = opts;
+  const { logId, getLines, onFound, onTimeout, budgetMs = 2000, intervalMs = 100 } = opts;
 
-  const immediate = findRequestRowIndex(getLines(), jsonrpcId);
+  const immediate = findRequestRowIndex(getLines(), logId);
   if (immediate !== -1) {
     onFound(immediate);
     return () => {};
@@ -98,7 +98,7 @@ export function resolvePendingHighlight<T extends { requestId?: string }>(opts: 
     }
   };
   interval = setInterval(() => {
-    const idx = findRequestRowIndex(getLines(), jsonrpcId);
+    const idx = findRequestRowIndex(getLines(), logId);
     if (idx !== -1) {
       cancel();
       onFound(idx);

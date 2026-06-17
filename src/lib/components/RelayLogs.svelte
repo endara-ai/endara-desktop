@@ -171,18 +171,18 @@
   // Scroll the row at `idx` (within filteredLines) into view and paint the
   // fade-out highlight. The DOM query falls back to the last matching row if
   // the :nth-of-type selector did not resolve.
-  function highlightRow(jsonrpcId: string, idx: number) {
+  function highlightRow(logId: string, idx: number) {
     const container = scrollContainer;
     if (!container) return;
     const row = container.querySelector<HTMLElement>(
-      `[data-request-id="${CSS.escape(jsonrpcId)}"]:nth-of-type(${idx + 1})`,
+      `[data-request-id="${CSS.escape(logId)}"]:nth-of-type(${idx + 1})`,
     );
     const rows = container.querySelectorAll<HTMLElement>(
-      `[data-request-id="${CSS.escape(jsonrpcId)}"]`,
+      `[data-request-id="${CSS.escape(logId)}"]`,
     );
     const target = row ?? rows[rows.length - 1];
     target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    highlightedRequestId = jsonrpcId;
+    highlightedRequestId = logId;
     if (highlightTimer) clearTimeout(highlightTimer);
     highlightTimer = setTimeout(() => {
       highlightedRequestId = null;
@@ -233,7 +233,7 @@
         return;
       }
       cancelPendingHighlight = resolvePendingHighlight({
-        jsonrpcId: logId,
+        logId,
         getLines: () => filteredLines,
         onFound: (idx) => {
           // Wait one tick in case the row mounted on the same store update

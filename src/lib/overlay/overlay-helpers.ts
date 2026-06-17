@@ -75,7 +75,7 @@ export function hiddenGroupCount(total: number, maxVisible: number): number {
 /** Whether the card click should attempt to focus a log row. */
 export function canFocusLog(g: ToolCallGroup): boolean {
   const last = latestRequest(g);
-  return !!last && last.jsonrpcId != null;
+  return !!last && last.logId != null;
 }
 
 /** Normalize the prototype's destructive flag onto the typed annotation. */
