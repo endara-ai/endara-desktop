@@ -1,11 +1,12 @@
 import type { RelaySidecarStatusType } from './stores';
 
-export type TopLevelTabId = 'servers' | 'unified-catalog' | 'profiles' | 'relay-logs' | 'settings';
+export type TopLevelTabId = 'servers' | 'unified-catalog' | 'profiles' | 'observability' | 'relay-logs' | 'settings';
 
 export const allTopLevelTabs = [
   { id: 'servers' as const, label: 'Servers' },
   { id: 'unified-catalog' as const, label: 'Catalog' },
   { id: 'profiles' as const, label: 'Profiles' },
+  { id: 'observability' as const, label: 'Observability' },
   { id: 'relay-logs' as const, label: 'Logs' },
   { id: 'settings' as const, label: 'Settings' },
 ];

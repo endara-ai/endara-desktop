@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse } from './types';
+import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse, CallsResponse, CallDetail, AggregatesResponse, ObservabilityConfig } from './types';
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY = 1000;
@@ -545,4 +545,87 @@ export async function getEndpointProfiles(name: string): Promise<{ profiles: str
   return fetchJson<{ profiles: string[] }>(
     `/endpoints/${encodeURIComponent(name)}/profiles`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Observability
+// ---------------------------------------------------------------------------
+//
+// All routes proxy through the management API. Endpoints return 503 when the
+// observability store failed to open; `fetchJson` throws on non-2xx, so callers
+// can catch and render an "unavailable" state. The relay's query params are
+// snake_case (see the verified REST contract in the spec note).
+
+/** Build a `?a=b&c=d` query string from an object, skipping null/undefined values. */
+function buildQuery(params: object): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      search.set(key, String(value));
+    }
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export interface ObservabilityCallsFilter {
+  server_name?: string;
+  tool?: string;
+  success?: boolean;
+  request_uid?: string;
+  since?: number;
+  until?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export async function getObservabilityCalls(
+  filter: ObservabilityCallsFilter = {},
+): Promise<CallsResponse> {
+  return fetchJson<CallsResponse>(`/observability/calls${buildQuery(filter)}`);
+}
+
+/** Fetch a single call by request UUID. Returns null when the relay 404s. */
+export async function getObservabilityCall(requestUid: string): Promise<CallDetail | null> {
+  try {
+    return await fetchJson<CallDetail>(
+      `/observability/calls/${encodeURIComponent(requestUid)}`,
+    );
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('HTTP 404')) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export interface ObservabilityAggregatesParams {
+  bucket_seconds?: number;
+  since?: number;
+  until?: number;
+}
+
+export async function getObservabilityAggregates(
+  params: ObservabilityAggregatesParams = {},
+): Promise<AggregatesResponse> {
+  return fetchJson<AggregatesResponse>(`/observability/aggregates${buildQuery(params)}`);
+}
+
+export async function purgeObservability(): Promise<{ ok: boolean; message: string }> {
+  return fetchJson<{ ok: boolean; message: string }>('/observability/purge', {
+    method: 'POST',
+  });
+}
+
+export async function getObservabilityConfig(): Promise<ObservabilityConfig> {
+  return fetchJson<ObservabilityConfig>('/observability/config');
+}
+
+export async function putObservabilityConfig(
+  cfg: ObservabilityConfig,
+): Promise<ObservabilityConfig> {
+  return fetchJson<ObservabilityConfig>('/observability/config', {
+    method: 'PUT',
+    body: cfg,
+  });
 }

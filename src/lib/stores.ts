@@ -55,7 +55,7 @@ export const theme = createThemeStore();
 export const searchQuery = writable<string>('');
 export const activeTab = writable<'tools' | 'logs' | 'config' | 'auth' | 'profiles'>('tools');
 export const oauthStatuses = writable<Map<string, OAuthStatus>>(new Map());
-export const activeTopLevelTab = writable<'servers' | 'unified-catalog' | 'profiles' | 'relay-logs' | 'settings'>('servers');
+export const activeTopLevelTab = writable<'servers' | 'unified-catalog' | 'profiles' | 'observability' | 'relay-logs' | 'settings'>('servers');
 
 export const relayLogLines = writable<ParsedLogLine[]>([]);
 export const miniPlayerMode = writable<boolean>(false);

@@ -16,6 +16,7 @@ describe('+page relay tab logic', () => {
       'servers',
       'unified-catalog',
       'profiles',
+      'observability',
       'relay-logs',
       'settings',
     ]);
@@ -30,6 +31,7 @@ describe('+page relay tab logic', () => {
       'servers',
       'unified-catalog',
       'profiles',
+      'observability',
       'relay-logs',
       'settings',
     ]);

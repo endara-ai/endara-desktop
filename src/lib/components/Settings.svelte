@@ -13,9 +13,17 @@
     type OverlayPosition,
   } from '$lib/overlay/overlaySettingsStore';
   import type { UnlistenFn } from '@tauri-apps/api/event';
-  import type { Theme, RelayStatus } from '$lib/types';
+  import type { Theme, RelayStatus, ObservabilityConfig } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
-  import { getStatus } from '$lib/api';
+  import { getStatus, getObservabilityConfig, putObservabilityConfig } from '$lib/api';
+  import {
+    DEFAULT_OBSERVABILITY_CONFIG,
+    OBSERVABILITY_NUMERIC_FIELDS,
+    coerceObservabilityNumber,
+    isFieldEnabled,
+    isObservabilityConfigDirty,
+    validateObservabilityConfig,
+  } from '$lib/components/observability-settings-helpers';
   import { canRetryRelay, getSettingsStatusLabel, restartRelay } from '$lib/relaySidecarUi';
   import { fetchJsExecutionMode, toggleJsExecutionMode } from '$lib/jsExecutionModeUi';
   import { fetchToonOutput, toggleToonOutput } from '$lib/toonOutputUi';
@@ -157,6 +165,7 @@
       .then((un) => { overlaySettingsUnlisten = un; })
       .catch((e) => console.error('[overlay] subscribe failed:', e));
     fetchUpdateChannel();
+    loadObservabilityConfig();
     invoke('get_config_path_display').then((p: unknown) => {
       if (typeof p === 'string') configFilePath = p;
     }).catch(() => {});
@@ -206,6 +215,54 @@
       relaySidecarError.set(error instanceof Error ? error.message : String(error));
     } finally {
       retryingRelay = false;
+    }
+  }
+
+  // Observability — global config edited in place against a loaded baseline.
+  // The relay returns 503 (→ a thrown error) when its store failed to open, so
+  // a load failure flips `obsUnavailable` and renders a graceful notice instead
+  // of the controls.
+  let obsConfig = $state<ObservabilityConfig>({ ...DEFAULT_OBSERVABILITY_CONFIG });
+  let obsBaseline = $state<ObservabilityConfig>({ ...DEFAULT_OBSERVABILITY_CONFIG });
+  let obsLoading = $state(true);
+  let obsUnavailable = $state(false);
+  let obsSaving = $state(false);
+  let obsSaved = $state(false);
+  let obsSaveError = $state<string | null>(null);
+
+  const obsErrors = $derived(validateObservabilityConfig(obsConfig));
+  const obsHasErrors = $derived(Object.keys(obsErrors).length > 0);
+  const obsDirty = $derived(isObservabilityConfigDirty(obsConfig, obsBaseline));
+
+  async function loadObservabilityConfig() {
+    obsLoading = true;
+    obsUnavailable = false;
+    try {
+      const loaded = await getObservabilityConfig();
+      obsConfig = { ...loaded };
+      obsBaseline = { ...loaded };
+    } catch (e) {
+      obsUnavailable = true;
+      console.error('Failed to load observability config:', e);
+    } finally {
+      obsLoading = false;
+    }
+  }
+
+  async function saveObservabilityConfig() {
+    if (obsSaving || obsHasErrors) return;
+    obsSaving = true;
+    obsSaveError = null;
+    try {
+      const saved = await putObservabilityConfig({ ...obsConfig });
+      obsConfig = { ...saved };
+      obsBaseline = { ...saved };
+      obsSaved = true;
+      setTimeout(() => { obsSaved = false; }, 2000);
+    } catch (e) {
+      obsSaveError = e instanceof Error ? e.message : String(e);
+    } finally {
+      obsSaving = false;
     }
   }
 </script>
@@ -441,6 +498,92 @@
           <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$overlaySettings.show_profile ? 'translate-x-5' : ''}"></span>
         </button>
       </div>
+    </div>
+
+    <div class="pt-4 mt-4 border-t border-(--border)">
+      <div class="text-xs font-medium text-(--fg2) uppercase tracking-wide mb-3">Observability</div>
+
+      {#if obsLoading}
+        <p class="text-xs text-(--fg2)">Loading observability settings…</p>
+      {:else if obsUnavailable}
+        <div class="p-2 rounded bg-yellow-500/10 border border-yellow-500/20">
+          <p class="text-xs text-yellow-600 dark:text-yellow-400 font-medium">Observability is unavailable.</p>
+          <p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1">The relay could not open the observability store, so its settings can't be edited right now.</p>
+        </div>
+      {:else}
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <div class="text-sm font-medium">Enable observability</div>
+            <div class="text-xs text-(--fg2) mt-0.5">Record metadata for every proxied tool call so you can inspect calls and aggregates.</div>
+          </div>
+          <button
+            class="shrink-0 relative w-10 h-5 rounded-full transition-colors {obsConfig.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+            onclick={() => obsConfig.enabled = !obsConfig.enabled}
+            role="switch"
+            aria-checked={obsConfig.enabled}
+            aria-label="Toggle observability"
+          >
+            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {obsConfig.enabled ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <div class="mt-4 flex items-start justify-between gap-4" class:opacity-50={!obsConfig.enabled}>
+          <div>
+            <div class="text-sm font-medium">Store payloads</div>
+            <div class="text-xs text-(--fg2) mt-0.5">Capture full request/response payloads in the in-memory ring buffer. Metadata is still recorded when off.</div>
+          </div>
+          <button
+            class="shrink-0 relative w-10 h-5 rounded-full transition-colors {obsConfig.store_payloads ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}"
+            onclick={() => obsConfig.store_payloads = !obsConfig.store_payloads}
+            disabled={!obsConfig.enabled}
+            role="switch"
+            aria-checked={obsConfig.store_payloads}
+            aria-label="Toggle payload capture"
+          >
+            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {obsConfig.store_payloads ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        {#each OBSERVABILITY_NUMERIC_FIELDS as field (field.key)}
+          {@const fieldEnabled = isFieldEnabled(field, obsConfig)}
+          <div class="mt-4" class:opacity-50={!fieldEnabled}>
+            <label for={`obs-${field.key}`} class="block text-xs font-medium mb-1 text-(--fg2)">
+              {field.label} <span class="text-(--fg2)/70">({field.unit})</span>
+            </label>
+            <input
+              id={`obs-${field.key}`}
+              type="number"
+              min={field.min}
+              step="1"
+              disabled={!fieldEnabled}
+              value={obsConfig[field.key]}
+              oninput={(e) => obsConfig[field.key] = coerceObservabilityNumber(field, (e.currentTarget as HTMLInputElement).value)}
+              class="w-40 text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) focus:outline-none focus:border-(--accent) disabled:cursor-not-allowed"
+            />
+            {#if obsErrors[field.key]}
+              <p class="text-xs text-red-600 dark:text-red-400 mt-1">{obsErrors[field.key]}</p>
+            {:else}
+              <p class="text-xs text-(--fg2)/70 mt-1">{field.hint}</p>
+            {/if}
+          </div>
+        {/each}
+
+        <div class="mt-4 flex items-center gap-3">
+          <button
+            class="px-3 py-1.5 text-xs rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            onclick={saveObservabilityConfig}
+            disabled={obsSaving || obsHasErrors || !obsDirty}
+          >
+            {obsSaving ? 'Saving…' : obsSaved ? '✓ Saved' : 'Save'}
+          </button>
+          {#if obsHasErrors}
+            <span class="text-xs text-red-600 dark:text-red-400">Fix the highlighted fields to save.</span>
+          {/if}
+        </div>
+        {#if obsSaveError}
+          <p class="text-xs text-red-600 dark:text-red-400 mt-2">Failed to save: {obsSaveError}</p>
+        {/if}
+      {/if}
     </div>
 
     <div class="pt-4 mt-4 border-t border-(--border)">

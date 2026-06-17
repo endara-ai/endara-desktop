@@ -8,14 +8,16 @@ import {
 import type { RelaySidecarStatusType } from './stores';
 
 describe('allTopLevelTabs', () => {
-  it("includes 'profiles' between 'unified-catalog' and 'relay-logs'", () => {
+  it("includes 'profiles' and 'observability' between 'unified-catalog' and 'relay-logs'", () => {
     const ids = allTopLevelTabs.map((tab) => tab.id);
     const catalogIdx = ids.indexOf('unified-catalog');
     const profilesIdx = ids.indexOf('profiles');
+    const observabilityIdx = ids.indexOf('observability');
     const logsIdx = ids.indexOf('relay-logs');
     expect(catalogIdx).toBeGreaterThanOrEqual(0);
     expect(profilesIdx).toBe(catalogIdx + 1);
-    expect(logsIdx).toBe(profilesIdx + 1);
+    expect(observabilityIdx).toBe(profilesIdx + 1);
+    expect(logsIdx).toBe(observabilityIdx + 1);
   });
 
   it("labels the profiles tab 'Profiles'", () => {

@@ -171,6 +171,101 @@ export interface OAuthSetupStatusResponse {
   url: string;
 }
 
+// ---------------------------------------------------------------------------
+// Observability
+// ---------------------------------------------------------------------------
+//
+// ⚠️ Casing is intentionally mixed to mirror the relay's serialization exactly:
+// CallRecordDto / AggregateBucketDto / ObservabilitySummary are camelCase, while
+// StoredPayloads and ObservabilityConfig are snake_case (no `rename_all`).
+
+/**
+ * A single proxied `tools/call` metadata row from `observability.db`. camelCase;
+ * the relay omits `Option` fields when null, so most fields are optional.
+ */
+export interface CallRecordDto {
+  id: number;
+  requestUid: string;
+  endpoint: string;
+  serverName: string;
+  serverType?: string;
+  transport?: string;
+  profile?: string;
+  clientName?: string;
+  clientVersion?: string;
+  clientUserAgent?: string;
+  clientOrigin?: string;
+  tool: string;
+  tsStart: number;
+  tsEnd?: number;
+  durationMs?: number;
+  success: boolean;
+  errorMessage?: string;
+  requestBytes?: number;
+  responseBytes?: number;
+  streamed: boolean;
+}
+
+/** One aggregate time bucket (camelCase). `server` absent = all-servers bucket. */
+export interface AggregateBucketDto {
+  server?: string;
+  bucketStart: number;
+  count: number;
+  errorCount: number;
+  p50Ms: number;
+  p95Ms: number;
+}
+
+/** Live observability pipeline summary (camelCase). */
+export interface ObservabilitySummary {
+  enabled: boolean;
+  storePayloads: boolean;
+  dropped: number;
+  payloadBufferLen: number;
+  payloadBufferBytes: number;
+}
+
+/** Buffered request/response payloads for a single call (⚠️ snake_case). */
+export interface StoredPayloads {
+  request: string;
+  response: string;
+  request_truncated: boolean;
+  response_truncated: boolean;
+  streamed: boolean;
+  captured_at_ms: number;
+}
+
+/** Global observability configuration (⚠️ snake_case). */
+export interface ObservabilityConfig {
+  enabled: boolean;
+  store_payloads: boolean;
+  payload_window_minutes: number;
+  record_retention_days: number;
+  max_db_size_mb: number;
+  max_payload_bytes: number;
+  payload_buffer_budget_mb: number;
+}
+
+/** `GET /observability/calls` response wrapper. */
+export interface CallsResponse {
+  calls: CallRecordDto[];
+  limit: number;
+  offset: number;
+}
+
+/** `GET /observability/calls/{request_uid}` response wrapper. */
+export interface CallDetail {
+  record: CallRecordDto;
+  payloadStatus: 'stored' | 'expired' | 'disabled';
+  payloads?: StoredPayloads;
+}
+
+/** `GET /observability/aggregates` response wrapper. */
+export interface AggregatesResponse {
+  buckets: AggregateBucketDto[];
+  summary: ObservabilitySummary;
+}
+
 export type Theme = 'light' | 'dark' | 'system';
 
 // Re-export the parsed relay log type so components can import it from

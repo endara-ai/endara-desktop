@@ -12,6 +12,8 @@ vi.mock('$lib/api', () => ({
   getConfig: getConfigMock,
   reloadConfig: reloadConfigMock,
   getStatus: vi.fn(),
+  getObservabilityConfig: vi.fn(),
+  putObservabilityConfig: vi.fn(),
 }));
 
 describe('Settings relay retry behavior', () => {
@@ -336,6 +338,47 @@ describe('Settings activity overlay wiring', () => {
     expect(source).toMatch(
       /onclick=\{\(\)\s*=>\s*updateOverlaySettings\(\s*\{\s*show_profile:\s*!\$overlaySettings\.show_profile\s*\}\s*\)\}/,
     );
+  });
+});
+
+// Observability section wiring — the controls use inline handlers, so we follow
+// the same `?raw` source-level assertion convention used for the activity
+// overlay block above to confirm the Settings UI is wired to D1's API and the
+// shared observability-settings helpers.
+describe('Settings observability section wiring', () => {
+  it('imports the observability API + helpers', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toMatch(
+      /import\s*\{[\s\S]*?getObservabilityConfig[\s\S]*?putObservabilityConfig[\s\S]*?\}\s*from\s*['"]\$lib\/api['"]/,
+    );
+    expect(source).toMatch(/from\s*['"]\$lib\/components\/observability-settings-helpers['"]/);
+  });
+
+  it('loads the config on mount and saves via putObservabilityConfig', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toContain('loadObservabilityConfig()');
+    expect(source).toMatch(/await getObservabilityConfig\(\)/);
+    expect(source).toMatch(/await putObservabilityConfig\(/);
+  });
+
+  it('renders an unavailable notice when the store could not be opened', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toContain('obsUnavailable');
+    expect(source).toContain('Observability is unavailable.');
+  });
+
+  it('wires the enable + store_payloads toggles and disables payload capture when off', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toMatch(/onclick=\{\(\)\s*=>\s*obsConfig\.enabled\s*=\s*!obsConfig\.enabled\}/);
+    expect(source).toMatch(/onclick=\{\(\)\s*=>\s*obsConfig\.store_payloads\s*=\s*!obsConfig\.store_payloads\}/);
+    expect(source).toMatch(/disabled=\{!obsConfig\.enabled\}/);
+  });
+
+  it('iterates the numeric fields and disables the save button on errors / when clean', async () => {
+    const source = (await import('./Settings.svelte?raw')).default;
+    expect(source).toContain('OBSERVABILITY_NUMERIC_FIELDS as field');
+    expect(source).toMatch(/coerceObservabilityNumber\(field,/);
+    expect(source).toMatch(/disabled=\{obsSaving \|\| obsHasErrors \|\| !obsDirty\}/);
   });
 });
 

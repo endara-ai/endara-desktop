@@ -7,6 +7,7 @@
   import RelayLogs from '$lib/components/RelayLogs.svelte';
   import UnifiedCatalog from '$lib/components/UnifiedCatalog.svelte';
   import Profiles from '$lib/components/Profiles.svelte';
+  import Observability from '$lib/components/Observability.svelte';
   import Onboarding from '$lib/components/Onboarding.svelte';
   import ConfirmModal from '$lib/components/ConfirmModal.svelte';
   import { endpoints, activeTopLevelTab, miniPlayerMode, relayConnected, showOnboarding, relayPort, relaySidecarStatus, relaySidecarError, initialLoadComplete, oauthStatuses } from '$lib/stores';
@@ -318,6 +319,9 @@
       </div>
       <div class="h-full" style:display={$activeTopLevelTab === 'profiles' ? 'block' : 'none'}>
         <Profiles />
+      </div>
+      <div class="h-full" style:display={$activeTopLevelTab === 'observability' ? 'block' : 'none'}>
+        <Observability />
       </div>
       <div class="h-full" style:display={$activeTopLevelTab === 'relay-logs' ? 'block' : 'none'}>
         <RelayLogs ongotoendpoint={handleGoToEndpoint} />
