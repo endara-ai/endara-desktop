@@ -61,6 +61,14 @@ function canReauth(status: MinimalOAuthStatus | null): boolean {
   );
 }
 
+// Pure mirror of the `actionBusy` derivation in AuthTab.svelte. Both the
+// "Refresh Now" and "Re-authenticate" buttons bind their `disabled` state to
+// this shared guard so neither can be triggered while either flow is running,
+// avoiding an overlapping token refresh + browser OAuth flow.
+function actionBusy(actionInProgress: boolean, reauthInProgress: boolean): boolean {
+  return actionInProgress || reauthInProgress;
+}
+
 
 describe('formatTime', () => {
   it('returns "—" for null', () => {
@@ -191,6 +199,27 @@ describe('canReauth', () => {
 
   it('returns false when status is null', () => {
     expect(canReauth(null)).toBe(false);
+  });
+});
+
+describe('actionBusy', () => {
+  it('is false when neither action is in progress', () => {
+    expect(actionBusy(false, false)).toBe(false);
+  });
+
+  // Both buttons share this guard: a refresh in progress must also disable the
+  // "Re-authenticate" button so the two flows cannot overlap.
+  it('is true when a refresh is in progress', () => {
+    expect(actionBusy(true, false)).toBe(true);
+  });
+
+  // ...and a re-authentication in progress must also disable "Refresh Now".
+  it('is true when a re-authentication is in progress', () => {
+    expect(actionBusy(false, true)).toBe(true);
+  });
+
+  it('is true when both actions are in progress', () => {
+    expect(actionBusy(true, true)).toBe(true);
   });
 });
 
