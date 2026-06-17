@@ -6,6 +6,7 @@ const REAUTH_NEEDED_STATUSES: ReadonlyArray<OAuthStatusValue> = [
   'disconnected',
   'auth_required',
   'needs_login',
+  'connection_failed',
 ];
 
 export function shouldShowReauthorizeButton(

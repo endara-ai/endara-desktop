@@ -23,8 +23,10 @@ function formatCountdown(seconds: number | null): string {
 
 // Pure mirror of the `canRefresh` derivation in AuthTab.svelte. Kept in sync
 // with the component so we can unit-test which OAuth statuses surface the
-// "Refresh Now" button. `auth_required` is intentionally excluded — once the
-// token is expired the user must re-authorize, not silently refresh.
+// "Refresh Now" button. `connection_failed` is included because the relay
+// accepts a refresh from that state when a refresh token exists; `auth_required`
+// stays excluded — once the token is fully expired the user must re-authorize,
+// not silently refresh.
 type OAuthStatusValue =
   | 'authenticated'
   | 'needs_login'
@@ -42,7 +44,20 @@ function canRefresh(status: MinimalOAuthStatus | null): boolean {
   return (
     status !== null &&
     status.has_refresh_token &&
-    (['authenticated'] as OAuthStatusValue[]).includes(status.status)
+    (['authenticated', 'connection_failed'] as OAuthStatusValue[]).includes(status.status)
+  );
+}
+
+// Pure mirror of the `canReauth` derivation in AuthTab.svelte, which delegates
+// to `canReauthorize()` from $lib/oauth/actions. Kept in sync with that helper's
+// REAUTHORIZE_STATUSES so we can unit-test which statuses surface the
+// "Re-authenticate" button.
+function canReauth(status: MinimalOAuthStatus | null): boolean {
+  return (
+    status !== null &&
+    (['disconnected', 'auth_required', 'needs_login', 'connection_failed'] as OAuthStatusValue[]).includes(
+      status.status,
+    )
   );
 }
 
@@ -135,8 +150,47 @@ describe('canRefresh', () => {
     expect(canRefresh({ status: 'disconnected', has_refresh_token: true })).toBe(false);
   });
 
+  it('returns true for connection_failed when a refresh token is present', () => {
+    expect(canRefresh({ status: 'connection_failed', has_refresh_token: true })).toBe(true);
+  });
+
+  it('returns false for connection_failed when no refresh token is present', () => {
+    expect(canRefresh({ status: 'connection_failed', has_refresh_token: false })).toBe(false);
+  });
+
   it('returns false when status is null', () => {
     expect(canRefresh(null)).toBe(false);
+  });
+});
+
+describe('canReauth', () => {
+  it('returns true for connection_failed (with or without a refresh token)', () => {
+    expect(canReauth({ status: 'connection_failed', has_refresh_token: true })).toBe(true);
+    expect(canReauth({ status: 'connection_failed', has_refresh_token: false })).toBe(true);
+  });
+
+  it('returns true for needs_login', () => {
+    expect(canReauth({ status: 'needs_login', has_refresh_token: false })).toBe(true);
+  });
+
+  it('returns true for auth_required', () => {
+    expect(canReauth({ status: 'auth_required', has_refresh_token: true })).toBe(true);
+  });
+
+  it('returns true for disconnected', () => {
+    expect(canReauth({ status: 'disconnected', has_refresh_token: false })).toBe(true);
+  });
+
+  it('returns false for authenticated', () => {
+    expect(canReauth({ status: 'authenticated', has_refresh_token: true })).toBe(false);
+  });
+
+  it('returns false for refreshing', () => {
+    expect(canReauth({ status: 'refreshing', has_refresh_token: true })).toBe(false);
+  });
+
+  it('returns false when status is null', () => {
+    expect(canReauth(null)).toBe(false);
   });
 });
 

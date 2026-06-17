@@ -247,8 +247,13 @@ describe('DetailPanel endpoint toggle (a11y)', () => {
 });
 
 describe('shouldShowReauthorizeButton', () => {
-  const reauthStatuses: OAuthStatusValue[] = ['disconnected', 'auth_required', 'needs_login'];
-  const nonReauthStatuses: OAuthStatusValue[] = ['authenticated', 'refreshing', 'connection_failed'];
+  const reauthStatuses: OAuthStatusValue[] = [
+    'disconnected',
+    'auth_required',
+    'needs_login',
+    'connection_failed',
+  ];
+  const nonReauthStatuses: OAuthStatusValue[] = ['authenticated', 'refreshing'];
 
   for (const s of reauthStatuses) {
     it(`returns true for oauth + "${s}"`, () => {
