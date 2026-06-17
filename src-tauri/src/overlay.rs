@@ -159,7 +159,8 @@ pub struct OverlaySubscriberState {
 
 /// Poll interval for the cursor poller while hit rects are present. Fast
 /// enough that hover feels immediate, slow enough to be negligible CPU.
-#[cfg(not(target_os = "macos"))]
+/// Cross-platform: the non-macOS path polls the overlay window, the macOS path
+/// polls the click-catcher panel.
 const HIT_RECT_POLL_INTERVAL: Duration = Duration::from_millis(90);
 
 /// Axis-aligned card hit rect in overlay-window viewport coordinates
@@ -198,7 +199,6 @@ pub fn any_rect_contains(rects: &[HitRect], x: f64, y: f64) -> bool {
 /// overlay window is undecorated, so its outer position IS the viewport
 /// origin. A non-positive scale factor (defensive; never expected from
 /// Tauri) falls back to 1.0 rather than dividing by zero.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn cursor_to_viewport(
     cursor: PhysicalPosition<f64>,
     window_pos: PhysicalPosition<i32>,
@@ -216,16 +216,18 @@ pub fn cursor_to_viewport(
 }
 
 /// Tauri-managed shared state for overlay click routing. `rects` holds the
-/// renderer-reported card rects (viewport / CSS px). On macOS the
-/// click-catcher panel's `hitTest:` / `mouseDown:` read them lock-free on the
-/// AppKit main thread, and `click_catcher` holds the raw `NSPanel` address (as
-/// a `usize`, since AppKit pointers are not `Send`) so frame-sync / teardown
-/// can reach it; on other platforms the cursor poller reads the rects and
-/// `poller` holds its task handle so an empty report can abort it.
+/// renderer-reported card rects (viewport / CSS px). `poller` holds the cursor
+/// poller's task handle on every platform so an empty report can abort it: on
+/// non-macOS it toggles the overlay window's `set_ignore_cursor_events`, on
+/// macOS it toggles the click-catcher panel's `setIgnoresMouseEvents` (a plain
+/// `hitTest:`-nil from the panel's content view is not a reliable click-through
+/// primitive in this borderless non-activating configuration). On macOS
+/// `click_catcher` also holds the raw `NSPanel` address (as a `usize`, since
+/// AppKit pointers are not `Send`) so frame-sync / teardown / the poller's
+/// toggle can reach it.
 #[derive(Default)]
 pub struct OverlayHitState {
     rects: Arc<ArcSwap<Vec<HitRect>>>,
-    #[cfg(not(target_os = "macos"))]
     poller: std::sync::Mutex<Option<JoinHandle<()>>>,
     /// Raw `NSPanel` pointer for the click-catcher, smuggled as a `usize`.
     /// Only ever dereferenced on the AppKit main thread.
@@ -235,18 +237,15 @@ pub struct OverlayHitState {
 
 /// Apply a renderer hit-rect report.
 ///
-/// On macOS the click-catcher panel's `hitTest:` / `mouseDown:` (see
-/// [`macos_click_catcher`]) read the rects directly on the AppKit main thread,
-/// so all this does is a single lock-free store per renderer report — no
-/// poller, no `setIgnoresMouseEvents` toggle. On other platforms it drives the
-/// cursor poller.
+/// Both platforms store the rects lock-free and drive a cursor poller. On
+/// macOS the poller toggles the click-catcher panel's `setIgnoresMouseEvents`
+/// (see [`macos_click_catcher`]); on other platforms it toggles the overlay
+/// window's `set_ignore_cursor_events`. An empty report aborts the poller and
+/// restores full click-through.
 pub fn update_hit_rects(app: &AppHandle, state: &OverlayHitState, rects: Vec<HitRect>) {
     #[cfg(target_os = "macos")]
     {
-        // The click-catcher panel's content view consults these rects
-        // synchronously on every mouse event; storing them is the whole job.
-        let _ = app;
-        state.rects.store(Arc::new(rects));
+        update_hit_rects_click_catcher(app, state, rects);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -331,6 +330,101 @@ async fn cursor_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>>>) {
                 continue;
             }
             hovering = inside;
+        }
+    }
+}
+
+/// macOS variant of [`update_hit_rects`]. Stores the rects, then drives the
+/// click-catcher poller: an empty report aborts the poller and restores the
+/// panel to fully click-through (`setIgnoresMouseEvents(true)`); a non-empty
+/// report ensures exactly one poller task is running. Unlike the non-macOS
+/// path this runs in debug builds too — the click-catcher is a separate
+/// transparent panel (not the interactive overlay/devtools window), so it must
+/// stay click-through outside cards in every build.
+#[cfg(target_os = "macos")]
+fn update_hit_rects_click_catcher(app: &AppHandle, state: &OverlayHitState, rects: Vec<HitRect>) {
+    let count = rects.len();
+    let empty = rects.is_empty();
+    state.rects.store(Arc::new(rects));
+
+    let mut poller = state.poller.lock().expect("poller mutex poisoned");
+    if empty {
+        log::info!(target: "overlay", "update_hit_rects (macos): 0 rect(s) aborting poller");
+        if let Some(task) = poller.take() {
+            task.abort();
+            log::info!(target: "overlay", "click-catcher poller aborted");
+        }
+        // Fail-safe: the poller may have left the panel interactive (cursor was
+        // inside a card when it vanished) — restore full click-through.
+        macos_click_catcher::set_ignore_mouse_events(app, true);
+        return;
+    }
+
+    let running = poller.as_ref().map(|t| !t.is_finished()).unwrap_or(false);
+    if running {
+        return;
+    }
+    log::info!(target: "overlay", "update_hit_rects (macos): {count} rect(s) ensuring poller");
+    let app = app.clone();
+    let rects = Arc::clone(&state.rects);
+    *poller = Some(tokio::spawn(async move {
+        click_catcher_poll_loop(app, rects).await;
+    }));
+}
+
+/// Pure decision for the click-catcher's `setIgnoresMouseEvents` toggle. Given
+/// the previous and current "cursor is inside a card rect" states, returns
+/// `Some(ignore)` — the argument to pass to `setIgnoresMouseEvents:` — only on
+/// a state change (so AppKit is called exactly once per transition), or `None`
+/// when nothing changed. `ignore` is `!curr`: inside a card → `false` (panel
+/// interactive, captures the click), outside → `true` (panel click-through).
+#[cfg(target_os = "macos")]
+fn transition(prev: bool, curr: bool) -> Option<bool> {
+    if prev == curr {
+        None
+    } else {
+        Some(!curr)
+    }
+}
+
+/// Poll the global cursor against the shared hit rects, toggling the
+/// click-catcher panel's `setIgnoresMouseEvents` on inside/outside transitions
+/// only. The panel mirrors the overlay window's frame and its content view is
+/// flipped (top-left origin), so the overlay window's own position + scale map
+/// the cursor into the panel's local space exactly like the renderer's
+/// viewport coords — reuse [`cursor_to_viewport`]. Exits when the overlay
+/// window is gone; [`update_hit_rects_click_catcher`] aborts it when the rect
+/// list empties.
+#[cfg(target_os = "macos")]
+async fn click_catcher_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>>>) {
+    log::info!(target: "overlay", "click-catcher poller spawning");
+    let mut inside_prev = false;
+    loop {
+        tokio::time::sleep(HIT_RECT_POLL_INTERVAL).await;
+        let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
+            return;
+        };
+        // Any getter failure counts as "outside" so the panel fails safe into
+        // click-through.
+        let (inside, vx, vy, origin) = match (window.cursor_position(), window.outer_position()) {
+            (Ok(cursor), Ok(pos)) => {
+                let scale = window.scale_factor().unwrap_or(1.0);
+                let (x, y) = cursor_to_viewport(cursor, pos, scale);
+                let guard = rects.load();
+                (any_rect_contains(&guard, x, y), x, y, pos)
+            }
+            _ => (false, 0.0, 0.0, PhysicalPosition::new(0, 0)),
+        };
+        if let Some(ignore) = transition(inside_prev, inside) {
+            let count = rects.load().len();
+            macos_click_catcher::set_ignore_mouse_events(&app, ignore);
+            log::info!(
+                target: "overlay",
+                "click-catcher transition: inside={inside} -> setIgnoresMouseEvents({ignore}); cursor=({vx:.1},{vy:.1}) panel_origin=({},{}) rects={count}",
+                origin.x,
+                origin.y
+            );
+            inside_prev = inside;
         }
     }
 }
@@ -505,13 +599,18 @@ mod macos_click_catcher {
             ]
         };
 
-        // Transparent, shadowless, click-receiving panel pinned just above the
-        // overlay window and sharing its space-collection behavior so it tracks
-        // the overlay across Spaces / full-screen.
+        // Transparent, shadowless panel pinned just above the overlay window and
+        // sharing its space-collection behavior so it tracks the overlay across
+        // Spaces / full-screen. Click-through by default: the cursor poller (see
+        // `update_hit_rects_click_catcher` / `click_catcher_poll_loop`) flips
+        // `setIgnoresMouseEvents` to `false` only while the cursor is over a
+        // reported card rect, so non-card regions never steal clicks from apps
+        // underneath.
         panel.setOpaque(false);
         panel.setBackgroundColor(Some(&NSColor::clearColor()));
         panel.setHasShadow(false);
-        panel.setIgnoresMouseEvents(false);
+        panel.setIgnoresMouseEvents(true);
+        log::info!(target: "overlay", "click-catcher init: setIgnoresMouseEvents(true) baseline");
         panel.setLevel(overlay_ns.level() + 1);
         panel.setCollectionBehavior(overlay_ns.collectionBehavior());
 
@@ -568,6 +667,30 @@ mod macos_click_catcher {
         }
     }
 
+    /// Toggle the click-catcher panel's `setIgnoresMouseEvents` from the cursor
+    /// poller. `ignore == true` makes the panel fully click-through; `false`
+    /// makes it capture clicks (used while the cursor is over a card rect).
+    /// Always hops to the AppKit main thread; a `None` stored panel (torn down
+    /// between abort and dispatch) is a safe no-op, which also guards against
+    /// dispatching onto a freed panel after `destroy`.
+    pub(super) fn set_ignore_mouse_events(app: &AppHandle, ignore: bool) {
+        let app_for_apply = app.clone();
+        let apply = move || {
+            let state = app_for_apply.state::<OverlayHitState>();
+            let Some(addr) = state.click_catcher.lock().ok().and_then(|g| *g) else {
+                return;
+            };
+            // SAFETY: stored panel pointer, only dereferenced on the main thread.
+            let panel: &NSPanel = unsafe { &*(addr as *const NSPanel) };
+            panel.setIgnoresMouseEvents(ignore);
+        };
+        if MainThreadMarker::new().is_some() {
+            apply();
+        } else if let Err(e) = app.run_on_main_thread(apply) {
+            log::warn!(target: "overlay", "click-catcher setIgnoresMouseEvents dispatch failed: {e}");
+        }
+    }
+
     /// Reclaim and release the click-catcher panel (overlay disabled / app
     /// exit). Must run on the AppKit main thread.
     pub(super) fn destroy(app: &AppHandle) {
@@ -575,6 +698,16 @@ mod macos_click_catcher {
             return;
         }
         let state = app.state::<OverlayHitState>();
+        // Abort the cursor poller first so a late tick can't dispatch
+        // `setIgnoresMouseEvents` onto the panel we're about to release. The
+        // dispatched no-op guard in `set_ignore_mouse_events` covers any tick
+        // already queued onto the main thread.
+        if let Ok(mut poller) = state.poller.lock() {
+            if let Some(task) = poller.take() {
+                task.abort();
+                log::info!(target: "overlay", "click-catcher poller aborted");
+            }
+        }
         let Ok(mut guard) = state.click_catcher.lock() else {
             return;
         };
@@ -1363,6 +1496,20 @@ mod tests {
         assert!(!any_rect_contains(&cards, 10.0, 1060.0));
         // No cards at all → everything passes through.
         assert!(!any_rect_contains(&[], 47.3, 1060.6));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn click_catcher_toggle_transition_emits_once_per_change() {
+        // The macOS click-catcher poller calls `setIgnoresMouseEvents:` only on
+        // a state change, with `!inside` as the argument.
+        // outside → inside: capture the click (setIgnoresMouseEvents(false)).
+        assert_eq!(transition(false, true), Some(false));
+        // inside → outside: restore click-through (setIgnoresMouseEvents(true)).
+        assert_eq!(transition(true, false), Some(true));
+        // No change → no AppKit call.
+        assert_eq!(transition(false, false), None);
+        assert_eq!(transition(true, true), None);
     }
 
     #[test]
