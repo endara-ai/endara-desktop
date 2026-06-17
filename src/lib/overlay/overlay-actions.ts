@@ -9,13 +9,13 @@ import { focusLogForRequest } from './focusLog';
 
 /**
  * Card click: focus the matching log row in the main window when the
- * group's latest request carries a jsonrpc_id. Otherwise no-op (the card
+ * group's latest request carries a logId. Otherwise no-op (the card
  * is also rendered non-clickable in the UI).
  */
 export async function cardClick(group: ToolCallGroup): Promise<void> {
   if (!canFocusLog(group)) return;
   const last = latestRequest(group);
-  await focusLogForRequest(last?.jsonrpcId ?? null);
+  await focusLogForRequest(last?.logId ?? null);
 }
 
 /**

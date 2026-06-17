@@ -23,6 +23,10 @@ export type ClientIdentity = {
   version?: string | null;
   user_agent?: string | null;
   origin?: string | null;
+  // Friendly display label the relay serializes for the embedded `client`
+  // object (see the custom `Serialize` on `ClientIdentity` in
+  // `packages/relay/src/events.rs`); preferred over the raw `name`.
+  label?: string | null;
 };
 
 export type StartedEvent = {
@@ -36,11 +40,12 @@ export type StartedEvent = {
   server_type?: string | null;
   server_name?: string | null;
   profile?: string | null;
-  // JSON-RPC envelope id captured from the surrounding `request` span. Used by
-  // the overlay card click handler to focus the matching `request{id="..."}`
-  // log row in the main window. `None` when no `request` span was on the stack
-  // when the event was emitted (e.g. internal callers).
-  jsonrpc_id?: string | null;
+  // Relay-minted per-HTTP-request UUID (see `request_uid` on the relay's
+  // `request` tracing span). This is the canonical key the overlay card click
+  // handler uses to focus the matching log row in the main window —
+  // collision-free across multiple MCP clients sending the same JSON-RPC id
+  // concurrently. The relay always emits it on Started events.
+  request_uid: string;
   tool: string;
   annotations?: ToolCallAnnotations;
   // Identity of the calling MCP client. Omitted by the relay when no caller
@@ -54,7 +59,6 @@ export type CompletedEvent = {
   ts: string;
   duration_ms: number;
   status: 'ok' | 'error';
-  jsonrpc_id?: string | null;
 };
 
 export type FailedEvent = {
@@ -64,7 +68,6 @@ export type FailedEvent = {
   duration_ms: number;
   status: 'error';
   error_message?: string;
-  jsonrpc_id?: string | null;
 };
 
 export type ToolCallEvent = StartedEvent | CompletedEvent | FailedEvent;

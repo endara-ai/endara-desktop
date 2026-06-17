@@ -67,9 +67,9 @@ describe('canReauthorize', () => {
     ['disconnected', true],
     ['auth_required', true],
     ['needs_login', true],
+    ['connection_failed', true],
     ['authenticated', false],
     ['refreshing', false],
-    ['connection_failed', false],
   ];
 
   for (const [status, expected] of cases) {

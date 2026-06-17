@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { addEndpoint, getEndpoints, getStatus, testConnection, oauthSetup, oauthSetupStatus, oauthSetupCredentials, oauthSetupCommit, oauthSetupCancel, reloadConfig, type AddEndpointParams, type TestConnectionParams, type OAuthSetupParams } from '$lib/api';
+  import { addEndpoint, getEndpoints, getStatus, testConnection, oauthProbe, oauthSetup, oauthSetupStatus, oauthSetupCredentials, oauthSetupCommit, oauthSetupCancel, reloadConfig, type AddEndpointParams, type TestConnectionParams, type OAuthSetupParams } from '$lib/api';
+  import type { OAuthProbeResult } from '$lib/types';
   import { endpoints, selectedEndpoint } from '$lib/stores';
   import { toast } from 'svelte-sonner';
   import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
@@ -71,6 +72,11 @@
   let pendingSetupSessionId: string | null = $state(null);
   let setupAuthCancelled = $state(false);
   let cancelHint = $state('');
+  // Add-time OAuth detection (http/sse only). When the probe reports the
+  // server supports OAuth, this opt-out prompt offers to escalate into the
+  // existing OAuth wizard; declining proceeds with a plain unauthenticated add.
+  let showOAuthEscalation = $state(false);
+  let oauthProbeData: { authorization_server?: string; scopes_supported?: string[] } | null = $state(null);
   // Optional override that replaces the upstream-reported server name in the
   // relay's connected-servers advertisement. Pre-populated from the catalog
   // entry's `serverTypeOverride` default when one exists.
@@ -438,7 +444,7 @@
     }
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(opts?: { skipProbe?: boolean }) {
     error = '';
     cancelHint = '';
     const errs = validateAddEndpointForm({ transport, name, command, url });
@@ -447,6 +453,32 @@
       error = firstAddEndpointFieldError(errs);
       return;
     }
+
+    // Add-time OAuth detection (http/sse only). Best-effort + non-blocking:
+    // probe the entered URL and, if the server advertises OAuth, surface the
+    // opt-out escalation prompt instead of adding. Any probe failure / timeout
+    // / `oauth_supported:false` silently falls through to the plain add below.
+    if (!opts?.skipProbe && (transport === 'http' || transport === 'sse')) {
+      submitting = true;
+      let probe: OAuthProbeResult = { oauth_supported: false };
+      try {
+        probe = await oauthProbe(url.trim());
+      } catch {
+        // oauthProbe never throws, but stay defensive — fall through to add.
+      }
+      if (probe.oauth_supported) {
+        submitting = false;
+        oauthProbeData = {
+          authorization_server: probe.authorization_server,
+          scopes_supported: probe.scopes_supported,
+        };
+        showOAuthEscalation = true;
+        return;
+      }
+      // Not OAuth-capable — keep `submitting` true and proceed with the plain
+      // add below; its own `finally` resets the flag.
+    }
+
     const trimmedName = name.trim();
     const defaultPrefix = sanitizeName(trimmedName);
 
@@ -566,6 +598,31 @@
     } finally {
       submitting = false;
     }
+  }
+
+  // Accept the escalation: switch the form to the OAuth transport (the server
+  // URL the user already entered carries over in `url`) and kick off the
+  // existing OAuth setup wizard.
+  function acceptOAuthEscalation() {
+    showOAuthEscalation = false;
+    oauthProbeData = null;
+    transport = 'oauth';
+    void handleOAuthSubmit();
+  }
+
+  // Decline the escalation: add the endpoint as a plain unauthenticated
+  // http/sse server exactly as before. `skipProbe` avoids re-probing.
+  function declineOAuthEscalation() {
+    showOAuthEscalation = false;
+    oauthProbeData = null;
+    void handleSubmit({ skipProbe: true });
+  }
+
+  // Dismiss the prompt without choosing (Escape / backdrop) — return to the
+  // form untouched so the user can adjust the URL or decide later.
+  function dismissOAuthEscalation() {
+    showOAuthEscalation = false;
+    oauthProbeData = null;
   }
 
   async function handleOAuthSubmit() {
@@ -966,7 +1023,7 @@
           </fieldset>
         {/if}
 
-        <div>
+        <div class="mt-2">
           <label for="modal-ep-name" class="block text-xs font-medium mb-1 text-(--fg2)">Name</label>
           <input id="modal-ep-name" type="text" bind:value={name} placeholder="my-server"
             aria-invalid={!!fieldErrors.name}
@@ -1425,7 +1482,7 @@
           </button>
           <button
             class="px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
-            onclick={transport === 'oauth' ? handleOAuthSubmit : handleSubmit}
+            onclick={transport === 'oauth' ? handleOAuthSubmit : () => handleSubmit()}
             disabled={submitting}
           >
             {#if submitting}
@@ -1443,6 +1500,43 @@
     {/if}
   </div>
 </div>
+
+{#if showOAuthEscalation}
+  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" role="presentation" onclick={dismissOAuthEscalation}>
+    <div
+      class="bg-(--surface) rounded-xl shadow-xl border border-(--border) p-6 w-[28rem] max-w-[90vw]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="This server supports OAuth"
+      tabindex="-1"
+      use:focusTrap={{ onEscape: dismissOAuthEscalation }}
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <h3 class="text-base font-semibold mb-2 text-(--fg1)">This server supports OAuth</h3>
+      <p class="text-sm text-(--fg2) mb-5">
+        <strong>{name.trim() || 'This server'}</strong> advertises OAuth authentication. Set up
+        OAuth now for an authenticated connection, or keep it as a plain unauthenticated endpoint.
+      </p>
+      <div class="flex justify-end gap-2">
+        <button
+          type="button"
+          class="px-3 py-1.5 text-sm rounded-lg border border-(--border) hover:bg-(--surface-hover) transition-colors"
+          onclick={declineOAuthEscalation}
+        >
+          Keep unauthenticated
+        </button>
+        <button
+          type="button"
+          class="px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors"
+          onclick={acceptOAuthEscalation}
+        >
+          Set up OAuth
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if showDiscardConfirm}
   <ConfirmModal

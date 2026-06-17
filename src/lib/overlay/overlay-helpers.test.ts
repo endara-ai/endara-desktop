@@ -19,7 +19,7 @@ function req(overrides: Partial<ToolCallRequest> = {}): ToolCallRequest {
     requestId: 'r-1',
     ts: 'ts',
     status: 'inflight',
-    jsonrpcId: null,
+    logId: null,
     ...overrides,
   };
 }
@@ -39,6 +39,7 @@ function makeGroup(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     requests: [],
     lastUpdatedAt: 0,
     dismissAt: null,
+    dismissDurationMs: null,
     dismissTick: 0,
     ...over,
   };
@@ -118,11 +119,11 @@ describe('latestRequest', () => {
 });
 
 describe('canFocusLog', () => {
-  it('false when latest request has null jsonrpcId', () => {
-    expect(canFocusLog(makeGroup({ requests: [req({ jsonrpcId: null })] }))).toBe(false);
+  it('false when latest request has null logId', () => {
+    expect(canFocusLog(makeGroup({ requests: [req({ logId: null })] }))).toBe(false);
   });
-  it('true when latest request has a jsonrpcId', () => {
-    expect(canFocusLog(makeGroup({ requests: [req({ jsonrpcId: '7' })] }))).toBe(true);
+  it('true when latest request has a logId', () => {
+    expect(canFocusLog(makeGroup({ requests: [req({ logId: '7' })] }))).toBe(true);
   });
 });
 
@@ -144,6 +145,28 @@ describe('callerLabel', () => {
   it('returns null when client has no name and no user_agent', () => {
     expect(callerLabel({})).toBeNull();
     expect(callerLabel({ origin: 'https://example.com' })).toBeNull();
+  });
+
+  it('prefers a non-empty client.label over the raw name / user_agent fallback', () => {
+    expect(
+      callerLabel({
+        name: 'local-agent-mode-Endara Relay (via mcp-remote 0.1.37)',
+        label: 'Claude Cowork',
+      }),
+    ).toBe('Claude Cowork');
+    // trims whitespace and wins over user_agent too
+    expect(callerLabel({ label: '  Claude Cowork  ', user_agent: 'claude-ai/0.1.0' })).toBe(
+      'Claude Cowork',
+    );
+  });
+
+  it('falls back to name / user_agent when label is absent or empty', () => {
+    // empty / whitespace-only label behaves exactly as today
+    expect(
+      callerLabel({ label: '', name: 'local-agent-mode-Endara Relay (via mcp-remote 0.1.37)' }),
+    ).toBe('local-agent-mode-Endara Relay (via mcp-remote 0.1.37)');
+    expect(callerLabel({ label: '   ', user_agent: 'claude-ai/0.1.0' })).toBe('claude-ai');
+    expect(callerLabel({ label: null, name: 'Cursor' })).toBe('Cursor');
   });
 
   it('prefers client.name (without version) when present', () => {
@@ -190,14 +213,21 @@ describe('visibleGroups / hiddenGroupCount', () => {
 });
 
 describe('collectHitRects', () => {
-  const el = (x: number, y: number, width: number, height: number) => ({
+  const el = (x: number, y: number, width: number, height: number, logId?: string) => ({
     getBoundingClientRect: () => ({ x, y, width, height }),
+    dataset: { logId },
   });
 
-  it('maps elements to their bounding rects in order', () => {
-    expect(collectHitRects([el(20, 100, 340, 72), el(20, 184, 340, 64)])).toEqual([
-      { x: 20, y: 100, width: 340, height: 72 },
-      { x: 20, y: 184, width: 340, height: 64 },
+  it('maps elements to their bounding rects in order, tagging log_id', () => {
+    expect(collectHitRects([el(20, 100, 340, 72, 'a'), el(20, 184, 340, 64, 'b')])).toEqual([
+      { x: 20, y: 100, width: 340, height: 72, log_id: 'a' },
+      { x: 20, y: 184, width: 340, height: 64, log_id: 'b' },
+    ]);
+  });
+
+  it('defaults log_id to empty string when the slot has no data-log-id', () => {
+    expect(collectHitRects([el(20, 100, 340, 72)])).toEqual([
+      { x: 20, y: 100, width: 340, height: 72, log_id: '' },
     ]);
   });
 
@@ -206,15 +236,15 @@ describe('collectHitRects', () => {
   });
 
   it('skips null/undefined entries', () => {
-    expect(collectHitRects([null, el(1, 2, 3, 4), undefined])).toEqual([
-      { x: 1, y: 2, width: 3, height: 4 },
+    expect(collectHitRects([null, el(1, 2, 3, 4, 'x'), undefined])).toEqual([
+      { x: 1, y: 2, width: 3, height: 4, log_id: 'x' },
     ]);
   });
 
   it('drops zero-area rects (collapsed / not yet laid out elements)', () => {
     expect(
-      collectHitRects([el(0, 0, 0, 50), el(0, 0, 50, 0), el(5, 5, 10, 10)]),
-    ).toEqual([{ x: 5, y: 5, width: 10, height: 10 }]);
+      collectHitRects([el(0, 0, 0, 50), el(0, 0, 50, 0), el(5, 5, 10, 10, 'k')]),
+    ).toEqual([{ x: 5, y: 5, width: 10, height: 10, log_id: 'k' }]);
   });
 
   it('accepts any iterable (e.g. a NodeList-like)', () => {

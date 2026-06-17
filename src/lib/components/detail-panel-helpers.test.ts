@@ -5,10 +5,14 @@ import {
   shouldShowRestartButton,
   shouldShowRefreshButton,
   shouldShowReauthorizeButton,
+  createReauthGateState,
+  evaluateReauthGate,
+  REAUTH_GATE_GRACE_MS,
   visibleTabs,
   formatBytes,
   formatCpuPercent,
   type EndpointTransport,
+  type ReauthGateState,
 } from './detail-panel-helpers';
 
 describe('shouldShowRestartButton', () => {
@@ -243,8 +247,13 @@ describe('DetailPanel endpoint toggle (a11y)', () => {
 });
 
 describe('shouldShowReauthorizeButton', () => {
-  const reauthStatuses: OAuthStatusValue[] = ['disconnected', 'auth_required', 'needs_login'];
-  const nonReauthStatuses: OAuthStatusValue[] = ['authenticated', 'refreshing', 'connection_failed'];
+  const reauthStatuses: OAuthStatusValue[] = [
+    'disconnected',
+    'auth_required',
+    'needs_login',
+    'connection_failed',
+  ];
+  const nonReauthStatuses: OAuthStatusValue[] = ['authenticated', 'refreshing'];
 
   for (const s of reauthStatuses) {
     it(`returns true for oauth + "${s}"`, () => {
@@ -267,6 +276,88 @@ describe('shouldShowReauthorizeButton', () => {
       expect(shouldShowReauthorizeButton(t, 'auth_required')).toBe(false);
     });
   }
+});
+
+// ── Reauthorize-bar stability gate (anti-flash) ──
+//
+// A freshly-added/restarted OAuth server reports a transient `needs_login`
+// for ~1-2s (one 2s poll) before its just-stored token loads and it flips to
+// `authenticated`. The gate must swallow that single transient yet still
+// surface a genuinely-persistent reauth need within a few seconds.
+describe('evaluateReauthGate', () => {
+  // Simulate consecutive poll cycles 2s apart, returning showBar per poll.
+  function runPolls(needs: boolean[], endpointName = 'srv', startNow = 1000): boolean[] {
+    let state: ReauthGateState = createReauthGateState();
+    const shown: boolean[] = [];
+    needs.forEach((reauthNeeded, i) => {
+      const result = evaluateReauthGate(state, {
+        endpointName,
+        reauthNeeded,
+        now: startNow + i * 2000,
+      });
+      state = result.state;
+      shown.push(result.showBar);
+    });
+    return shown;
+  }
+
+  it('does NOT show the bar on a single transient needs_login', () => {
+    // poll 1: needs_login (transient), poll 2: authenticated.
+    expect(runPolls([true, false])).toEqual([false, false]);
+  });
+
+  it('shows the bar once needs_login persists across >=2 consecutive polls', () => {
+    expect(runPolls([true, true])).toEqual([false, true]);
+  });
+
+  it('never shows the bar while authenticated', () => {
+    expect(runPolls([false, false, false])).toEqual([false, false, false]);
+  });
+
+  it('resets the gate on needs_login -> authenticated -> needs_login (no early flash on the new need)', () => {
+    // First need persists (shows), recovers (reset), then a single new
+    // transient must NOT immediately re-show — the gate restarts clean.
+    expect(runPolls([true, true, false, true])).toEqual([false, true, false, false]);
+  });
+
+  it('shows again after a reset once the new need persists', () => {
+    expect(runPolls([true, true, false, true, true])).toEqual([false, true, false, false, true]);
+  });
+
+  it('shows via the grace window even if only a single (slow) poll has elapsed past it', () => {
+    // One evaluation, but the time gap already exceeds the grace window.
+    const first = evaluateReauthGate(createReauthGateState(), {
+      endpointName: 'srv',
+      reauthNeeded: true,
+      now: 1000,
+    });
+    expect(first.showBar).toBe(false);
+    const later = evaluateReauthGate(first.state, {
+      endpointName: 'srv',
+      reauthNeeded: true,
+      now: 1000 + REAUTH_GATE_GRACE_MS + 1,
+    });
+    expect(later.showBar).toBe(true);
+  });
+
+  it('resets accumulated state when the selected endpoint changes', () => {
+    let result = evaluateReauthGate(createReauthGateState(), {
+      endpointName: 'srv-a',
+      reauthNeeded: true,
+      now: 1000,
+    });
+    expect(result.showBar).toBe(false);
+    // Switching to a different endpoint that also needs reauth must start a
+    // fresh window — not inherit srv-a's count and immediately flash.
+    result = evaluateReauthGate(result.state, {
+      endpointName: 'srv-b',
+      reauthNeeded: true,
+      now: 3000,
+    });
+    expect(result.showBar).toBe(false);
+    expect(result.state.endpointName).toBe('srv-b');
+    expect(result.state.consecutiveCount).toBe(1);
+  });
 });
 
 // ── Re-authorize button source-inspection (mirrors the toggle a11y pattern) ──

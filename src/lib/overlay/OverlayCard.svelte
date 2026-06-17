@@ -10,12 +10,15 @@
   The bar appears only after the group has settled (`inflight === 0` and
   at least one resolved request). Its colour is green when no errors
   were observed and red as soon as any error landed. The bar's CSS
-  keyframe runs to completion in `dismissDurationMs` and the
-  `toastStore`'s matching per-group `setTimeout` removes the card at the
-  same offset — no hover-pause, no pause/resume binding on the keyframe.
+  keyframe runs to completion in `group.dismissDurationMs` (the exact
+  duration the `toastStore` armed this group's per-group `setTimeout`
+  with) so the bar reaches 100% as the card is removed — even if
+  `auto_dismiss_ms` changes mid-countdown. Falls back to the
+  `dismissDurationMs` prop when the group is not counting down. No
+  hover-pause, no pause/resume binding on the keyframe.
 
-  Click invokes `focusLogForRequest(latest.jsonrpcId)`; if the latest request
-  has no jsonrpc_id the card is rendered non-clickable (cursor: default) and
+  Click invokes `focusLogForRequest(latest.logId)`; if the latest request
+  has no logId the card is rendered non-clickable (cursor: default) and
   the click is a soft no-op.
 -->
 <script lang="ts">
@@ -38,10 +41,12 @@
   type Props = {
     group: ToolCallGroup;
     showProfile?: boolean;
-    // Duration of the per-card dismiss bar's CSS keyframe. The
-    // matching `setTimeout` in `toastStore` fires at the same offset
-    // so the bar reaches 100% just as the card is removed. Defaults
-    // to 6000ms; `ToastFeed` pipes `store.getOpts().dismissMs`.
+    // Fallback duration (ms) for the per-card dismiss bar's CSS keyframe,
+    // used only when `group.dismissDurationMs` is null (i.e. the group is
+    // not counting down). When the group IS armed, the bar reads the
+    // duration the store captured at arm time so it matches the per-group
+    // `setTimeout` exactly. Defaults to 6000ms; `ToastFeed` pipes the
+    // reactive `dismissMs` prop down as this fallback.
     dismissDurationMs?: number;
   };
   let { group, showProfile = true, dismissDurationMs = 6000 }: Props = $props();
@@ -70,6 +75,12 @@
   // Key the bar element on this so each (re)arm re-mounts the
   // `tfDismissFill` keyframe from 0%.
   const barTick = $derived(group.dismissTick);
+  // Bar duration: read the value the store captured for THIS countdown
+  // (so the CSS keyframe matches the per-group `setTimeout` armed with
+  // the same value, even if `auto_dismiss_ms` changes mid-countdown).
+  // Fall back to the `dismissDurationMs` prop when the group is not
+  // counting down (`group.dismissDurationMs === null`).
+  const barDurationMs = $derived(group.dismissDurationMs ?? dismissDurationMs);
   // Collapse row 2's duplicate label when serverType and serverName are the
   // same (e.g. `gmail · gmail · <profile>` → `gmail · <profile>`). Falls back
   // to the unchanged two-label layout whenever either side is null or differs.
@@ -194,7 +205,7 @@
             class="tf-dismiss-fill"
             data-testid="dismiss-fill"
             style:background={barColor}
-            style:animation-duration="{dismissDurationMs}ms"
+            style:animation-duration="{barDurationMs}ms"
           ></div>
         </div>
       {/key}

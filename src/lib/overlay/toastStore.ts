@@ -48,11 +48,12 @@ export type ToolCallRequest = {
   status: 'inflight' | 'success' | 'error';
   durationMs?: number;
   errorMessage?: string;
-  // JSON-RPC envelope id captured from the originating event's `jsonrpc_id`
-  // field. Surfaced on each request so the overlay card click handler can
-  // emit it to the main window to scroll the matching log row into view.
-  // `null` when the relay event had no `request` span on the stack.
-  jsonrpcId: string | null;
+  // Canonical log-row key sourced from the originating event's `request_uid`
+  // (the relay-minted per-HTTP-request UUID). Surfaced on each request so the
+  // overlay card click handler can emit it to the main window to scroll the
+  // matching log row into view. Named `logId` to reflect its generic
+  // semantic — it is the relay-minted UUID, not a JSON-RPC id.
+  logId: string | null;
 };
 
 export type ToolCallGroup = {
@@ -75,6 +76,13 @@ export type ToolCallGroup = {
   // When this group started its own countdown (`Date.now() + opts.dismissMs`
   // at arm time), or `null` when no timer is running for this group.
   dismissAt: number | null;
+  // The exact duration (ms) the current countdown's `setTimeout` was
+  // armed with — captured from `opts.dismissMs` at arm time so the bar's
+  // CSS `animation-duration` reads the SAME value the timer is using. A
+  // later `setOpts` (e.g. `auto_dismiss_ms` changing mid-countdown) only
+  // affects FUTURE arms, never a card already counting down. `null` when
+  // no timer is running for this group.
+  dismissDurationMs: number | null;
   // Monotonically increasing per-group arm counter. The `OverlayCard`
   // uses this in `{#key group.dismissTick}` so the CSS keyframe on the
   // dismiss-fill remounts from 0% on every (re)arm.
@@ -156,7 +164,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       requestId: event.request_id,
       ts: event.ts,
       status: 'inflight',
-      jsonrpcId: event.jsonrpc_id ?? null,
+      logId: event.request_uid,
     };
     if (existing) {
       // If this group was counting down (inflight had been 0), a new
@@ -181,6 +189,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         profile: event.profile ?? null,
         client: event.client ?? existing.client,
         dismissAt: wasCountingDown ? null : existing.dismissAt,
+        dismissDurationMs: wasCountingDown ? null : existing.dismissDurationMs,
         dismissTick: wasCountingDown ? existing.dismissTick + 1 : existing.dismissTick,
       };
       // Move to end (newest position).
@@ -200,6 +209,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
         requests: [req],
         lastUpdatedAt: now,
         dismissAt: null,
+        dismissDurationMs: null,
         dismissTick: 0,
       });
     }
@@ -218,19 +228,15 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
     const existingReq = target.requests.find((r) => r.requestId === event.request_id);
     if (!existingReq || existingReq.status !== 'inflight') return;
     const isError = event.kind === 'failed' || event.status === 'error';
-    // Build a fresh ToolCallRequest with the settled fields. Carry the
-    // JSON-RPC id from the terminal event when the started event lacked
-    // one (broadcast subscribers joining mid-request); never downgrade a
-    // known id back to null.
+    // Build a fresh ToolCallRequest with the settled fields. The relay always
+    // populates `request_uid` on Started, so `logId` is already set on the
+    // existing request — just propagate it forward unchanged.
     const settledReq: ToolCallRequest = {
       ...existingReq,
       status: isError ? 'error' : 'success',
       durationMs: event.duration_ms,
       ...(event.kind === 'failed' ? { errorMessage: event.error_message } : {}),
-      jsonrpcId:
-        existingReq.jsonrpcId === null && event.jsonrpc_id != null
-          ? event.jsonrpc_id
-          : existingReq.jsonrpcId,
+      logId: existingReq.logId,
     };
     const newInflight = Math.max(0, target.inflight - 1);
     const willArm = newInflight === 0;
@@ -249,6 +255,7 @@ export function createToastStore(initial?: Partial<ToastStoreOpts>): ToastStore 
       error: target.error + (isError ? 1 : 0),
       lastUpdatedAt: now,
       dismissAt: willArm ? now + opts.dismissMs : target.dismissAt,
+      dismissDurationMs: willArm ? opts.dismissMs : target.dismissDurationMs,
       dismissTick: willArm ? target.dismissTick + 1 : target.dismissTick,
     };
     groups = groups.map((g) => (g.id === target.id ? updated : g));

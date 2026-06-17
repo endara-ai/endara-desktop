@@ -1433,6 +1433,8 @@ async fn get_mgmt_api_socket_path() -> Result<String, String> {
 async fn show_overlay(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window(overlay::OVERLAY_WINDOW_LABEL) {
         w.show().map_err(|e| e.to_string())?;
+        // Bring the macOS click-catcher panel over the now-visible overlay.
+        overlay::sync_click_catcher_frame(&app);
     }
     Ok(())
 }
@@ -1441,6 +1443,8 @@ async fn show_overlay(app: AppHandle) -> Result<(), String> {
 async fn hide_overlay(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window(overlay::OVERLAY_WINDOW_LABEL) {
         w.hide().map_err(|e| e.to_string())?;
+        // Hide the macOS click-catcher panel alongside the overlay.
+        overlay::sync_click_catcher_frame(&app);
     }
     Ok(())
 }
@@ -1582,6 +1586,8 @@ async fn apply_overlay_settings(
                 log::warn!("[overlay] destroy on disable failed: {e}");
             }
         }
+        // Tear down the macOS click-catcher panel that mirrored the overlay.
+        overlay::destroy_click_catcher(app);
         log::info!("[overlay] settings update enabled=false applied");
     } else if enabled_changed && new_settings.enabled {
         // Enable: rebuild the overlay window. The renderer auto-invokes
@@ -1642,28 +1648,41 @@ async fn set_overlay_settings(
 }
 
 /// Payload emitted to the main window so its RelayLogs view can scroll the
-/// matching `request{id="..."}` row into view. Field name is camelCase to
-/// match the renderer event handler — Tauri serializes Serde structs with
-/// the default rename, and the front-end consumer expects `jsonrpcId`.
+/// matching log row into view. Field name is camelCase to match the renderer
+/// event handler — Tauri serializes Serde structs with the default rename, and
+/// the front-end consumer expects `logId`. The id is whatever key the click
+/// side resolved (now the relay-minted `request_uid`).
 #[derive(Serialize, Clone)]
 struct FocusLogPayload {
-    #[serde(rename = "jsonrpcId")]
-    jsonrpc_id: String,
+    #[serde(rename = "logId")]
+    log_id: String,
 }
 
 /// Show + focus the main window and emit `overlay:focus-log` to it with the
-/// JSON-RPC id of the request the user clicked on in the overlay. The Phase
-/// 4 overlay card click handler is wired through here; Phase 3 ships the
-/// plumbing only.
+/// log id of the request the user clicked on in the overlay. The command does
+/// not care whether the id originated from `request_uid` or `jsonrpc_id` — it
+/// just routes whatever id the click side resolved.
 ///
 /// On macOS we also restore the regular activation policy so the app
 /// reappears in the Dock + Cmd-Tab when the user clicks from an otherwise
 /// hidden / accessory-mode session — mirroring the tray "Open Endara"
 /// behaviour.
 #[tauri::command]
-async fn focus_main_window_on_log(app: AppHandle, jsonrpc_id: String) -> Result<(), String> {
+async fn focus_main_window_on_log(app: AppHandle, log_id: String) -> Result<(), String> {
+    log::info!(
+        target: "overlay",
+        "focus_main_window_on_log invoked: log_id={}",
+        log_id
+    );
+    // `focus_main_window_on_log` is an async command that runs on a tokio
+    // worker thread. `set_macos_activation_policy` asserts it is on the main
+    // thread via `MainThreadMarker::new()`, so dispatch the AppKit work onto
+    // the main thread instead of calling it directly here.
     #[cfg(target_os = "macos")]
-    set_macos_activation_policy(true);
+    app.run_on_main_thread(|| {
+        set_macos_activation_policy(true);
+    })
+    .map_err(|e| e.to_string())?;
     if let Some(window) = app.get_webview_window("main") {
         window.show().map_err(|e| e.to_string())?;
         window.unminimize().map_err(|e| e.to_string())?;
@@ -1672,13 +1691,13 @@ async fn focus_main_window_on_log(app: AppHandle, jsonrpc_id: String) -> Result<
             .emit(
                 "overlay:focus-log",
                 FocusLogPayload {
-                    jsonrpc_id: jsonrpc_id.clone(),
+                    log_id: log_id.clone(),
                 },
             )
             .map_err(|e| e.to_string())?;
         log::info!(
-            "[overlay] focus_main_window_on_log emitted jsonrpc_id={}",
-            jsonrpc_id
+            "[overlay] focus_main_window_on_log emitted log_id={}",
+            log_id
         );
         Ok(())
     } else {
@@ -2699,6 +2718,10 @@ pub fn run() {
             }
             RunEvent::Exit => {
                 log::info!("app exit");
+                // Release the macOS click-catcher panel while still on the main
+                // thread (the event loop has stopped, so a dispatched teardown
+                // would never run).
+                overlay::destroy_click_catcher(app);
                 // Suppress any in-flight supervisor logic so the upcoming SIGTERM
                 // is treated as an intentional shutdown, then abort a pending
                 // auto-restart task if one is sleeping out its backoff window.

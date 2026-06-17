@@ -19,6 +19,8 @@
     shouldShowRestartButton,
     shouldShowRefreshButton,
     shouldShowReauthorizeButton,
+    createReauthGateState,
+    evaluateReauthGate,
     visibleTabs,
     formatBytes,
     formatCpuPercent,
@@ -30,14 +32,31 @@
   let toggling = $state(false);
   let reauthInProgress = $state(false);
 
-  let oauthStatus = $derived(
-    $selectedEndpointData ? $oauthStatuses.get($selectedEndpointData.name)?.status ?? null : null
-  );
-  let showReauthorize = $derived(
-    $selectedEndpointData
-      ? shouldShowReauthorizeButton($selectedEndpointData.transport, oauthStatus)
-      : false
-  );
+  // Stability gate for the reauthorize bar: a freshly-built OAuth adapter
+  // reports a transient `needs_login` for ~1-2s before its just-stored token
+  // loads and it flips to `authenticated`. Only surface the bar once that
+  // status is stable (>=2 consecutive polls or past a short grace window) so
+  // the post-add / restart transient doesn't flash a misleading bar. Kept as a
+  // plain (non-reactive) variable so writing it from the effect below doesn't
+  // re-trigger the effect; the global 2s poll re-emits `oauthStatuses` each
+  // cycle, which drives re-evaluation.
+  let reauthGate = createReauthGateState();
+  let showReauthorize = $state(false);
+
+  $effect(() => {
+    const statuses = $oauthStatuses;
+    const ep = $selectedEndpointData;
+    const name = ep?.name ?? null;
+    const status = name ? statuses.get(name)?.status ?? null : null;
+    const reauthNeeded = ep ? shouldShowReauthorizeButton(ep.transport, status) : false;
+    const result = evaluateReauthGate(reauthGate, {
+      endpointName: name,
+      reauthNeeded,
+      now: Date.now(),
+    });
+    reauthGate = result.state;
+    showReauthorize = result.showBar;
+  });
 
   let tabs = $derived(
     $selectedEndpointData

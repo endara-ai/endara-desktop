@@ -395,7 +395,7 @@
           </div>
         </fieldset>
 
-        <div>
+        <div class="mt-2">
           <label for="config-ep-name" class="block text-xs font-medium mb-1 text-(--fg2)">Name</label>
           <input id="config-ep-name" type="text" bind:value={name} placeholder="my-server"
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />

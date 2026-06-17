@@ -8,7 +8,7 @@ import { cardClick, reportOverlayHitRects } from './overlay-actions';
 import type { ToolCallGroup, ToolCallRequest } from './toastStore';
 
 function req(over: Partial<ToolCallRequest> = {}): ToolCallRequest {
-  return { requestId: 'r-1', ts: 'ts', status: 'inflight', jsonrpcId: null, ...over };
+  return { requestId: 'r-1', ts: 'ts', status: 'inflight', logId: null, ...over };
 }
 
 function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
@@ -26,6 +26,7 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
     requests: [],
     lastUpdatedAt: 0,
     dismissAt: null,
+    dismissDurationMs: null,
     dismissTick: 0,
     ...over,
   };
@@ -34,26 +35,26 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
 describe('cardClick', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('invokes focus_main_window_on_log when the latest request has a jsonrpcId', async () => {
+  it('invokes focus_main_window_on_log when the latest request has a logId', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
 
     await cardClick(
       g({
         requests: [
-          req({ requestId: 'a', status: 'success', durationMs: 5, jsonrpcId: 'rpc-1' }),
-          req({ requestId: 'b', status: 'success', durationMs: 7, jsonrpcId: 'rpc-7' }),
+          req({ requestId: 'a', status: 'success', durationMs: 5, logId: 'rpc-1' }),
+          req({ requestId: 'b', status: 'success', durationMs: 7, logId: 'rpc-7' }),
         ],
         success: 2,
       }),
     );
 
     expect(mockInvoke).toHaveBeenCalledWith('focus_main_window_on_log', {
-      jsonrpcId: 'rpc-7',
+      logId: 'rpc-7',
     });
   });
 
-  it('is a soft no-op when the latest request has no jsonrpcId', async () => {
+  it('is a soft no-op when the latest request has no logId', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
 
@@ -78,7 +79,7 @@ describe('reportOverlayHitRects', () => {
   it('invokes set_overlay_hit_rects with the measured rects', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
-    const rects = [{ x: 20, y: 100, width: 340, height: 72 }];
+    const rects = [{ x: 20, y: 100, width: 340, height: 72, log_id: 'req-1' }];
     await reportOverlayHitRects(rects);
     expect(mockInvoke).toHaveBeenCalledWith('set_overlay_hit_rects', { rects });
   });

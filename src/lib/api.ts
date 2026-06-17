@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse, CallsResponse, CallDetail, AggregatesResponse, ObservabilityConfig } from './types';
+import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse, CallsResponse, CallDetail, AggregatesResponse, ObservabilityConfig, OAuthProbeResult } from './types';
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY = 1000;
@@ -479,6 +479,31 @@ export async function oauthSetupCancel(sessionId: string): Promise<void> {
       // body not JSON
     }
     throw new Error(detail || `HTTP ${res.status}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OAuth capability probe (add-time)
+// ---------------------------------------------------------------------------
+
+/**
+ * Best-effort probe of whether an MCP server supports OAuth, used by the
+ * add-server flow to offer escalation into the OAuth setup wizard. This is
+ * deliberately non-blocking: any transport error, non-2xx status, or
+ * unparseable body resolves to `{ oauth_supported: false }` so the caller can
+ * silently fall back to a plain (non-OAuth) add. It never throws and never
+ * retries — the relay already backstops slow/unreachable probes with a 15s
+ * timeout.
+ */
+export async function oauthProbe(url: string): Promise<OAuthProbeResult> {
+  try {
+    const res = await mgmtRequest('POST', '/oauth/probe', { url });
+    if (res.status < 200 || res.status >= 300) {
+      return { oauth_supported: false };
+    }
+    return (res.body ? JSON.parse(res.body) : { oauth_supported: false }) as OAuthProbeResult;
+  } catch {
+    return { oauth_supported: false };
   }
 }
 

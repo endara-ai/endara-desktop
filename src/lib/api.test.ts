@@ -431,5 +431,52 @@ describe('api', () => {
       expect(callBody.body).not.toHaveProperty('server_type_override');
     });
   });
+
+  describe('oauthProbe', () => {
+    // The add-server flow relies on this probe being non-blocking: any
+    // failure/timeout/non-2xx must resolve to `{ oauth_supported: false }`
+    // (never throw) so the plain HTTP add can proceed silently.
+    it('POSTs the url to /api/oauth/probe and returns the parsed result', async () => {
+      const { oauthProbe } = await import('./api');
+      mockOk({
+        oauth_supported: true,
+        authorization_server: 'https://auth.example.com',
+        scopes_supported: ['read', 'write'],
+      });
+
+      const result = await oauthProbe('https://mcp.example.com/mcp');
+      expect(result).toEqual({
+        oauth_supported: true,
+        authorization_server: 'https://auth.example.com',
+        scopes_supported: ['read', 'write'],
+      });
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({
+          method: 'POST',
+          path: '/api/oauth/probe',
+          body: { url: 'https://mcp.example.com/mcp' },
+        }),
+      );
+    });
+
+    it('resolves to oauth_supported:false on a non-2xx status without throwing', async () => {
+      const { oauthProbe } = await import('./api');
+      mockHttpError(500, 'Internal Server Error');
+
+      const result = await oauthProbe('https://mcp.example.com/mcp');
+      expect(result).toEqual({ oauth_supported: false });
+    });
+
+    it('resolves to oauth_supported:false on a transport error without retrying', async () => {
+      const { oauthProbe } = await import('./api');
+      vi.mocked(invoke).mockRejectedValue(new Error('socket connect failed'));
+
+      const result = await oauthProbe('https://mcp.example.com/mcp');
+      expect(result).toEqual({ oauth_supported: false });
+      // Best-effort: a single attempt, no retry loop.
+      expect(invoke).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 

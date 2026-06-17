@@ -14,9 +14,10 @@
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { UnlistenFn } from '@tauri-apps/api/event';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { theme } from '$lib/stores';
   import { attachOverlayBridge } from './eventBridge';
+  import { focusLogForRequest } from './focusLog';
   import { createToastStore } from './toastStore';
   import { emitRenderReady } from './emitRenderReady';
   import {
@@ -80,6 +81,19 @@
       disposer = d;
     });
 
+    // Primary card-click path on macOS: the native click-catcher panel
+    // (see `src-tauri/src/overlay.rs`) emits `overlay:card-clicked` with the
+    // card's `log_id` when a click lands inside a reported rect. Route it
+    // through the same handler the DOM `onclick` uses. The DOM handler stays
+    // in place as a defensive fallback on platforms without the panel.
+    let cardClickUnlisten: UnlistenFn | null = null;
+    listen<{ log_id: string }>('overlay:card-clicked', (event) => {
+      const logId = event.payload?.log_id || null;
+      void focusLogForRequest(logId);
+    })
+      .then((un) => { cardClickUnlisten = un; })
+      .catch((e) => console.warn('[overlay] card-clicked subscribe failed:', e));
+
     // Signal Rust that the renderer has actually painted a frame so the
     // window can be revealed without the brief white flash that the
     // `on_page_load` reveal produced. See `emitRenderReady.ts` for the
@@ -90,6 +104,7 @@
       unsubTheme();
       unsubSettings();
       if (settingsUnlisten) settingsUnlisten();
+      if (cardClickUnlisten) cardClickUnlisten();
       if (disposer) disposer().catch((e) => console.warn('[overlay] disposer failed:', e));
     };
   });
@@ -106,6 +121,7 @@
     position={$overlaySettings.position}
     maxVisible={$overlaySettings.max_visible}
     showProfile={$overlaySettings.show_profile}
+    dismissMs={$overlaySettings.auto_dismiss_ms}
   />
 </div>
 
