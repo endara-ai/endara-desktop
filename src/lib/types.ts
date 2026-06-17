@@ -171,6 +171,18 @@ export interface OAuthSetupStatusResponse {
   url: string;
 }
 
+/**
+ * Result of the add-time OAuth capability probe (POST /api/oauth/probe).
+ * `authorization_server` and `scopes_supported` are present only when
+ * `oauth_supported` is `true`. Any probe failure/timeout is reported by the
+ * relay (and by the desktop client) as `{ oauth_supported: false }`.
+ */
+export interface OAuthProbeResult {
+  oauth_supported: boolean;
+  authorization_server?: string;
+  scopes_supported?: string[];
+}
+
 export type Theme = 'light' | 'dark' | 'system';
 
 // Re-export the parsed relay log type so components can import it from
