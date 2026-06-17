@@ -156,6 +156,14 @@ pub struct OverlaySubscriberState {
 // Rust-side poller compares the global cursor position against them, flipping
 // the ignore flag on inside/outside transitions. With no rects there is
 // nothing to hover, so the poller is stopped entirely (zero idle cost).
+//
+// On macOS the overlay WebView is permanently click-through in production — it
+// never toggles `set_ignore_cursor_events` back off. The interactive layer is
+// the click-catcher NSPanel installed ABOVE the WebView; the macOS poller flips
+// that panel's `setIgnoresMouseEvents` over the reported card rects only, and
+// the panel forwards clicks to the renderer via IPC (`overlay:card-clicked`).
+// macOS production invariant: the overlay window is always
+// ignore-cursor-events; the click-catcher panel is the toggle.
 
 /// Poll interval for the cursor poller while hit rects are present. Fast
 /// enough that hover feels immediate, slow enough to be negligible CPU.
@@ -1111,24 +1119,26 @@ pub fn build_overlay_window(
         }
     }
 
-    // Non-macOS: click-through by default — the Rust-side cursor poller (see
-    // `update_hit_rects` / `cursor_poll_loop` above) flips this while the
-    // global cursor is over a renderer-reported card rect. In debug builds we
-    // skip the global click-through so the overlay window is fully interactive
-    // and right-click → Inspect works from devtools; production builds keep the
-    // click-through behaviour so the overlay never steals input from the user's
-    // other windows. macOS routes clicks via the click-catcher panel installed
-    // above and never toggles `set_ignore_cursor_events`.
-    #[cfg(not(target_os = "macos"))]
-    {
-        if cfg!(debug_assertions) {
-            log::info!(
-                target: "overlay",
-                "debug build: overlay window is interactive (set_ignore_cursor_events skipped); right-click → Inspect to open devtools"
-            );
-        } else if let Err(e) = window.set_ignore_cursor_events(true) {
-            log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
-        }
+    // Production builds keep the overlay window in `set_ignore_cursor_events(true)`
+    // so it never catches input. On non-macOS the Rust-side cursor poller (see
+    // `update_hit_rects` / `cursor_poll_loop` above) flips this flag back off
+    // while the global cursor is over a renderer-reported card rect. On macOS the
+    // click-catcher NSPanel above the WebView is the only interactive layer — its
+    // `setIgnoresMouseEvents` toggle (driven by the cursor poller in
+    // `click_catcher_poll_loop`) opens click pass-through over the exact reported
+    // card rects only, and the renderer never needs DOM mouse events because the
+    // panel handles every click via IPC (`overlay:card-clicked`). Without this
+    // call on macOS, right-clicks outside a card hit the WebView and open the
+    // Tauri devtools context menu instead of falling through to the desktop. In
+    // debug builds we skip the global click-through on every platform so the
+    // overlay window is fully interactive and right-click → Inspect works.
+    if cfg!(debug_assertions) {
+        log::info!(
+            target: "overlay",
+            "debug build: overlay window is interactive (set_ignore_cursor_events skipped); right-click → Inspect to open devtools"
+        );
+    } else if let Err(e) = window.set_ignore_cursor_events(true) {
+        log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
     }
 
     // Primary reveal path: the renderer emits `overlay-render-ready` after a
