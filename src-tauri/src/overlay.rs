@@ -163,7 +163,9 @@ pub struct OverlaySubscriberState {
 // that panel's `setIgnoresMouseEvents` over the reported card rects only, and
 // the panel forwards clicks to the renderer via IPC (`overlay:card-clicked`).
 // macOS production invariant: the overlay window is always
-// ignore-cursor-events; the click-catcher panel is the toggle.
+// ignore-cursor-events; the click-catcher panel is the toggle. On macOS this
+// also holds in debug builds (so dev smoke-tests reflect production); only the
+// non-macOS path skips the global click-through in debug for devtools access.
 
 /// Poll interval for the cursor poller while hit rects are present. Fast
 /// enough that hover feels immediate, slow enough to be negligible CPU.
@@ -1129,16 +1131,31 @@ pub fn build_overlay_window(
     // card rects only, and the renderer never needs DOM mouse events because the
     // panel handles every click via IPC (`overlay:card-clicked`). Without this
     // call on macOS, right-clicks outside a card hit the WebView and open the
-    // Tauri devtools context menu instead of falling through to the desktop. In
-    // debug builds we skip the global click-through on every platform so the
-    // overlay window is fully interactive and right-click → Inspect works.
-    if cfg!(debug_assertions) {
-        log::info!(
-            target: "overlay",
-            "debug build: overlay window is interactive (set_ignore_cursor_events skipped); right-click → Inspect to open devtools"
-        );
-    } else if let Err(e) = window.set_ignore_cursor_events(true) {
-        log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
+    // Tauri devtools context menu instead of falling through to the desktop.
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: the click-catcher NSPanel above the WebView is the only
+        // interactive layer in both debug and release builds. The WebView
+        // itself is permanently click-through, so right-clicks outside a
+        // card fall through to the desktop instead of opening the Tauri
+        // devtools context menu. Lose right-click → Inspect on overlay cards
+        // in dev as a result; main-window devtools are unaffected.
+        if let Err(e) = window.set_ignore_cursor_events(true) {
+            log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // In debug builds we skip the global click-through so the overlay
+        // window is fully interactive and right-click → Inspect works.
+        if cfg!(debug_assertions) {
+            log::info!(
+                target: "overlay",
+                "debug build: overlay window is interactive (set_ignore_cursor_events skipped); right-click → Inspect to open devtools"
+            );
+        } else if let Err(e) = window.set_ignore_cursor_events(true) {
+            log::warn!("[overlay] set_ignore_cursor_events failed: {e}");
+        }
     }
 
     // Primary reveal path: the renderer emits `overlay-render-ready` after a
