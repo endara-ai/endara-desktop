@@ -223,8 +223,23 @@ export function parseJsonTree(
   }
 }
 
+/**
+ * Absolute ceiling on the input size we are willing to `JSON.parse` +
+ * re-stringify. Past this, even an effectively-unlimited `maxChars` (the copy
+ * path passes `Number.MAX_SAFE_INTEGER`) must not parse, or the multi-megabyte
+ * blob would block the UI thread.
+ */
+const PRETTY_PARSE_CEILING = 1_000_000;
+
 /** Pretty-print a JSON string; falls back to the raw text. Caps display size. */
 export function prettyJson(raw: string, maxChars = 200_000): { text: string; truncated: boolean } {
+  // Early size guard: when the raw input is past the absolute ceiling or far
+  // larger than the display cap, skip the parse entirely and return truncated
+  // raw text. This avoids parse-and-hang on huge payloads (and stops
+  // `copyPayload`'s `Number.MAX_SAFE_INTEGER` cap from defeating the guard).
+  if (raw.length > PRETTY_PARSE_CEILING || raw.length > maxChars * 4) {
+    return { text: raw.slice(0, Math.min(maxChars, PRETTY_PARSE_CEILING)), truncated: true };
+  }
   let text = raw;
   try {
     text = JSON.stringify(JSON.parse(raw), null, 2);

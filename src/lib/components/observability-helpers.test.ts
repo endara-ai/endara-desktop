@@ -243,6 +243,23 @@ describe('prettyJson', () => {
     expect(big.truncated).toBe(true);
     expect(big.text).toHaveLength(10);
   });
+
+  it('skips parsing when raw far exceeds maxChars (returns truncated raw)', () => {
+    const huge = JSON.stringify({ a: 'y'.repeat(900_000) });
+    const out = prettyJson(huge); // default 200k cap; 900k > 200k * 4
+    expect(out.truncated).toBe(true);
+    expect(out.text).toHaveLength(200_000);
+    // Not pretty-printed (a parsed object would start with '{\n  "a"').
+    expect(out.text.startsWith('{"a":')).toBe(true);
+  });
+
+  it('skips parsing past the absolute ceiling even with an unbounded cap (copy path)', () => {
+    const huge = JSON.stringify({ a: 'z'.repeat(2_000_000) });
+    const out = prettyJson(huge, Number.MAX_SAFE_INTEGER);
+    expect(out.truncated).toBe(true);
+    expect(out.text.length).toBeLessThanOrEqual(1_000_000);
+    expect(out.text.startsWith('{"a":')).toBe(true);
+  });
 });
 
 describe('parseJsonTree', () => {

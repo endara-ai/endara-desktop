@@ -8,6 +8,7 @@
     getObservabilityCall,
     getObservabilityAggregates,
     purgeObservability,
+    getObservabilityConfig,
   } from '$lib/api';
   import ConfirmModal from './ConfirmModal.svelte';
   import type {
@@ -74,6 +75,11 @@
   // Global purge: confirm dialog visibility + in-flight guard.
   let showPurgeConfirm = $state(false);
   let purging = $state(false);
+
+  // Configured payload-retention window (minutes), loaded best-effort so the
+  // "payloads expired" notice reflects the real config instead of a hard-coded
+  // number. Stays null until loaded (or if the config fetch fails).
+  let payloadWindowMinutes = $state<number | null>(null);
 
   function currentFilterUi(pageOffset: number): CallsFilterUi {
     return { serverName, tool, status, windowMinutes, limit: PAGE_SIZE, offset: pageOffset };
@@ -161,15 +167,20 @@
     detailLoading = true;
     try {
       const res = await getObservabilityCall(uid);
+      // Guard against a stale response: if another row was clicked while this
+      // fetch was in flight, `selectedUid` has moved on — drop this result so
+      // it never lands in the wrong selection.
+      if (selectedUid !== uid) return;
       if (res === null) {
         detailError = 'Call not found (it may have been purged or evicted).';
       } else {
         detail = res;
       }
     } catch (err) {
+      if (selectedUid !== uid) return;
       detailError = err instanceof Error ? err.message : String(err);
     } finally {
-      detailLoading = false;
+      if (selectedUid === uid) detailLoading = false;
     }
   }
 
@@ -191,15 +202,24 @@
     purging = true;
     try {
       await purgeObservability();
-      closeDetail();
-      calls = [];
-      offset = 0;
-      hasMore = false;
-      showPurgeConfirm = false;
-      await loadAll();
-      toast.success('Tool call records purged');
     } catch (err) {
+      // The purge itself failed — surface that accurately and stop here.
       toast.error(err instanceof Error ? err.message : String(err));
+      purging = false;
+      return;
+    }
+    // Purge succeeded: report it now, independent of the reload outcome.
+    closeDetail();
+    calls = [];
+    offset = 0;
+    hasMore = false;
+    showPurgeConfirm = false;
+    toast.success('Tool call records purged');
+    try {
+      await loadAll();
+    } catch (err) {
+      // A reload failure after a successful purge is a separate, lesser issue.
+      toast.error(`Records purged, but reload failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       purging = false;
     }
@@ -241,6 +261,12 @@
 
   onMount(() => {
     loadAll();
+    // Best-effort: drives the configured-window text on the expiry notice.
+    getObservabilityConfig()
+      .then((cfg) => {
+        payloadWindowMinutes = cfg.payload_window_minutes;
+      })
+      .catch(() => {});
     listen<ToolCallEvent>('tool-call-event', (event) => {
       if (isTerminalEvent(event.payload)) scheduleLiveRefresh();
     })
@@ -293,6 +319,14 @@
       : (detail?.payloads?.response ?? ''),
   );
 
+  // Expiry notice text: reflect the configured payload window when known,
+  // otherwise a neutral wording that doesn't assert a specific number.
+  const payloadExpiredText = $derived(
+    payloadWindowMinutes != null
+      ? `Payloads expired (${payloadWindowMinutes}-min window).`
+      : 'Payloads expired (retention window elapsed).',
+  );
+
   // ----- Copy payload to clipboard -----------------------------------------
   // Independent per-button state so the inline request/response and modal
   // checkmarks never cross-trigger each other (mirrors ProfileDetail's
@@ -304,11 +338,15 @@
   // Always copy the FULL, pretty-printed payload — the on-screen views cap the
   // rendered size, but the clipboard should get the complete JSON. Re-pretty
   // the raw source with an effectively unlimited size guard.
-  function copyPayload(raw: string, mark: (v: boolean) => void) {
+  async function copyPayload(raw: string, mark: (v: boolean) => void) {
     if (!raw) return;
-    navigator.clipboard.writeText(prettyJson(raw, Number.MAX_SAFE_INTEGER).text);
-    mark(true);
-    setTimeout(() => mark(false), 1500);
+    try {
+      await navigator.clipboard.writeText(prettyJson(raw, Number.MAX_SAFE_INTEGER).text);
+      mark(true);
+      setTimeout(() => mark(false), 1500);
+    } catch (err) {
+      toast.error(`Copy failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 </script>
 
@@ -568,7 +606,7 @@
                 </p>
               {:else if detail.payloadStatus === 'expired'}
                 <p class="rounded border border-(--border) bg-(--surface-sunken) p-2 text-[11px] text-(--fg3)">
-                  Payloads expired (10-min window).
+                  {payloadExpiredText}
                 </p>
               {:else if detail.payloads}
                 <div>
