@@ -398,9 +398,24 @@ fn transition(prev: bool, curr: bool) -> Option<bool> {
 #[cfg(target_os = "macos")]
 async fn click_catcher_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>>>) {
     log::info!(target: "overlay", "click-catcher poller spawning");
+    // Reset the panel to the click-through baseline so `inside_prev = false` is
+    // truthful w.r.t. the panel's actual state at loop entry. A prior poller may
+    // have left the panel interactive (`setIgnoresMouseEvents(false)`, cursor
+    // inside a card when the rect list emptied); if the cursor now starts
+    // outside any rect, `transition(false, false)` short-circuits to `None` and
+    // we would never restore click-through until the cursor next crosses a rect
+    // boundary. This unconditional reset matches the panel's construction-time
+    // default and cannot be exercised in a unit test without a real AppKit panel.
+    macos_click_catcher::set_ignore_mouse_events(&app, true);
+    log::info!(target: "overlay", "poller spawn: reset setIgnoresMouseEvents(true) baseline");
     let mut inside_prev = false;
+    let mut first_eval = true;
+    // Evaluate cursor/rects and apply the toggle BEFORE the first sleep, then
+    // sleep at the tail of each iteration. Sleeping first would leave
+    // `setIgnoresMouseEvents` stale for up to one poll interval after rects
+    // appear or the cursor crosses a boundary, risking a missed card click or a
+    // briefly stolen outside click.
     loop {
-        tokio::time::sleep(HIT_RECT_POLL_INTERVAL).await;
         let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
             return;
         };
@@ -415,6 +430,10 @@ async fn click_catcher_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>
             }
             _ => (false, 0.0, 0.0, PhysicalPosition::new(0, 0)),
         };
+        if first_eval {
+            log::info!(target: "overlay", "poller initial eval: inside={inside} (before first sleep)");
+            first_eval = false;
+        }
         if let Some(ignore) = transition(inside_prev, inside) {
             let count = rects.load().len();
             macos_click_catcher::set_ignore_mouse_events(&app, ignore);
@@ -426,6 +445,7 @@ async fn click_catcher_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>
             );
             inside_prev = inside;
         }
+        tokio::time::sleep(HIT_RECT_POLL_INTERVAL).await;
     }
 }
 
@@ -1510,6 +1530,13 @@ mod tests {
         // No change → no AppKit call.
         assert_eq!(transition(false, false), None);
         assert_eq!(transition(true, true), None);
+        // Spawn-baseline invariant: when a prior poller left the panel
+        // interactive (`inside_prev = true`) and the cursor starts outside any
+        // rect (`inside = false`), `transition` must re-ignore (`Some(true)`).
+        // The pure function handles this; the matching caller fix is the
+        // unconditional `setIgnoresMouseEvents(true)` reset at poller spawn,
+        // which cannot be unit-tested without a real AppKit panel.
+        assert_eq!(transition(true, false), Some(true));
     }
 
     #[test]
