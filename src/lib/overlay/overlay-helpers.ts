@@ -86,10 +86,11 @@ export function isDestructive(g: ToolCallGroup): boolean {
 /**
  * Axis-aligned card hit rect in overlay-window viewport coordinates (CSS /
  * logical pixels). Mirrors the `HitRect` struct in `src-tauri/src/overlay.rs`.
- * `log_id` carries the card's JSON-RPC id so the macOS click-catcher can emit
- * `overlay:card-clicked` with the right target (empty string when the card has
- * no JSON-RPC id captured yet). The snake_case key matches the wire shape serde
- * deserializes on the Rust side.
+ * `log_id` carries the relay-minted `request_uid` (surfaced to the desktop side
+ * as `logId`) so the macOS click-catcher can emit `overlay:card-clicked` with
+ * the right target (empty string when the card has no `request_uid` captured
+ * yet). The snake_case key matches the wire shape serde deserializes on the
+ * Rust side.
  */
 export type HitRect = { x: number; y: number; width: number; height: number; log_id: string };
 
