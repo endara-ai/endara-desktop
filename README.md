@@ -20,13 +20,15 @@ Add MCP servers, manage OAuth, browse tools — without ever opening a terminal.
 ## What can you do?
 
 - **Visual endpoint dashboard** — see every MCP server you've added with live health indicators, all in one place.
-- **Live tool-call overlay** — an always-on-top, click-through window in the corner of your screen shows every MCP tool call as it happens, with success / failure / duration and a repeat-call counter so bursts collapse into a single card.
+- **Live tool-call overlay** — an always-on-top, click-through window in the corner of your screen shows every MCP tool call as it happens, with the calling client, success / failure / duration, and a repeat-call counter so bursts collapse into a single card.
+- **Observability tab** — browse a searchable history of every tool call with filters, latency sparklines, and request / response payload drill-through.
+- **Run servers in containers** — toggle Docker / Podman isolation when adding a STDIO server, with host bind mounts and an automatic direct-spawn fallback when no runtime is installed.
 - **Endpoint profiles** — group endpoints into named profiles served under their own `/mcp/{profile}` URL so different agents can share one relay without sharing one catalog.
 - **Tray health at a glance** — the tray icon flips green / yellow / red and the menu's first line spells out the exact reason (sign-in needed, endpoint unhealthy, relay stopped) without opening the app.
 - **Search tools** across every connected server from a single ⌘K palette.
 - **Watch real-time logs** stream from each endpoint as requests flow through.
-- **Manage OAuth flows** end-to-end inside the app — no copy-pasting tokens between terminals.
-- **Single-click add server** for STDIO, SSE, or HTTP MCP servers — paste a command or URL and you're done.
+- **Manage OAuth flows** end-to-end inside the app — sign in just in time when a server needs it, and re-authenticate or refresh from the **Auth** tab without copy-pasting tokens.
+- **Single-click add server** for STDIO, SSE, or HTTP MCP servers — paste a command or URL, optionally containerize it, and you're done.
 
 ## What is this?
 
@@ -71,8 +73,11 @@ Or [build from source](#development) if you prefer.
 
 - **System tray integration** — Runs in your menu bar / system tray, always available without cluttering your workspace
 - **Tray health indicator** — The tray icon itself flips green / yellow / red to reflect overall relay health, and the menu's first line spells out the exact reason (e.g. `Endara — Sign in required for linear`)
-- **Tool-call overlay window** — Always-on-top, click-through window that surfaces every MCP tool call as a card (in-flight blue → success green / failure red), with stacked count chips when the same tool is called in quick succession. Configurable corner, max-cards, and "hide while Endara is focused" toggles in the **Overlay** section of Settings.
+- **Tool-call overlay window** — Always-on-top, click-through window that surfaces every MCP tool call as a card (in-flight blue → success green / failure red), labelled with the calling client, with stacked count chips when the same tool is called in quick succession. Configurable corner, max-cards, and "hide while Endara is focused" toggles in the **Overlay** section of Settings.
 - **Endpoint profiles** — Group endpoints into named profiles via the **Profiles** tab, each served at `/mcp/{profile}` with its own JS-execution and TOON-output toggles. The tab renders a copyable `claude_desktop_config.json` snippet for each profile.
+- **Observability tab** — Browse recorded tool calls with filters (server, tool, status, time window), latency sparklines, and full request / response payload drill-through, plus a one-click purge. Backed by the relay's durable observability store.
+- **Container isolation** — When adding a STDIO server, toggle **Run in container** to run it under Docker or Podman with optional host bind mounts; servers flagged as not-containerizable show a badge and run directly, and a missing runtime falls back to direct spawn.
+- **Just-in-time OAuth** — Servers that need authentication prompt you to sign in at add time and again if a token goes stale; refresh or re-authenticate from the **Auth** tab.
 - **Relay lifecycle management** — Auto-starts the relay on launch, monitors it, auto-restarts on crash, kills on quit
 - **Endpoint dashboard** — View all configured MCP server endpoints with live health indicators (🟢 healthy / 🟡 degraded / 🔴 down)
 - **Tool browser** — Browse and search all tools exposed by each endpoint
