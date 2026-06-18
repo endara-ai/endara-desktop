@@ -58,6 +58,23 @@
     showReauthorize = result.showBar;
   });
 
+  // Close any open delete/restart confirm modal when the selected server
+  // changes so a confirm opened for one server can't carry over to the next.
+  // Tracked via a plain (non-reactive) variable — same prev-endpoint approach
+  // as the reauth gate above — so writing it from the effect doesn't
+  // re-trigger the effect, and we only reset when the name actually changes
+  // (opening a modal on the current server is left alone).
+  let prevConfirmEndpoint: string | null = null;
+
+  $effect(() => {
+    const name = $selectedEndpoint;
+    if (name !== prevConfirmEndpoint) {
+      prevConfirmEndpoint = name;
+      showDeleteConfirm = false;
+      showRestartConfirm = false;
+    }
+  });
+
   let tabs = $derived(
     $selectedEndpointData
       ? visibleTabs($selectedEndpointData.transport, !!$selectedEndpointData.disabled)
@@ -72,6 +89,7 @@
   });
 
   async function handleRestart() {
+    showRestartConfirm = false;
     const name = $selectedEndpoint;
     if (name) {
       try {
@@ -81,7 +99,6 @@
         toast.error(`Failed to restart "${name}"`);
       }
     }
-    showRestartConfirm = false;
   }
 
   async function handleRefresh() {
@@ -123,6 +140,7 @@
   }
 
   async function handleDelete() {
+    showDeleteConfirm = false;
     const name = $selectedEndpoint;
     if (name) {
       try {
@@ -141,7 +159,6 @@
         toast.error(`Failed to delete "${name}"`);
       }
     }
-    showDeleteConfirm = false;
   }
 
   async function handleReauthorize() {

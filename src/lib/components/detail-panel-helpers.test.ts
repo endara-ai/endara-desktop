@@ -381,6 +381,55 @@ describe('DetailPanel re-authorize button', () => {
   });
 });
 
+// ── Confirm-modal reset on endpoint switch ──
+//
+// A delete/restart confirm opened for one server must never carry over to a
+// different server. DetailPanel guards this two ways: (1) the handlers clear
+// their confirm flag immediately on confirm — before the async mutation — and
+// (2) an effect resets both confirm flags whenever the selected endpoint name
+// changes. Verified via static source inspection (the project has no
+// component-mount test infra; test env is node, not jsdom).
+describe('DetailPanel confirm-modal reset on endpoint switch', () => {
+  const resetEffect = detailPanelSource.match(
+    /\$effect\(\(\) => \{\s*const name = \$selectedEndpoint;[\s\S]*?\}\);/,
+  );
+
+  it('resets both confirm flags in an effect keyed on selectedEndpoint change', () => {
+    expect(resetEffect, 'expected the selectedEndpoint reset effect').not.toBeNull();
+    expect(resetEffect![0]).toContain('name !== prevConfirmEndpoint');
+    expect(resetEffect![0]).toContain('prevConfirmEndpoint = name');
+    expect(resetEffect![0]).toContain('showDeleteConfirm = false');
+    expect(resetEffect![0]).toContain('showRestartConfirm = false');
+  });
+
+  it('tracks the previous endpoint in a plain (non-reactive) variable', () => {
+    expect(detailPanelSource).toMatch(/let prevConfirmEndpoint: string \| null = null;/);
+  });
+
+  it('closes the delete confirm immediately at the start of handleDelete', () => {
+    const handler = detailPanelSource.match(
+      /async function handleDelete\(\) \{[\s\S]*?\n  \}/,
+    );
+    expect(handler, 'expected handleDelete').not.toBeNull();
+    const body = handler![0];
+    // The flag clear must precede the awaited removeEndpoint call.
+    expect(body.indexOf('showDeleteConfirm = false')).toBeLessThan(
+      body.indexOf('await removeEndpoint'),
+    );
+  });
+
+  it('closes the restart confirm immediately at the start of handleRestart', () => {
+    const handler = detailPanelSource.match(
+      /async function handleRestart\(\) \{[\s\S]*?\n  \}/,
+    );
+    expect(handler, 'expected handleRestart').not.toBeNull();
+    const body = handler![0];
+    expect(body.indexOf('showRestartConfirm = false')).toBeLessThan(
+      body.indexOf('await restartEndpoint'),
+    );
+  });
+});
+
 // ── Container-stats formatters (header metrics line) ──
 
 describe('formatBytes', () => {
