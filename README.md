@@ -28,7 +28,7 @@ Add MCP servers, manage OAuth, browse tools — without ever opening a terminal.
 - **Search tools** across every connected server from a single ⌘K palette.
 - **Watch real-time logs** stream from each endpoint as requests flow through.
 - **Manage OAuth flows** end-to-end inside the app — sign in just in time when a server needs it, and re-authenticate or refresh from the **Auth** tab without copy-pasting tokens.
-- **Single-click add server** for STDIO, SSE, or HTTP MCP servers — paste a command or URL, optionally containerize it, and you're done.
+- **Single-click add server** for STDIO, SSE, or HTTP MCP servers — paste a command or URL (and, for STDIO servers, optionally run it in a container), and you're done.
 
 ## What is this?
 
