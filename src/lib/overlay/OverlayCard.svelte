@@ -17,7 +17,7 @@
   `dismissDurationMs` prop when the group is not counting down. No
   hover-pause, no pause/resume binding on the keyframe.
 
-  Click invokes `focusLogForRequest(latest.logId)`; if the latest request
+  Click invokes `focusCallForRequest(latest.logId)`; if the latest request
   has no logId the card is rendered non-clickable (cursor: default) and
   the click is a soft no-op.
 -->

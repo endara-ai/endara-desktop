@@ -131,7 +131,7 @@ describe('OverlayCard — hint pills', () => {
 describe('OverlayCard — click handler', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('invokes focus_main_window_on_log with the latest request logId', async () => {
+  it('invokes focus_main_window_on_call with the latest request request_uid', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
 
@@ -145,8 +145,8 @@ describe('OverlayCard — click handler', () => {
     expect(canFocusLog(group)).toBe(true);
 
     await cardClick(group);
-    expect(mockInvoke).toHaveBeenCalledWith('focus_main_window_on_log', {
-      logId: 'rpc-2',
+    expect(mockInvoke).toHaveBeenCalledWith('focus_main_window_on_call', {
+      requestUid: 'rpc-2',
     });
   });
 

@@ -26,6 +26,7 @@ const baseUi: CallsFilterUi = {
   tool: '',
   status: 'all',
   windowMinutes: 0,
+  requestUid: '',
   limit: 100,
   offset: 0,
 };
@@ -63,6 +64,12 @@ describe('buildCallsFilter', () => {
   it('derives a since bound from the window using injected now', () => {
     const f = buildCallsFilter({ ...baseUi, windowMinutes: 5 }, 1_000_000);
     expect(f.since).toBe(1_000_000 - 5 * 60_000);
+  });
+
+  it('maps a trimmed requestUid to request_uid and drops it when empty', () => {
+    expect(buildCallsFilter({ ...baseUi, requestUid: ' abc-123 ' }).request_uid).toBe('abc-123');
+    expect(buildCallsFilter({ ...baseUi, requestUid: '   ' }).request_uid).toBeUndefined();
+    expect(buildCallsFilter(baseUi).request_uid).toBeUndefined();
   });
 });
 

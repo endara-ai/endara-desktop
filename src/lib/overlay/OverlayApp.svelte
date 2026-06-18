@@ -17,7 +17,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { theme } from '$lib/stores';
   import { attachOverlayBridge } from './eventBridge';
-  import { focusLogForRequest } from './focusLog';
+  import { focusCallForRequest } from './focusCall';
   import { createToastStore } from './toastStore';
   import { emitRenderReady } from './emitRenderReady';
   import {
@@ -88,8 +88,8 @@
     // in place as a defensive fallback on platforms without the panel.
     let cardClickUnlisten: UnlistenFn | null = null;
     listen<{ log_id: string }>('overlay:card-clicked', (event) => {
-      const logId = event.payload?.log_id || null;
-      void focusLogForRequest(logId);
+      const requestUid = event.payload?.log_id || null;
+      void focusCallForRequest(requestUid);
     })
       .then((un) => { cardClickUnlisten = un; })
       .catch((e) => console.warn('[overlay] card-clicked subscribe failed:', e));

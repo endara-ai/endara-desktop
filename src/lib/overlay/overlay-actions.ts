@@ -5,17 +5,17 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ToolCallGroup } from './toastStore';
 import { canFocusLog, latestRequest, type HitRect } from './overlay-helpers';
-import { focusLogForRequest } from './focusLog';
+import { focusCallForRequest } from './focusCall';
 
 /**
- * Card click: focus the matching log row in the main window when the
- * group's latest request carries a logId. Otherwise no-op (the card
- * is also rendered non-clickable in the UI).
+ * Card click: focus the matching call row in the main window's Observability
+ * tab when the group's latest request carries a request_uid. Otherwise no-op
+ * (the card is also rendered non-clickable in the UI).
  */
 export async function cardClick(group: ToolCallGroup): Promise<void> {
   if (!canFocusLog(group)) return;
   const last = latestRequest(group);
-  await focusLogForRequest(last?.logId ?? null);
+  await focusCallForRequest(last?.logId ?? null);
 }
 
 /**

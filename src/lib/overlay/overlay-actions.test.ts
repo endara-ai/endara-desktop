@@ -35,7 +35,7 @@ function g(over: Partial<ToolCallGroup> = {}): ToolCallGroup {
 describe('cardClick', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('invokes focus_main_window_on_log when the latest request has a logId', async () => {
+  it('invokes focus_main_window_on_call when the latest request has a request_uid', async () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockResolvedValue(undefined);
 
@@ -49,8 +49,8 @@ describe('cardClick', () => {
       }),
     );
 
-    expect(mockInvoke).toHaveBeenCalledWith('focus_main_window_on_log', {
-      logId: 'rpc-7',
+    expect(mockInvoke).toHaveBeenCalledWith('focus_main_window_on_call', {
+      requestUid: 'rpc-7',
     });
   });
 

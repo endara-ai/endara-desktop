@@ -15,6 +15,7 @@ export interface CallsFilterUi {
   tool: string;
   status: StatusFilter;
   windowMinutes: number;
+  requestUid: string;
   limit: number;
   offset: number;
 }
@@ -33,6 +34,8 @@ export function buildCallsFilter(
   if (server) filter.server_name = server;
   const tool = ui.tool.trim();
   if (tool) filter.tool = tool;
+  const requestUid = ui.requestUid.trim();
+  if (requestUid) filter.request_uid = requestUid;
   if (ui.status === 'success') filter.success = true;
   else if (ui.status === 'errors') filter.success = false;
   if (ui.windowMinutes > 0) filter.since = nowMs - ui.windowMinutes * 60_000;

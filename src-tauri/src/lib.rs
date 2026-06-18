@@ -1647,34 +1647,33 @@ async fn set_overlay_settings(
     apply_overlay_settings(&app, &state, &prev, &new_settings).await
 }
 
-/// Payload emitted to the main window so its RelayLogs view can scroll the
-/// matching log row into view. Field name is camelCase to match the renderer
-/// event handler — Tauri serializes Serde structs with the default rename, and
-/// the front-end consumer expects `logId`. The id is whatever key the click
-/// side resolved (now the relay-minted `request_uid`).
+/// Payload emitted to the main window so its Observability view can select +
+/// scroll the matching call row into view. Field name is camelCase to match the
+/// renderer event handler — Tauri serializes Serde structs with the default
+/// rename, and the front-end consumer expects `requestUid`. The id is the
+/// relay-minted `request_uid` the click side resolved.
 #[derive(Serialize, Clone)]
-struct FocusLogPayload {
-    #[serde(rename = "logId")]
-    log_id: String,
+struct FocusCallPayload {
+    #[serde(rename = "requestUid")]
+    request_uid: String,
 }
 
-/// Show + focus the main window and emit `overlay:focus-log` to it with the
-/// log id of the request the user clicked on in the overlay. The command does
-/// not care whether the id originated from `request_uid` or `jsonrpc_id` — it
-/// just routes whatever id the click side resolved.
+/// Show + focus the main window and emit `overlay:focus-call` to it with the
+/// `request_uid` of the call the user clicked on in the overlay. The
+/// Observability tab listens for this and filters its call list to that UUID.
 ///
 /// On macOS we also restore the regular activation policy so the app
 /// reappears in the Dock + Cmd-Tab when the user clicks from an otherwise
 /// hidden / accessory-mode session — mirroring the tray "Open Endara"
 /// behaviour.
 #[tauri::command]
-async fn focus_main_window_on_log(app: AppHandle, log_id: String) -> Result<(), String> {
+async fn focus_main_window_on_call(app: AppHandle, request_uid: String) -> Result<(), String> {
     log::info!(
         target: "overlay",
-        "focus_main_window_on_log invoked: log_id={}",
-        log_id
+        "focus_main_window_on_call invoked: request_uid={}",
+        request_uid
     );
-    // `focus_main_window_on_log` is an async command that runs on a tokio
+    // `focus_main_window_on_call` is an async command that runs on a tokio
     // worker thread. `set_macos_activation_policy` asserts it is on the main
     // thread via `MainThreadMarker::new()`, so dispatch the AppKit work onto
     // the main thread instead of calling it directly here.
@@ -1689,15 +1688,15 @@ async fn focus_main_window_on_log(app: AppHandle, log_id: String) -> Result<(), 
         window.set_focus().map_err(|e| e.to_string())?;
         window
             .emit(
-                "overlay:focus-log",
-                FocusLogPayload {
-                    log_id: log_id.clone(),
+                "overlay:focus-call",
+                FocusCallPayload {
+                    request_uid: request_uid.clone(),
                 },
             )
             .map_err(|e| e.to_string())?;
         log::info!(
-            "[overlay] focus_main_window_on_log emitted log_id={}",
-            log_id
+            "[overlay] focus_main_window_on_call emitted request_uid={}",
+            request_uid
         );
         Ok(())
     } else {
@@ -2428,7 +2427,7 @@ pub fn run() {
             unsubscribe_tool_call_events,
             get_overlay_settings,
             set_overlay_settings,
-            focus_main_window_on_log,
+            focus_main_window_on_call,
         ])
         .setup(move |app| {
             log::info!(

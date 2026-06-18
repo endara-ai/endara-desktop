@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { toast } from 'svelte-sonner';
+  import { activeTopLevelTab } from '$lib/stores';
   import {
     getObservabilityCalls,
     getObservabilityCall,
@@ -62,6 +63,9 @@
   let tool = $state('');
   let status = $state<StatusFilter>('all');
   let windowMinutes = $state(60);
+  // Removable UUID search pill. Empty = no constraint; set via the
+  // `overlay:focus-call` handler (or cleared by the pill's ✕).
+  let uidFilter = $state('');
 
   // Drill-through.
   let selectedUid = $state<string | null>(null);
@@ -82,7 +86,15 @@
   let payloadWindowMinutes = $state<number | null>(null);
 
   function currentFilterUi(pageOffset: number): CallsFilterUi {
-    return { serverName, tool, status, windowMinutes, limit: PAGE_SIZE, offset: pageOffset };
+    return {
+      serverName,
+      tool,
+      status,
+      windowMinutes,
+      requestUid: uidFilter,
+      limit: PAGE_SIZE,
+      offset: pageOffset,
+    };
   }
 
   const globalSeries = $derived(globalBuckets(buckets));
@@ -191,6 +203,34 @@
     expandedPayload = null;
   }
 
+  // Clear the UUID search pill: drop the constraint, close the drill-through
+  // panel, and reload the (now unfiltered) list.
+  async function clearUidFilter() {
+    uidFilter = '';
+    closeDetail();
+    await refreshList();
+  }
+
+  // Handle an `overlay:focus-call` request (emitted when an overlay card is
+  // clicked): switch to this tab, reset every other filter so the row is
+  // guaranteed to show, apply the UUID pill, reload, then select + scroll the
+  // matching row into view.
+  async function focusCall(requestUid: string) {
+    if (!requestUid) return;
+    activeTopLevelTab.set('observability');
+    serverName = '';
+    tool = '';
+    status = 'all';
+    windowMinutes = 0;
+    uidFilter = requestUid;
+    await refreshList();
+    await openDetail(requestUid);
+    await tick();
+    document
+      .querySelector(`tr[data-request-uid="${CSS.escape(requestUid)}"]`)
+      ?.scrollIntoView({ block: 'center' });
+  }
+
   function expandPayload(which: 'request' | 'response') {
     expandedPayload = which;
   }
@@ -235,6 +275,7 @@
   // (completed/failed) a new metadata row exists, so we refetch the first page
   // and merge it in (deduped by requestUid). Debounced to coalesce bursts.
   let unlisten: UnlistenFn | null = null;
+  let unlistenFocusCall: UnlistenFn | null = null;
   let liveTimer: ReturnType<typeof setTimeout> | null = null;
 
   function scheduleLiveRefresh() {
@@ -274,6 +315,15 @@
         unlisten = fn;
       })
       .catch((e) => console.error('[observability] listen failed:', e));
+    listen<{ requestUid: string }>('overlay:focus-call', (event) => {
+      focusCall(event.payload?.requestUid).catch((e) =>
+        console.error('[observability] focus-call failed:', e),
+      );
+    })
+      .then((fn) => {
+        unlistenFocusCall = fn;
+      })
+      .catch((e) => console.error('[observability] focus-call listen failed:', e));
     invoke('subscribe_tool_call_events').catch((e) =>
       console.error('[observability] subscribe failed:', e),
     );
@@ -289,6 +339,14 @@
         console.warn('[observability] unlisten threw:', e);
       }
       unlisten = null;
+    }
+    if (unlistenFocusCall) {
+      try {
+        unlistenFocusCall();
+      } catch (e) {
+        console.warn('[observability] focus-call unlisten threw:', e);
+      }
+      unlistenFocusCall = null;
     }
     invoke('unsubscribe_tool_call_events').catch(() => {});
   });
@@ -488,6 +546,21 @@
               <option value={0}>All time</option>
             </select>
           </label>
+          {#if uidFilter}
+            <div class="flex flex-col gap-0.5">
+              <span class="text-[11px] font-medium text-(--fg2)">Request UID</span>
+              <button
+                type="button"
+                class="flex items-center gap-1 rounded-lg border border-(--accent) bg-(--accent-tint) px-2 py-1 text-[12px] text-(--fg1) hover:bg-(--surface-hover) focus:border-(--accent) focus:outline-none"
+                title="Clear request UID filter"
+                aria-label="Clear request UID filter"
+                onclick={clearUidFilter}
+              >
+                <span aria-hidden="true">✕</span>
+                <span class="max-w-40 truncate font-mono">{uidFilter}</span>
+              </button>
+            </div>
+          {/if}
         </div>
 
         {#if errorMessage}
@@ -519,6 +592,7 @@
                 {#each calls as c (c.requestUid)}
                   {@const st = callStatus(c)}
                   <tr
+                    data-request-uid={c.requestUid}
                     class="cursor-pointer border-t border-(--border) hover:bg-(--surface-hover) {selectedUid === c.requestUid ? 'bg-(--accent-tint)' : ''}"
                     onclick={() => openDetail(c.requestUid)}
                   >
