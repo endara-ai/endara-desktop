@@ -59,6 +59,17 @@
   const showDuration = $derived(state !== 'inflight' && avgMs != null);
   const hasSettled = $derived(group.success > 0 || group.error > 0);
   const clickable = $derived(canFocusLog(group));
+  // Left accent bar driven by call status, not destructiveness:
+  // in-flight (blue) wins the entire time any call is in flight, else
+  // red when the group has any failed call (`group.error > 0`, even with
+  // some successes), else no bar.
+  const accentBar = $derived(
+    group.inflight > 0
+      ? 'var(--accent)'
+      : group.error > 0
+        ? 'var(--offline)'
+        : null,
+  );
   // Per-card dismiss bar visibility: rendered only after the group
   // has settled (no in-flight requests AND at least one resolved
   // request). A new started event for the same group flips
@@ -116,12 +127,13 @@
     class="tf-card tf-card-front"
     data-state={state}
     data-destructive={destructive ? 'true' : 'false'}
+    data-accent-bar={accentBar ? 'true' : 'false'}
     data-clickable={clickable ? 'true' : 'false'}
     data-stacked={stacked ? 'true' : 'false'}
     onclick={onClick}
   >
-    {#if destructive}
-      <div class="tf-accent-bar"></div>
+    {#if accentBar}
+      <div class="tf-accent-bar" style:background={accentBar}></div>
     {/if}
 
     <div class="tf-card-body">

@@ -107,9 +107,27 @@ describe('OverlayCard — visual state branches', () => {
     expect(groupVisualState(group)).toBe('inflight');
   });
 
-  it('destructive variant flips border + accent bar', () => {
-    const group = g({ annotations: { destructive: true } });
-    expect(isDestructive(group)).toBe(true);
+  it('drives the accent bar by call status, not destructiveness', () => {
+    // Mirrors OverlayCard.svelte's `accentBar` derivation:
+    //   inflight > 0 ? 'var(--accent)' : error > 0 ? 'var(--offline)' : null
+    const accentBar = (group: ToolCallGroup) =>
+      group.inflight > 0
+        ? 'var(--accent)'
+        : group.error > 0
+          ? 'var(--offline)'
+          : null;
+
+    // In-flight wins (blue) the entire time any call is in flight, even
+    // when some calls already failed.
+    expect(accentBar(g({ inflight: 1, error: 1, requests: [req()] }))).toBe('var(--accent)');
+    // Settled with any failed call (even alongside successes) → red.
+    expect(accentBar(g({ success: 2, error: 1 }))).toBe('var(--offline)');
+    // All-success → no bar.
+    expect(accentBar(g({ success: 3 }))).toBeNull();
+    // Destructive no longer drives the bar; the destructive pill still does.
+    const destructiveSuccess = g({ success: 1, annotations: { destructive: true } });
+    expect(isDestructive(destructiveSuccess)).toBe(true);
+    expect(accentBar(destructiveSuccess)).toBeNull();
   });
 });
 

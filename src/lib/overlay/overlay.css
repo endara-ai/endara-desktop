@@ -132,9 +132,9 @@
 .tf-card-front:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tf-card-front[data-destructive='true'] { border-color: rgba(250, 82, 82, 0.35); }
 
-.tf-accent-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--offline); }
+.tf-accent-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
 .tf-card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
-.tf-card-front[data-destructive='true'] .tf-card-body { padding-left: 16px; }
+.tf-card-front[data-accent-bar='true'] .tf-card-body { padding-left: 16px; }
 
 .tf-row-1 { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .tf-icon { width: 28px; height: 28px; border-radius: 7px; background: var(--tf-icon-bg); display: flex; align-items: center; justify-content: center; color: var(--fg1); flex-shrink: 0; }
