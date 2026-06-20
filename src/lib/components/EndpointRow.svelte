@@ -6,8 +6,14 @@
   import EndpointIcon from './EndpointIcon.svelte';
   import TransportBadge from './TransportBadge.svelte';
   import { getEndpointStatusLabel } from './endpoint-row-helpers';
+  import { endpointTransitions, transitionLabel } from '$lib/stores/endpointTransitions';
 
   let { endpoint }: { endpoint: Endpoint } = $props();
+
+  // Optimistic toggle hint for this row (null when no enable/disable is in
+  // flight). Takes precedence over the normal status label/health dot so the
+  // sidebar reflects the toggle immediately, before the next poll.
+  let pending = $derived($endpointTransitions.get(endpoint.name) ?? null);
 
   // Extract error message from lifecycle if it's in Failed state
   let lifecycleError = $derived(
@@ -32,13 +38,13 @@
   class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left transition-colors
     hover:bg-(--hover-bg)
     {$selectedEndpoint === endpoint.name ? 'bg-(--hover-bg)' : ''}
-    {endpoint.disabled ? 'opacity-50' : ''}"
+    {endpoint.disabled && !pending ? 'opacity-50' : ''}"
   onclick={select}
 >
   <div class="relative flex-shrink-0 text-(--fg3)" style="width: 20px; height: 20px;">
     <EndpointIcon {endpoint} size={20} />
     <span class="absolute" style="bottom: -1px; right: -1px;">
-      <HealthDot health={isFailed ? 'error' : endpoint.health} stacked={true} />
+      <HealthDot health={pending ? 'starting' : isFailed ? 'error' : endpoint.health} stacked={true} />
     </span>
   </div>
   <div class="flex-1 min-w-0">
@@ -47,7 +53,9 @@
     >{endpoint.name}</div>
     <div class="flex items-baseline gap-1.5 mt-px">
       <TransportBadge transport={endpoint.transport} />
-      {#if isFailed}
+      {#if pending}
+        <span class="text-[11px] text-(--accent)" style="font-family: var(--font-mono);">{transitionLabel(pending)}</span>
+      {:else if isFailed}
         <span
           class="text-[11px] text-(--offline) truncate max-w-[120px]"
           style="font-family: var(--font-mono);"

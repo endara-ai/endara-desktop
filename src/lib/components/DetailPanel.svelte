@@ -25,7 +25,15 @@
     formatBytes,
     formatCpuPercent,
   } from './detail-panel-helpers';
-  import { getCustomImage } from './endpoint-row-helpers';
+  import { getCustomImage, getEndpointStatusLabel } from './endpoint-row-helpers';
+  import {
+    endpointTransitions,
+    markStarting,
+    markStopping,
+    clearTransition,
+    transitionLabel,
+    shouldClearTransition,
+  } from '$lib/stores/endpointTransitions';
 
   let showRestartConfirm = $state(false);
   let showDeleteConfirm = $state(false);
@@ -64,6 +72,31 @@
       : []
   );
 
+  // Optimistic toggle hint for the currently-selected endpoint (null when no
+  // enable/disable is in flight). Drives the spinner + "Starting…/Stopping…"
+  // label on the toggle and the header secondary line.
+  let selectedPending = $derived(
+    $selectedEndpointData ? $endpointTransitions.get($selectedEndpointData.name) ?? null : null
+  );
+
+  // Reconcile pending transitions against the 2s endpoint poll: clear each one
+  // once the relay actually reports the target state (Ready/healthy for start,
+  // disabled/Stopped for stop), on any Failed/error, or after the safety
+  // timeout. Iterates the whole list so sidebar-row hints clear too, not just
+  // the selected endpoint's.
+  $effect(() => {
+    const list = $endpoints;
+    const pending = $endpointTransitions;
+    if (pending.size === 0) return;
+    const now = Date.now();
+    for (const [name, transition] of pending) {
+      const ep = list.find((e) => e.name === name);
+      if (shouldClearTransition(transition, ep, now)) {
+        clearTransition(name);
+      }
+    }
+  });
+
   $effect(() => {
     const ep = $selectedEndpointData;
     if (ep?.disabled && ($activeTab === 'tools' || $activeTab === 'logs' || $activeTab === 'profiles')) {
@@ -100,9 +133,17 @@
     const ep = $selectedEndpointData;
     if (!ep || toggling) return;
     toggling = true;
-    const action = ep.disabled ? 'enable' : 'disable';
+    const enabling = ep.disabled;
+    const action = enabling ? 'enable' : 'disable';
+    // Optimistically mark the transition BEFORE the await so the hint shows
+    // immediately on the toggle/header and sidebar row, ahead of the next poll.
+    if (enabling) {
+      markStarting(ep.name);
+    } else {
+      markStopping(ep.name);
+    }
     try {
-      if (ep.disabled) {
+      if (enabling) {
         await enableEndpoint(ep.name);
       } else {
         await disableEndpoint(ep.name);
@@ -113,10 +154,21 @@
       } catch {
         // Mutation already succeeded — silent on purpose. The 2s poll
         // loop in +page.svelte reconciles the list; surfacing a refresh
-        // error on top of the success toast below would confuse users.
+        // error on top of the toast below would confuse users.
       }
-      toast.success(`Server "${ep.name}" ${ep.disabled ? 'enabled' : 'disabled'}`);
+      // No premature "enabled" toast: the relay is still spinning the server
+      // up. The persistent "Starting…" hint communicates progress and the
+      // reconciliation effect clears it once the relay reports Ready. Disable
+      // completes quickly, so a success toast is fine there.
+      if (enabling) {
+        toast.success(`Starting "${ep.name}"…`);
+      } else {
+        toast.success(`Server "${ep.name}" disabled`);
+      }
     } catch {
+      // The mutation failed, so the server won't change state — drop the
+      // optimistic hint immediately instead of waiting for the safety timeout.
+      clearTransition(ep.name);
       toast.error(`Failed to ${action} "${ep.name}"`);
     }
     toggling = false;
@@ -178,7 +230,8 @@
           <div class="flex items-center gap-2 mt-0.5">
             <TransportBadge transport={ep.transport} />
             <IsolationBadge isolation={ep.isolation_state} />
-            <span class="text-[11px] text-(--fg3)">{ep.tool_count} tools</span>
+            <span class="text-[11px] {selectedPending ? 'text-(--accent)' : 'text-(--fg3)'}"
+              >{transitionLabel(selectedPending) ?? getEndpointStatusLabel(ep)}</span>
           </div>
           {#if getCustomImage(ep.isolation_state) || ep.container_stats}
             <div class="flex items-center gap-2 mt-0.5">
@@ -203,6 +256,14 @@
         </div>
       </div>
       <div class="flex items-center gap-1.5 flex-shrink-0">
+        {#if selectedPending}
+          <span class="flex items-center gap-1 text-[11px] text-(--accent)">
+            <svg class="w-3 h-3 animate-spin" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="3" stroke-dasharray="28" stroke-dashoffset="8" stroke-linecap="round" />
+            </svg>
+            {transitionLabel(selectedPending)}
+          </span>
+        {/if}
         <button
           class="tgl {ep.disabled ? 'tgl-off' : ''} {toggling ? 'opacity-50' : ''}"
           onclick={handleToggle}
