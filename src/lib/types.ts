@@ -67,6 +67,19 @@ export interface LifecycleStopped {
 
 export type Lifecycle = LifecycleReady | LifecycleFailed | LifecycleInitializing | LifecycleStopped;
 
+/**
+ * EMA org-binding summary surfaced on the endpoints listing (Wave 12). Mirrors
+ * the relay's `EmaAuthSummary`: present only for `auth.type = "ema"` endpoints,
+ * absent for ordinary endpoints. The desktop reads this from the listing — NOT
+ * from `getEndpointConfig` (which reads local TOML) — to de-dupe org-bound
+ * servers during onboarding.
+ */
+export interface EmaAuthSummary {
+  type: 'ema';
+  organization?: string;
+  resource?: string;
+}
+
 export interface Endpoint {
   name: string;
   transport: 'stdio' | 'sse' | 'http' | 'oauth';
@@ -76,6 +89,12 @@ export interface Endpoint {
   disabled: boolean;
   error?: string;
   lifecycle?: Lifecycle;
+  /**
+   * EMA org-binding (Wave 12). Present only for org-bound `auth.type="ema"`
+   * endpoints; absent for ordinary endpoints and END-18 bare-`idp` endpoints
+   * with no organization reference.
+   */
+  auth?: EmaAuthSummary;
   /**
    * Present only for containerized stdio endpoints; absent/null for
    * direct-spawn endpoints. Updated by the relay's stats poller and picked
@@ -276,6 +295,72 @@ export interface OAuthProbeResult {
   oauth_supported: boolean;
   authorization_server?: string;
   scopes_supported?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Organizations + EMA (Enterprise-Managed Authorization)
+// ---------------------------------------------------------------------------
+
+/**
+ * One identity-provider template from `GET /api/idp-providers`. Mirrors the
+ * relay's `IdpProvider` (oauth/idp_providers.rs): `issuer_pattern` carries a
+ * `{slug}` placeholder for tenant-scoped providers (absent for `custom`), and
+ * `slug_hint` describes the slug the user must supply (absent for Google /
+ * custom). The desktop "Add organization" UI renders this table.
+ */
+export interface IdpProvider {
+  id: string;
+  name: string;
+  issuer_pattern?: string;
+  slug_hint?: string;
+}
+
+/**
+ * One organization from `GET /api/organizations`. `authenticated` reflects
+ * whether the relay's credential pool holds usable IdP credentials for the org
+ * (a non-expired ID token or a refresh token to silently re-mint one).
+ */
+export interface Organization {
+  name: string;
+  provider: string;
+  idp: string;
+  authenticated: boolean;
+}
+
+/**
+ * Response from `POST /api/organizations` and
+ * `POST /api/organizations/{org}/reauthenticate`: a freshly-composed IdP SSO
+ * authorize URL the desktop opens to run (or re-run) the IdP sign-in.
+ */
+export interface OrganizationSsoResponse {
+  name: string;
+  provider: string;
+  idp: string;
+  authorize_url: string;
+}
+
+/**
+ * Reachability of a single MCP resource for an organization, as returned by
+ * the EMA capability probe. Mirrors the relay's lowercase `OrgProbeStatus`:
+ * `accessible` (the IdP minted an ID-JAG), `denied` (terminal authorization
+ * denial), or `unreachable` (discovery/transport/timeout failure).
+ */
+export type OrgProbeStatus = 'accessible' | 'denied' | 'unreachable';
+
+/**
+ * One probe outcome for a single resource from
+ * `POST /api/organizations/{org}/probe`. `server_as_issuer` is the discovered
+ * RFC 8414 issuer, present whenever discovery succeeded.
+ */
+export interface OrgProbeResult {
+  resource: string;
+  status: OrgProbeStatus;
+  server_as_issuer?: string;
+}
+
+/** Response body for `POST /api/organizations/{org}/probe`. */
+export interface OrgProbeResponse {
+  results: OrgProbeResult[];
 }
 
 export type Theme = 'light' | 'dark' | 'system';

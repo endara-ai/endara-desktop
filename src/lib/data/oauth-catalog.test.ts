@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { oauthCatalog } from './oauth-catalog';
 
 describe('oauthCatalog', () => {
-  it('should have exactly 10 entries', () => {
-    expect(oauthCatalog).toHaveLength(10);
+  it('should have exactly 15 entries', () => {
+    expect(oauthCatalog).toHaveLength(15);
   });
 
   it('should include the Gmail entry with curated scopes', () => {
@@ -119,6 +119,46 @@ describe('oauthCatalog', () => {
     expect(atlassian!.supportsDiscovery).toBe(true);
     expect(atlassian!.supportsDcr).toBe(true);
     expect(atlassian!.defaultScopes).toEqual([]);
+  });
+
+  it('should include the EMA provider entries with their official remote MCP URLs', () => {
+    const expectedUrls: Record<string, string> = {
+      asana: 'https://mcp.asana.com/v2/mcp',
+      canva: 'https://mcp.canva.com/mcp',
+      figma: 'https://mcp.figma.com/mcp',
+      granola: 'https://mcp.granola.ai/mcp',
+      supabase: 'https://mcp.supabase.com/mcp',
+    };
+    for (const [id, url] of Object.entries(expectedUrls)) {
+      const entry = oauthCatalog.find((e) => e.id === id);
+      expect(entry, `missing catalog entry for ${id}`).toBeDefined();
+      expect(entry!.url).toBe(url);
+    }
+  });
+
+  it('should mark exactly the EMA-capable providers as ema_supported', () => {
+    const expected = [
+      'asana',
+      'atlassian',
+      'canva',
+      'figma',
+      'granola',
+      'linear',
+      'slack',
+      'supabase',
+    ].sort();
+    const flagged = oauthCatalog
+      .filter((e) => e.ema_supported === true)
+      .map((e) => e.id)
+      .sort();
+    expect(flagged).toEqual(expected);
+  });
+
+  it('should leave ema_supported absent (not false) for non-EMA providers', () => {
+    const nonEma = oauthCatalog.filter((e) => e.ema_supported !== true);
+    for (const entry of nonEma) {
+      expect(entry.ema_supported).toBeUndefined();
+    }
   });
 });
 

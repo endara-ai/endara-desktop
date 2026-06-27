@@ -30,6 +30,7 @@
   import { checkAndAutoDownload, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
   import { toast } from 'svelte-sonner';
+  import OrganizationsSection from './OrganizationsSection.svelte';
 
   let portInput: number = $state($relayPort);
   let portSaved = $state(false);
@@ -585,6 +586,8 @@
         {/if}
       {/if}
     </div>
+
+    <OrganizationsSection />
 
     <div class="pt-4 mt-4 border-t border-(--border)">
       <div class="text-xs font-medium text-(--fg2) uppercase tracking-wide mb-2">Connection Info</div>

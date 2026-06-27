@@ -18,6 +18,7 @@ import {
   mountRowError,
   hasMountRowErrors,
   buildMountExample,
+  buildOrgBoundEndpointParams,
   MOUNT_EXAMPLE_FALLBACK_HOST,
   type AddEndpointFieldErrors,
   type AddEndpointFormSnapshot,
@@ -1011,6 +1012,63 @@ describe('catalog containerizable flags', () => {
         expect(s.containerNote!.trim().length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe('buildOrgBoundEndpointParams', () => {
+  it('returns null when no organization is selected (None)', () => {
+    expect(
+      buildOrgBoundEndpointParams('', { name: 'My Server', url: 'https://mcp.example.com/mcp' }),
+    ).toBeNull();
+  });
+
+  it('returns null for a whitespace-only organization', () => {
+    expect(
+      buildOrgBoundEndpointParams('   ', { name: 'My Server', url: 'https://mcp.example.com/mcp' }),
+    ).toBeNull();
+  });
+
+  it('builds an http endpoint with an auth.type="ema" block bound to the org', () => {
+    const params = buildOrgBoundEndpointParams('Acme', {
+      name: 'My Server',
+      url: 'https://mcp.example.com/mcp',
+    });
+    expect(params).toEqual({
+      name: 'My Server',
+      transport: 'http',
+      url: 'https://mcp.example.com/mcp',
+      auth: { type: 'ema', organization: 'Acme', resource: 'https://mcp.example.com/mcp' },
+    });
+  });
+
+  it('uses the URL as the EMA resource and trims surrounding whitespace', () => {
+    const params = buildOrgBoundEndpointParams('  Acme  ', {
+      name: '  My Server  ',
+      url: '  https://mcp.example.com/mcp  ',
+    });
+    expect(params?.auth).toEqual({
+      type: 'ema',
+      organization: 'Acme',
+      resource: 'https://mcp.example.com/mcp',
+    });
+    expect(params?.name).toBe('My Server');
+    expect(params?.url).toBe('https://mcp.example.com/mcp');
+  });
+
+  it('includes a trimmed description when provided and omits a blank one', () => {
+    const withDesc = buildOrgBoundEndpointParams('Acme', {
+      name: 'My Server',
+      url: 'https://mcp.example.com/mcp',
+      description: '  notes  ',
+    });
+    expect(withDesc?.description).toBe('notes');
+
+    const blankDesc = buildOrgBoundEndpointParams('Acme', {
+      name: 'My Server',
+      url: 'https://mcp.example.com/mcp',
+      description: '   ',
+    });
+    expect(blankDesc && 'description' in blankDesc).toBe(false);
   });
 });
 

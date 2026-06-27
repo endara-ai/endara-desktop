@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse, CallsResponse, CallDetail, AggregatesResponse, ObservabilityConfig, OAuthProbeResult } from './types';
+import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse, CallsResponse, CallDetail, AggregatesResponse, ObservabilityConfig, OAuthProbeResult, IdpProvider, Organization, OrganizationSsoResponse, OrgProbeResponse } from './types';
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY = 1000;
@@ -113,6 +113,20 @@ export async function testConnection(params: TestConnectionParams): Promise<Test
   return JSON.parse(res.body) as TestConnectionResult;
 }
 
+/**
+ * Enterprise-Managed Authorization (EMA) auth block, sent inside
+ * `AddEndpointParams.auth` to create an org-bound endpoint. Mirrors the relay's
+ * `[endpoints.auth]` (`type = "ema"`) config: `organization` names the
+ * `[[organizations]]` entry whose shared ID token the endpoint reuses, and
+ * `resource` is the upstream MCP server URL the minted access token is scoped
+ * to. Used by the onboarding flow's review-&-select step.
+ */
+export interface EmaAuthConfig {
+  type: 'ema';
+  organization: string;
+  resource: string;
+}
+
 export interface AddEndpointParams {
   name: string;
   transport: 'stdio' | 'sse' | 'http' | 'oauth';
@@ -152,6 +166,13 @@ export interface AddEndpointParams {
    * resolved by the relay). Omitted when empty.
    */
   mounts?: string[];
+  /**
+   * Enterprise-Managed Authorization block for org-bound endpoints. When set,
+   * the relay binds the endpoint to the named organization and mints EMA
+   * access tokens from the org's shared ID token (the `(org, resource)`
+   * credential pool). Omitted for ordinary stdio/sse/http/oauth endpoints.
+   */
+  auth?: EmaAuthConfig;
 }
 
 /**
@@ -653,4 +674,88 @@ export async function putObservabilityConfig(
     method: 'PUT',
     body: cfg,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Organizations + EMA (Enterprise-Managed Authorization)
+// ---------------------------------------------------------------------------
+//
+// All routes proxy through the management API. The relay's JSON contracts live
+// in management.rs (END-19 Waves 3–4): provider templates, organization
+// lifecycle, and the per-org capability probe.
+
+/**
+ * GET /api/idp-providers — the static identity-provider template table the
+ * "Add organization" UI renders and `createOrganization` resolves issuers from.
+ */
+export async function getIdpProviders(): Promise<IdpProvider[]> {
+  return fetchJson<IdpProvider[]>('/idp-providers');
+}
+
+export interface CreateOrganizationParams {
+  /** Display name / stable key; also the credential-pool key. */
+  name: string;
+  /** Provider template id: `okta`, `entra`, `google`, `ping`, or `custom`. */
+  provider: string;
+  /** Slug for templated providers (Okta subdomain, Entra tenant, Ping env id). */
+  slug?: string;
+  /** Full issuer URL for `provider = "custom"`. */
+  idp?: string;
+  /** Pre-registered IdP client id (required for Okta/Entra; omit for CIMD/DCR). */
+  client_id?: string;
+}
+
+/**
+ * POST /api/organizations — validate the IdP issuer, persist the org, and
+ * return a freshly-composed SSO authorize URL to open for the IdP sign-in.
+ */
+export async function createOrganization(
+  params: CreateOrganizationParams,
+): Promise<OrganizationSsoResponse> {
+  return fetchJson<OrganizationSsoResponse>('/organizations', {
+    method: 'POST',
+    body: params,
+  });
+}
+
+/** GET /api/organizations — configured organizations with auth status. */
+export async function listOrganizations(): Promise<Organization[]> {
+  return fetchJson<Organization[]>('/organizations');
+}
+
+/**
+ * DELETE /api/organizations/{org} — remove the org from config and purge its
+ * pooled IdP credentials.
+ */
+export async function deleteOrganization(name: string): Promise<void> {
+  await fetchJson(`/organizations/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+/**
+ * POST /api/organizations/{org}/reauthenticate — re-discover the org's IdP and
+ * return a fresh SSO authorize URL for re-running the sign-in.
+ */
+export async function reauthenticateOrganization(
+  name: string,
+): Promise<OrganizationSsoResponse> {
+  return fetchJson<OrganizationSsoResponse>(
+    `/organizations/${encodeURIComponent(name)}/reauthenticate`,
+    { method: 'POST' },
+  );
+}
+
+/**
+ * POST /api/organizations/{org}/probe — the "Detecting available MCP servers…"
+ * engine. The desktop supplies candidate MCP server URLs (the EMA-flagged
+ * catalog entries) and the relay reports `accessible` / `denied` / `unreachable`
+ * per resource. The probe persists nothing.
+ */
+export async function probeOrganization(
+  name: string,
+  resources: string[],
+): Promise<OrgProbeResponse> {
+  return fetchJson<OrgProbeResponse>(
+    `/organizations/${encodeURIComponent(name)}/probe`,
+    { method: 'POST', body: { resources } },
+  );
 }

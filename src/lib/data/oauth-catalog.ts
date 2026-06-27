@@ -27,6 +27,13 @@ export interface OAuthCatalogEntry {
    * (e.g. Google's `statelessserver`). Lowercase letters, digits, `-`, `_` only.
    */
   serverTypeOverride?: string;
+  /**
+   * Whether this provider participates in EMA (Enterprise-Managed
+   * Authorization) credential sharing — i.e. it is a candidate the desktop
+   * sends to `POST /api/organizations/{org}/probe` when detecting which MCP
+   * servers an organization can reach. Absent/false = not an EMA candidate.
+   */
+  ema_supported?: boolean;
 }
 
 export const oauthCatalog: OAuthCatalogEntry[] = [
@@ -45,6 +52,7 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     defaultScopes: [],
     supportsDiscovery: true,
     supportsDcr: true,
+    ema_supported: true,
     notes:
       'Jira, Confluence, and Compass via Atlassian Remote MCP — your org admin must have Rovo + Remote MCP enabled',
   },
@@ -58,6 +66,7 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     defaultScopes: ['read', 'write'],
     supportsDiscovery: true,
     supportsDcr: true,
+    ema_supported: true,
     notes: 'Full issue, project, and team access',
   },
   {
@@ -82,6 +91,7 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     defaultScopes: ['channels:read', 'chat:write', 'users:read'],
     supportsDiscovery: true,
     supportsDcr: false,
+    ema_supported: true,
     notes: 'Requires Slack app registration — you\'ll be prompted for client credentials',
   },
   {
@@ -212,6 +222,71 @@ export const oauthCatalog: OAuthCatalogEntry[] = [
     supportsDcr: false,
     notes: 'Requires a Google Cloud OAuth client — Client ID and Secret needed',
     serverTypeOverride: 'google-drive',
+  },
+  {
+    id: 'asana',
+    name: 'Asana',
+    description: 'Tasks, projects, and workspace search',
+    icon: '<svg viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="6" r="2.5"/><circle cx="5.5" cy="13" r="2.5"/><circle cx="14.5" cy="13" r="2.5"/></svg>',
+    category: 'productivity',
+    url: 'https://mcp.asana.com/v2/mcp',
+    defaultScopes: [],
+    supportsDiscovery: true,
+    supportsDcr: false,
+    ema_supported: true,
+    notes: 'Tasks, projects, and workspace search via Asana Remote MCP (V2) — requires an Asana OAuth app (Client ID and Secret)',
+  },
+  {
+    id: 'canva',
+    name: 'Canva',
+    description: 'Designs, assets, and exports',
+    icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="7"/><path d="M12.5 8a3 3 0 1 0 0 4"/></svg>',
+    category: 'productivity',
+    url: 'https://mcp.canva.com/mcp',
+    defaultScopes: [],
+    supportsDiscovery: true,
+    supportsDcr: true,
+    ema_supported: true,
+    notes: 'Designs, assets, and exports from your Canva account',
+  },
+  {
+    id: 'figma',
+    name: 'Figma',
+    description: 'Design files and dev-mode context',
+    icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="3" width="5" height="4.5" rx="2.25"/><rect x="5" y="7.5" width="5" height="4.5"/><circle cx="12.5" cy="9.75" r="2.25"/><path d="M7.5 12a2.25 2.25 0 1 0 2.5 2.25V12z"/></svg>',
+    category: 'developer',
+    url: 'https://mcp.figma.com/mcp',
+    defaultScopes: [],
+    supportsDiscovery: true,
+    supportsDcr: true,
+    ema_supported: true,
+    notes: 'Design files and dev-mode context via Figma Remote MCP',
+  },
+  {
+    id: 'granola',
+    name: 'Granola',
+    description: 'Meeting notes and transcripts',
+    icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M5 3h7l3 3v11H5z"/><path d="M11.5 3v3h3M7.5 10h5M7.5 13h3"/></svg>',
+    category: 'productivity',
+    url: 'https://mcp.granola.ai/mcp',
+    defaultScopes: [],
+    supportsDiscovery: true,
+    supportsDcr: true,
+    ema_supported: true,
+    notes: 'Meeting notes and transcripts from your Granola account',
+  },
+  {
+    id: 'supabase',
+    name: 'Supabase',
+    description: 'Database, docs, and project management',
+    icon: '<svg viewBox="0 0 20 20" fill="currentColor"><path d="M11 2L4 11h5l-1 7 7-9h-5l1-7z"/></svg>',
+    category: 'data',
+    url: 'https://mcp.supabase.com/mcp',
+    defaultScopes: [],
+    supportsDiscovery: true,
+    supportsDcr: true,
+    ema_supported: true,
+    notes: 'Database, docs, and project management for your Supabase org',
   },
 ];
 

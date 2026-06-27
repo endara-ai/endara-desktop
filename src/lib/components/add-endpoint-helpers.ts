@@ -1,4 +1,5 @@
 import type { OAuthCatalogEntry } from '$lib/data/oauth-catalog';
+import type { AddEndpointParams, EmaAuthConfig } from '$lib/api';
 
 export type ScopeMode = 'free' | 'checkbox';
 
@@ -257,6 +258,43 @@ export function validateAddEndpointForm(input: AddEndpointFormInput): AddEndpoin
     }
   }
   return errors;
+}
+
+/**
+ * Build the EMA endpoint create-params for the Add Server custom configure step
+ * when the user binds the server to an organization. Returns `null` when no org
+ * is selected (blank/whitespace), signalling the caller to fall through to the
+ * normal per-server add path unchanged.
+ *
+ * Mirrors the onboarding flow's EMA shape (`onboarding-helpers.ts`
+ * `buildEmaEndpointParams`): a plain `http` transport carrying an
+ * `auth.type="ema"` block whose `resource` is the server URL the minted access
+ * token is scoped to. The URL is required (it becomes the `resource`); the name
+ * is still required by the caller's own form validation.
+ */
+export function buildOrgBoundEndpointParams(
+  organization: string,
+  fields: { name: string; url: string; description?: string },
+): AddEndpointParams | null {
+  const org = organization.trim();
+  if (!org) return null;
+  const trimmedUrl = fields.url.trim();
+  const auth: EmaAuthConfig = {
+    type: 'ema',
+    organization: org,
+    resource: trimmedUrl,
+  };
+  const params: AddEndpointParams = {
+    name: fields.name.trim(),
+    transport: 'http',
+    url: trimmedUrl,
+    auth,
+  };
+  const description = fields.description?.trim();
+  if (description) {
+    params.description = description;
+  }
+  return params;
 }
 
 /**

@@ -17,13 +17,16 @@
     mountRowError,
     hasMountRowErrors,
     buildMountExample,
+    buildOrgBoundEndpointParams,
     type AddEndpointFieldErrors,
     type AddEndpointFormSnapshot,
     type MountRow,
   } from './add-endpoint-helpers';
+  import { organizations, refreshOrganizations } from '$lib/stores/organizations';
   import { sanitizeName } from '$lib/utils';
   import { focusTrap } from '$lib/actions/focusTrap';
   import ConfirmModal from './ConfirmModal.svelte';
+  import ConnectOrgModal from './ConnectOrgModal.svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
   import { homeDir } from '@tauri-apps/api/path';
@@ -36,6 +39,10 @@
   let step: Step = $state('browse');
   let selectedCatalog: CatalogServer | null = $state(null);
   let search = $state('');
+  // When true, the organization onboarding flow (provider → SSO → detect →
+  // review) is layered over the add-server surface. Launched from the browse
+  // step's "Connect an organization" entry.
+  let showConnectOrg = $state(false);
 
   // Configure step fields
   let transport: TransportType = $state('stdio');
@@ -46,6 +53,10 @@
   let command = $state('');
   let args = $state('');
   let url = $state('');
+  // Custom configure step only: when set, binds the new server to an existing
+  // organization so it authenticates via that org's shared EMA credentials
+  // (auth.type="ema") instead of its own per-server OAuth. Empty = "None".
+  let selectedOrganization = $state('');
   let envVars: { key: string; value: string }[] = $state([]);
   let headerVars: { key: string; value: string }[] = $state([]);
   let catalogEnvValues: Record<string, string> = $state({});
@@ -134,6 +145,17 @@
   getStatus()
     .then((s) => { containerRuntimeAvailable = s.container_runtime_available ?? null; })
     .catch(() => { /* relay unreachable — leave runtime availability unknown */ });
+
+  // Populate the custom configure step's Organization selector. Best-effort —
+  // on failure the store stays empty and the selector renders disabled with a
+  // "Connect an organization" hint instead of an empty dropdown.
+  refreshOrganizations().catch(() => { /* relay unreachable — leave list empty */ });
+
+  // The Organization selector only applies to the custom (non-catalog) add
+  // flow and only for URL-based transports — never stdio. `orgBound` is true
+  // once an org is actually chosen, switching submit to the plain EMA add path.
+  let orgSelectorVisible = $derived(!selectedCatalog && !selectedOAuthEntry && transport !== 'stdio');
+  let orgBound = $derived(orgSelectorVisible && selectedOrganization.trim() !== '');
 
   // Captured at the moment `step` transitions to `'configure'` so any
   // catalog pre-fills (name, command, args, etc.) become the dirty-check
@@ -255,6 +277,7 @@
     description = service.description;
     transport = 'oauth';
     url = service.url;
+    selectedOrganization = '';
     oauthServerUrl = service.oauthServerUrl || '';
     clientId = '';
     clientSecret = '';
@@ -292,6 +315,7 @@
     transport = server.transport;
     command = server.command;
     args = server.args.join(' ');
+    selectedOrganization = '';
     catalogEnvValues = {};
     userArgValues = server.userArgs ? server.userArgs.map(() => '') : [];
     envVars = [];
@@ -323,6 +347,7 @@
     command = '';
     args = '';
     url = '';
+    selectedOrganization = '';
     envVars = [];
     headerVars = [];
     catalogEnvValues = {};
@@ -451,6 +476,35 @@
     fieldErrors = errs;
     if (Object.keys(errs).length > 0) {
       error = firstAddEndpointFieldError(errs);
+      return;
+    }
+
+    // Org-bound (EMA) custom endpoint: bind the server to the selected
+    // organization and add it directly as an `auth.type="ema"` http endpoint,
+    // reusing the org's shared ID token. This skips the per-server OAuth
+    // probe/escalation + browser-SSO path entirely — no per-server auth needed.
+    const emaParams = buildOrgBoundEndpointParams(
+      orgBound ? selectedOrganization : '',
+      { name, url, description },
+    );
+    if (emaParams) {
+      submitting = true;
+      try {
+        await addEndpoint(emaParams);
+        try {
+          const data = await getEndpoints();
+          endpoints.set(data);
+        } catch {
+          // Mutation already succeeded — silent on purpose (see plain-add path).
+        }
+        selectedEndpoint.set(emaParams.name);
+        toast.success(`Server "${emaParams.name}" added`);
+        onclose();
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      } finally {
+        submitting = false;
+      }
       return;
     }
 
@@ -868,6 +922,23 @@
       <!-- Step 1: Browse Catalog -->
       <h3 class="text-base font-semibold mb-4 text-(--fg1)">Add Server</h3>
 
+      <!-- Organization onboarding entry point. Launches the connect-an-org
+           flow (provider → SSO → detect → review) layered over this surface. -->
+      <button
+        class="w-full text-left p-3 mb-4 rounded-lg border border-(--accent)/40 bg-(--accent)/5 hover:bg-(--accent)/10 transition-colors flex items-center gap-3"
+        onclick={() => (showConnectOrg = true)}
+      >
+        <span class="w-5 h-5 flex-shrink-0 text-(--accent)">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 21v-2a4 4 0 014-4h4M21 21v-2a4 4 0 00-3-3.87M9 7a4 4 0 108 0 4 4 0 00-8 0zM19 8v6m3-3h-6" />
+          </svg>
+        </span>
+        <span class="min-w-0">
+          <span class="block text-sm font-medium text-(--fg1)">Connect an organization</span>
+          <span class="block text-xs text-(--fg2)">Sign in once and detect the MCP servers your org grants</span>
+        </span>
+      </button>
+
       <input
         type="text"
         bind:value={search}
@@ -1063,6 +1134,35 @@
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
         </div>
 
+        <!-- Organization binding (custom, URL-based transports only). Selecting
+             an org makes the server authenticate via that org's shared EMA
+             credentials instead of its own per-server OAuth. -->
+        {#if orgSelectorVisible}
+          <div>
+            <label for="modal-ep-org" class="block text-xs font-medium mb-1 text-(--fg2)">Organization <span class="text-(--fg2)/50">(optional)</span></label>
+            <select
+              id="modal-ep-org"
+              bind:value={selectedOrganization}
+              disabled={$organizations.length === 0}
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) focus:outline-none focus:border-(--accent) disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">None — use this server's own authentication.</option>
+              {#each $organizations as org (org.name)}
+                <option value={org.name}>{org.name}</option>
+              {/each}
+            </select>
+            {#if $organizations.length === 0}
+              <p class="text-[11px] text-(--fg2) mt-0.5">
+                No organizations yet — use “Connect an organization” to sign in once and share its credentials across servers.
+              </p>
+            {:else}
+              <p class="text-[11px] text-(--fg2) mt-0.5">
+                Bind this server to an organization to authenticate with its shared credentials instead of per-server OAuth.
+              </p>
+            {/if}
+          </div>
+        {/if}
+
         {#if transport === 'stdio'}
           <div>
             <label for="modal-ep-cmd" class="block text-xs font-medium mb-1 text-(--fg2)">Command</label>
@@ -1123,6 +1223,11 @@
               class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {fieldErrors.url ? 'border-(--offline)' : 'border-(--border)'}" />
           </div>
 
+          {#if orgBound}
+            <p class="text-[11px] text-(--fg2)">
+              Authentication is handled by the selected organization — no per-server OAuth setup is needed.
+            </p>
+          {:else}
           <!-- Curated scope checkbox list (only when the catalog entry exposes availableScopes) -->
           {#if scopeMode === 'checkbox' && selectedOAuthEntry?.availableScopes}
             <div>
@@ -1215,6 +1320,7 @@
               </div>
             </div>
           </details>
+          {/if}
         {:else}
           <div>
             <label for="modal-ep-url" class="block text-xs font-medium mb-1 text-(--fg2)">URL</label>
@@ -1482,14 +1588,14 @@
           </button>
           <button
             class="px-3 py-1.5 text-sm rounded-lg bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors disabled:opacity-50"
-            onclick={transport === 'oauth' ? handleOAuthSubmit : () => handleSubmit()}
+            onclick={transport === 'oauth' && !orgBound ? handleOAuthSubmit : () => handleSubmit()}
             disabled={submitting}
           >
             {#if submitting}
-              {transport === 'oauth' ? 'Connecting…' : 'Adding…'}
+              {transport === 'oauth' && !orgBound ? 'Connecting…' : 'Adding…'}
             {:else if selectedOAuthEntry}
               Connect with {selectedOAuthEntry.name}
-            {:else if transport === 'oauth'}
+            {:else if transport === 'oauth' && !orgBound}
               Save & Connect
             {:else}
               Add Server
@@ -1546,6 +1652,10 @@
     onconfirm={() => { showDiscardConfirm = false; void doCancel(); }}
     oncancel={() => { showDiscardConfirm = false; }}
   />
+{/if}
+
+{#if showConnectOrg}
+  <ConnectOrgModal onclose={() => { showConnectOrg = false; }} />
 {/if}
 
 {#if showingDcrFallback}
