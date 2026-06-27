@@ -135,6 +135,8 @@
    ============================================================ */
 
 :root {
+  color-scheme: light;
+
   --surface:        var(--paper-0);
   --surface-alt:    var(--paper-50);
   --surface-raised: var(--paper-0);
@@ -196,6 +198,8 @@
 
 [data-theme="dark"],
 .dark {
+  color-scheme: dark;
+
   --surface:        var(--slate-100);
   --surface-alt:    var(--slate-200);
   --surface-raised: var(--slate-200);
@@ -276,6 +280,30 @@
     padding: 0;
     overflow: hidden;
     height: 100vh;
+  }
+
+  /* Theme-aware native scrollbars (main app window). The overlay window
+     hides its scrollbars separately and is intentionally not affected. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: var(--radius-full);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
 }
 
