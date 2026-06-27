@@ -13,6 +13,7 @@
     firstAddEndpointFieldError,
     computeAddEndpointIsDirty,
     resolveIsolation,
+    orgBindingApplies,
     serializeMountRows,
     mountRowError,
     hasMountRowErrors,
@@ -152,9 +153,12 @@
   refreshOrganizations().catch(() => { /* relay unreachable — leave list empty */ });
 
   // The Organization selector only applies to the custom (non-catalog) add
-  // flow and only for URL-based transports — never stdio. `orgBound` is true
-  // once an org is actually chosen, switching submit to the plain EMA add path.
-  let orgSelectorVisible = $derived(!selectedCatalog && !selectedOAuthEntry && transport !== 'stdio');
+  // flow and only for the http transport — EMA endpoints are http by
+  // construction (see `buildOrgBoundEndpointParams`), so binding an org while
+  // sse/oauth is selected would silently create an http endpoint. `orgBound` is
+  // true once an org is actually chosen, switching submit to the plain EMA add
+  // path.
+  let orgSelectorVisible = $derived(!selectedCatalog && !selectedOAuthEntry && orgBindingApplies(transport));
   let orgBound = $derived(orgSelectorVisible && selectedOrganization.trim() !== '');
 
   // Captured at the moment `step` transitions to `'configure'` so any
@@ -1134,8 +1138,8 @@
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
         </div>
 
-        <!-- Organization binding (custom, URL-based transports only). Selecting
-             an org makes the server authenticate via that org's shared EMA
+        <!-- Organization binding (custom, http transport only). Selecting an
+             org makes the server authenticate via that org's shared EMA
              credentials instead of its own per-server OAuth. -->
         {#if orgSelectorVisible}
           <div>

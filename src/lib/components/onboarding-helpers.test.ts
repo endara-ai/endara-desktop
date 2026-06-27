@@ -13,10 +13,12 @@ import {
   isAlreadyInstalled,
   buildEmaEndpointParams,
   buildSelectedEmaEndpoints,
+  addEndpointsWithRefresh,
   orgStatusLabel,
   startOrgConnection,
   reauthenticateOrg,
 } from './onboarding-helpers';
+import type { AddEndpointParams } from '$lib/api';
 
 const okta: IdpProvider = {
   id: 'okta',
@@ -450,5 +452,64 @@ describe('ConnectOrgModal supports re-detect + already-installed greying', () =>
     expect(source).toContain('runProbe(redetectOrg)');
     expect(source).toContain('isAlreadyInstalled');
     expect(source).toContain('Already added');
+  });
+});
+
+describe('addEndpointsWithRefresh', () => {
+  const params = (name: string): AddEndpointParams => ({ name, transport: 'http', url: `https://${name}.example.com/mcp` });
+
+  it('adds every endpoint then refreshes the store on full success', async () => {
+    const added: string[] = [];
+    const setEndpoints = vi.fn();
+    const getEndpoints = vi.fn().mockResolvedValue([]);
+
+    await addEndpointsWithRefresh([params('a'), params('b')], {
+      addEndpoint: async (p) => { added.push(p.name); },
+      getEndpoints,
+      setEndpoints,
+    });
+
+    expect(added).toEqual(['a', 'b']);
+    expect(getEndpoints).toHaveBeenCalledTimes(1);
+    expect(setEndpoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes the store even when an add throws partway, and re-throws the original error', async () => {
+    const added: string[] = [];
+    const setEndpoints = vi.fn();
+    // The relay would already hold the first add; the refresh must reflect it.
+    const getEndpoints = vi.fn().mockResolvedValue([{ name: 'a' }]);
+
+    await expect(
+      addEndpointsWithRefresh([params('a'), params('b'), params('c')], {
+        addEndpoint: async (p) => {
+          if (p.name === 'b') throw new Error('add failed');
+          added.push(p.name);
+        },
+        getEndpoints,
+        setEndpoints,
+      }),
+    ).rejects.toThrow('add failed');
+
+    expect(added).toEqual(['a']);
+    expect(getEndpoints).toHaveBeenCalledTimes(1);
+    expect(setEndpoints).toHaveBeenCalledTimes(1);
+    expect(setEndpoints).toHaveBeenCalledWith([{ name: 'a' }]);
+  });
+
+  it('does not let a refresh failure mask the original add error', async () => {
+    const setEndpoints = vi.fn();
+    const getEndpoints = vi.fn().mockRejectedValue(new Error('refresh down'));
+
+    await expect(
+      addEndpointsWithRefresh([params('a')], {
+        addEndpoint: async () => { throw new Error('add failed'); },
+        getEndpoints,
+        setEndpoints,
+      }),
+    ).rejects.toThrow('add failed');
+
+    expect(getEndpoints).toHaveBeenCalledTimes(1);
+    expect(setEndpoints).not.toHaveBeenCalled();
   });
 });

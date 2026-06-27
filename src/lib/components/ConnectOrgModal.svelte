@@ -17,6 +17,7 @@
     buildOnboardingCandidates,
     defaultSelectedResources,
     buildSelectedEmaEndpoints,
+    addEndpointsWithRefresh,
     startOrgConnection,
     isAlreadyInstalled,
     type OnboardingCandidate,
@@ -201,14 +202,14 @@
     }
     submitting = true;
     try {
-      for (const params of toCreate) {
-        await addEndpoint(params);
-      }
-      try {
-        endpoints.set(await getEndpoints());
-      } catch {
-        // mutation already succeeded; the page poll reconciles the list
-      }
+      // `addEndpointsWithRefresh` refreshes `$endpoints` even when an add throws
+      // partway, so a retry from this modal sees already-created endpoints as
+      // 'Already added' instead of attempting duplicates.
+      await addEndpointsWithRefresh(toCreate, {
+        addEndpoint,
+        getEndpoints,
+        setEndpoints: (list) => endpoints.set(list),
+      });
       toast.success(
         `Added ${toCreate.length} server${toCreate.length === 1 ? '' : 's'} from ${connectedOrgName}`,
       );

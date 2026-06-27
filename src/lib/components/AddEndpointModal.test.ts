@@ -19,6 +19,7 @@ import {
   hasMountRowErrors,
   buildMountExample,
   buildOrgBoundEndpointParams,
+  orgBindingApplies,
   MOUNT_EXAMPLE_FALLBACK_HOST,
   type AddEndpointFieldErrors,
   type AddEndpointFormSnapshot,
@@ -1011,6 +1012,21 @@ describe('catalog containerizable flags', () => {
         expect(s.containerNote, `${s.id}: missing containerNote`).toBeTruthy();
         expect(s.containerNote!.trim().length).toBeGreaterThan(0);
       }
+    }
+  });
+});
+
+describe('orgBindingApplies', () => {
+  // EMA org-binding builds an http endpoint, so the Organization selector must
+  // be offered for http only — otherwise an sse/oauth selection would silently
+  // be converted to http by `buildOrgBoundEndpointParams`.
+  it('is true only for the http transport', () => {
+    expect(orgBindingApplies('http')).toBe(true);
+  });
+
+  it('is false for sse, oauth, and stdio', () => {
+    for (const t of ['sse', 'oauth', 'stdio'] as const) {
+      expect(orgBindingApplies(t)).toBe(false);
     }
   });
 });

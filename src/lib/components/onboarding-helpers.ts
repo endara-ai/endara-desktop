@@ -209,6 +209,38 @@ export function buildSelectedEmaEndpoints(
     .map((c) => buildEmaEndpointParams(orgName, c.entry, c.result));
 }
 
+export interface AddEndpointsWithRefreshDeps {
+  addEndpoint: (params: AddEndpointParams) => Promise<void>;
+  getEndpoints: () => Promise<Endpoint[]>;
+  setEndpoints: (list: Endpoint[]) => void;
+}
+
+/**
+ * Adds each endpoint in sequence, then refreshes the shared endpoints list.
+ *
+ * The refresh runs in a `finally` so that endpoints already created before a
+ * mid-loop failure are still reflected in the store — otherwise a retry from
+ * the same modal could attempt duplicates or show stale 'Already added'. A
+ * refresh failure is swallowed (the page poll reconciles the list) so it can
+ * never mask the original add error, which is re-thrown for the caller.
+ */
+export async function addEndpointsWithRefresh(
+  toCreate: AddEndpointParams[],
+  deps: AddEndpointsWithRefreshDeps,
+): Promise<void> {
+  try {
+    for (const params of toCreate) {
+      await deps.addEndpoint(params);
+    }
+  } finally {
+    try {
+      deps.setEndpoints(await deps.getEndpoints());
+    } catch {
+      // refresh failed; the page poll reconciles the list
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Org management — list status (M7)
 // ---------------------------------------------------------------------------

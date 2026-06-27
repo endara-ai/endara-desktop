@@ -107,6 +107,18 @@ export function resolveIsolation(
 }
 
 /**
+ * Whether the EMA Organization selector applies to the custom add flow for a
+ * given transport. Only the plain `http` transport qualifies: EMA endpoints are
+ * http by construction (`buildOrgBoundEndpointParams` builds an `http` endpoint
+ * whose EMA `resource` is the server URL), so offering org-binding for
+ * `sse`/`oauth`/`stdio` would let a non-http selection silently create an http
+ * endpoint. The caller still applies the catalog/OAuth-entry guards.
+ */
+export function orgBindingApplies(transport: AddEndpointTransport): boolean {
+  return transport === 'http';
+}
+
+/**
  * Maps a stored endpoint `isolation` value to the toggle's on/off state.
  *
  * Only an explicit `"container"` means containerized; `"none"`, an empty
