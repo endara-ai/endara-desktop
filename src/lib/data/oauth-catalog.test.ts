@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { oauthCatalog } from './oauth-catalog';
 
 describe('oauthCatalog', () => {
-  it('should have exactly 15 entries', () => {
-    expect(oauthCatalog).toHaveLength(15);
+  it('should have exactly 14 entries', () => {
+    expect(oauthCatalog).toHaveLength(14);
   });
 
   it('should include the Gmail entry with curated scopes', () => {
@@ -125,7 +125,6 @@ describe('oauthCatalog', () => {
     const expectedUrls: Record<string, string> = {
       asana: 'https://mcp.asana.com/v2/mcp',
       canva: 'https://mcp.canva.com/mcp',
-      figma: 'https://mcp.figma.com/mcp',
       granola: 'https://mcp.granola.ai/mcp',
       supabase: 'https://mcp.supabase.com/mcp',
     };
@@ -141,7 +140,6 @@ describe('oauthCatalog', () => {
       'asana',
       'atlassian',
       'canva',
-      'figma',
       'granola',
       'linear',
       'slack',
