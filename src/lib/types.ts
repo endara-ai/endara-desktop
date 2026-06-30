@@ -182,6 +182,8 @@ export interface OAuthSetupStatusResponse {
 /**
  * A single proxied `tools/call` metadata row from `observability.db`. camelCase;
  * the relay omits `Option` fields when null, so most fields are optional.
+ * Returned by the drill-through `GET /observability/calls/{request_uid}` route
+ * — the list route returns the slim {@link CallSummaryDto} instead.
  */
 export interface CallRecordDto {
   id: number;
@@ -204,6 +206,25 @@ export interface CallRecordDto {
   requestBytes?: number;
   responseBytes?: number;
   streamed: boolean;
+}
+
+/**
+ * Slim per-row DTO for the calls list table — the only fields the list view
+ * actually renders. Drops transport/client/payload-byte detail so a 100-row
+ * page stays a few KB on the wire. The full {@link CallRecordDto} is still
+ * served by the drill-through detail route.
+ */
+export interface CallSummaryDto {
+  id: number;
+  requestUid: string;
+  serverName?: string;
+  tool: string;
+  tsStart: number;
+  durationMs: number;
+  success: boolean;
+  errorMessage?: string;
+  requestBytes: number;
+  responseBytes: number;
 }
 
 /** One aggregate time bucket (camelCase). `server` absent = all-servers bucket. */
@@ -246,11 +267,16 @@ export interface ObservabilityConfig {
   payload_buffer_budget_mb: number;
 }
 
-/** `GET /observability/calls` response wrapper. */
+/**
+ * `GET /observability/calls` response wrapper. Pagination is keyset on
+ * `(tsStart, id)` via an opaque `nextCursor` token — absent when the page is
+ * the last one. Pass the token back as the `cursor` query param to fetch the
+ * next page.
+ */
 export interface CallsResponse {
-  calls: CallRecordDto[];
+  calls: CallSummaryDto[];
   limit: number;
-  offset: number;
+  nextCursor?: string;
 }
 
 /** `GET /observability/calls/{request_uid}` response wrapper. */

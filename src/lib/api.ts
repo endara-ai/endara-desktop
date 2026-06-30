@@ -601,7 +601,12 @@ export interface ObservabilityCallsFilter {
   since?: number;
   until?: number;
   limit?: number;
-  offset?: number;
+  /**
+   * Opaque continuation token returned as `nextCursor` from the previous
+   * page; omit for the first page. The relay encodes `(tsStart, id)` so
+   * paging stays stable across concurrent inserts.
+   */
+  cursor?: string;
 }
 
 export async function getObservabilityCalls(

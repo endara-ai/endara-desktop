@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import type { CallRecordDto, AggregateBucketDto } from '$lib/types';
+import type { CallSummaryDto, AggregateBucketDto } from '$lib/types';
 import {
   buildCallsFilter,
   formatDuration,
@@ -28,32 +28,31 @@ const baseUi: CallsFilterUi = {
   windowMinutes: 0,
   requestUid: '',
   limit: 100,
-  offset: 0,
 };
 
-function call(p: Partial<CallRecordDto>): CallRecordDto {
+function call(p: Partial<CallSummaryDto>): CallSummaryDto {
   return {
     id: 1,
     requestUid: 'u1',
-    endpoint: 'e',
     serverName: 'github',
     tool: 'get_file',
     tsStart: 1000,
+    durationMs: 0,
     success: true,
-    streamed: false,
+    requestBytes: 0,
+    responseBytes: 0,
     ...p,
   };
 }
 
 describe('buildCallsFilter', () => {
-  it('omits empty server/tool and leaves success unset for "all"', () => {
-    expect(buildCallsFilter(baseUi)).toEqual({ limit: 100, offset: 0 });
+  it('omits empty server/tool and leaves success/cursor unset for "all"', () => {
+    expect(buildCallsFilter(baseUi)).toEqual({ limit: 100 });
   });
 
   it('maps trimmed server/tool and the success tri-state', () => {
     expect(buildCallsFilter({ ...baseUi, serverName: ' github ', tool: ' foo ', status: 'errors' })).toEqual({
       limit: 100,
-      offset: 0,
       server_name: 'github',
       tool: 'foo',
       success: false,
@@ -70,6 +69,11 @@ describe('buildCallsFilter', () => {
     expect(buildCallsFilter({ ...baseUi, requestUid: ' abc-123 ' }).request_uid).toBe('abc-123');
     expect(buildCallsFilter({ ...baseUi, requestUid: '   ' }).request_uid).toBeUndefined();
     expect(buildCallsFilter(baseUi).request_uid).toBeUndefined();
+  });
+
+  it('forwards an opaque cursor when present and drops it when undefined', () => {
+    expect(buildCallsFilter({ ...baseUi, cursor: 'opaque-token' }).cursor).toBe('opaque-token');
+    expect(buildCallsFilter(baseUi).cursor).toBeUndefined();
   });
 });
 

@@ -15,7 +15,7 @@
   import type {
     ObservabilitySummary,
     AggregateBucketDto,
-    CallRecordDto,
+    CallSummaryDto,
     CallDetail,
   } from '$lib/types';
   import type { ToolCallEvent } from '$lib/overlay/types';
@@ -53,9 +53,11 @@
   let errorMessage = $state<string | null>(null);
   let summary = $state<ObservabilitySummary | null>(null);
   let buckets = $state<AggregateBucketDto[]>([]);
-  let calls = $state<CallRecordDto[]>([]);
-  let offset = $state(0);
-  let hasMore = $state(false);
+  let calls = $state<CallSummaryDto[]>([]);
+  // Opaque keyset cursor for the next page of `/observability/calls`, returned
+  // by the relay as `nextCursor`. `undefined` once the list is on its last
+  // page or has been reset; "Load more" is enabled iff this is non-null.
+  let nextCursor = $state<string | undefined>(undefined);
   let loadingMore = $state(false);
 
   // Filter UI state. `serverName`/`tool` empty = no constraint.
@@ -85,7 +87,7 @@
   // number. Stays null until loaded (or if the config fetch fails).
   let payloadWindowMinutes = $state<number | null>(null);
 
-  function currentFilterUi(pageOffset: number): CallsFilterUi {
+  function currentFilterUi(cursor?: string): CallsFilterUi {
     return {
       serverName,
       tool,
@@ -93,7 +95,7 @@
       windowMinutes,
       requestUid: uidFilter,
       limit: PAGE_SIZE,
-      offset: pageOffset,
+      cursor,
     };
   }
 
@@ -108,10 +110,9 @@
   }
 
   async function loadCalls() {
-    const res = await getObservabilityCalls(buildCallsFilter(currentFilterUi(0)));
+    const res = await getObservabilityCalls(buildCallsFilter(currentFilterUi()));
     calls = mergeCalls([], res.calls);
-    offset = res.calls.length;
-    hasMore = res.calls.length >= PAGE_SIZE;
+    nextCursor = res.nextCursor;
   }
 
   async function loadAll() {
@@ -127,13 +128,12 @@
   }
 
   async function loadMore() {
-    if (loadingMore || !hasMore) return;
+    if (loadingMore || !nextCursor) return;
     loadingMore = true;
     try {
-      const res = await getObservabilityCalls(buildCallsFilter(currentFilterUi(offset)));
+      const res = await getObservabilityCalls(buildCallsFilter(currentFilterUi(nextCursor)));
       calls = mergeCalls(calls, res.calls);
-      offset += res.calls.length;
-      hasMore = res.calls.length >= PAGE_SIZE;
+      nextCursor = res.nextCursor;
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : String(err);
     } finally {
@@ -154,13 +154,12 @@
           bucket_seconds: 60,
           since: windowMinutes > 0 ? Date.now() - windowMinutes * 60_000 : undefined,
         }),
-        getObservabilityCalls(buildCallsFilter(currentFilterUi(0))),
+        getObservabilityCalls(buildCallsFilter(currentFilterUi())),
       ]);
       summary = aggRes.summary;
       buckets = aggRes.buckets;
       calls = mergeCalls([], callsRes.calls);
-      offset = callsRes.calls.length;
-      hasMore = callsRes.calls.length >= PAGE_SIZE;
+      nextCursor = callsRes.nextCursor;
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : String(err);
     }
@@ -251,8 +250,7 @@
     // Purge succeeded: report it now, independent of the reload outcome.
     closeDetail();
     calls = [];
-    offset = 0;
-    hasMore = false;
+    nextCursor = undefined;
     showPurgeConfirm = false;
     toast.success('Tool call records purged');
     try {
@@ -289,10 +287,13 @@
             bucket_seconds: 60,
             since: windowMinutes > 0 ? Date.now() - windowMinutes * 60_000 : undefined,
           }),
-          getObservabilityCalls(buildCallsFilter(currentFilterUi(0))),
+          getObservabilityCalls(buildCallsFilter(currentFilterUi())),
         ]);
         summary = aggRes.summary;
         buckets = aggRes.buckets;
+        // Live merge: incoming first-page rows win for any UID we already
+        // have, but the cursor for "Load more" is anchored to the original
+        // first-page tail — fresh terminal events don't reset it.
         calls = mergeCalls(calls, callsRes.calls);
       } catch {
         // Transient relay hiccup — keep the current view, next event retries.
@@ -613,7 +614,7 @@
               </tbody>
             </table>
           </div>
-          {#if hasMore}
+          {#if nextCursor}
             <div class="mt-2 flex justify-center">
               <button class="btn-sec btn-sm" onclick={loadMore} disabled={loadingMore}>
                 {loadingMore ? 'Loading…' : 'Load more'}

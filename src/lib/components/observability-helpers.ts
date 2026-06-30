@@ -1,4 +1,4 @@
-import type { CallRecordDto, AggregateBucketDto } from '$lib/types';
+import type { CallSummaryDto, AggregateBucketDto } from '$lib/types';
 import type { ToolCallEvent } from '$lib/overlay/types';
 import type { ObservabilityCallsFilter } from '$lib/api';
 
@@ -17,7 +17,12 @@ export interface CallsFilterUi {
   windowMinutes: number;
   requestUid: string;
   limit: number;
-  offset: number;
+  /**
+   * Opaque keyset continuation token returned by the previous page (or
+   * `undefined` for the first page). The relay encodes `(tsStart, id)` so
+   * paging stays stable across concurrent inserts and is O(limit) at any depth.
+   */
+  cursor?: string;
 }
 
 /**
@@ -29,7 +34,8 @@ export function buildCallsFilter(
   ui: CallsFilterUi,
   nowMs: number = Date.now(),
 ): ObservabilityCallsFilter {
-  const filter: ObservabilityCallsFilter = { limit: ui.limit, offset: ui.offset };
+  const filter: ObservabilityCallsFilter = { limit: ui.limit };
+  if (ui.cursor) filter.cursor = ui.cursor;
   const server = ui.serverName.trim();
   if (server) filter.server_name = server;
   const tool = ui.tool.trim();
@@ -75,8 +81,9 @@ export function formatBytes(n: number | undefined | null): string {
   return `${value.toFixed(1)} ${unit}`;
 }
 
-/** Status pill text + ok flag for a row. */
-export function callStatus(record: CallRecordDto): { ok: boolean; label: string } {
+/** Status pill text + ok flag for a row. Accepts both the list summary and
+ * the drill-through full record — only `success` is read. */
+export function callStatus(record: { success: boolean }): { ok: boolean; label: string } {
   if (record.success) return { ok: true, label: 'success' };
   return { ok: false, label: 'error' };
 }
@@ -181,10 +188,10 @@ export function isTerminalEvent(event: ToolCallEvent | unknown): boolean {
  * refreshes existing rows), and sort newest-first by `tsStart`.
  */
 export function mergeCalls(
-  existing: readonly CallRecordDto[],
-  incoming: readonly CallRecordDto[],
-): CallRecordDto[] {
-  const byUid = new Map<string, CallRecordDto>();
+  existing: readonly CallSummaryDto[],
+  incoming: readonly CallSummaryDto[],
+): CallSummaryDto[] {
+  const byUid = new Map<string, CallSummaryDto>();
   for (const c of existing) byUid.set(c.requestUid, c);
   for (const c of incoming) byUid.set(c.requestUid, c);
   return [...byUid.values()].sort((a, b) => b.tsStart - a.tsStart);
@@ -192,7 +199,7 @@ export function mergeCalls(
 
 /** Distinct, sorted values of one field across a call list (for filter menus). */
 export function distinctValues(
-  calls: readonly CallRecordDto[],
+  calls: readonly CallSummaryDto[],
   field: 'serverName' | 'tool',
 ): string[] {
   const set = new Set<string>();
