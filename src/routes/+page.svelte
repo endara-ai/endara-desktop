@@ -209,7 +209,7 @@
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 {#if showRelayStartupFailure}
-  <div class="flex h-screen w-screen items-center justify-center bg-(--surface-alt) p-6">
+  <div class="flex h-full w-full items-center justify-center bg-(--surface-alt) p-6">
     <div class="w-full max-w-2xl rounded-2xl border border-red-500/20 bg-(--surface) p-8 shadow-sm">
       <div class="mb-6 inline-flex items-center rounded-full bg-red-500/10 px-3 py-1 text-xs font-medium text-red-600 dark:text-red-400">
         Relay startup failed
@@ -253,7 +253,7 @@
 {:else if $miniPlayerMode}
   <MiniPlayer />
 {:else}
-  <div class="flex flex-col h-screen w-screen overflow-hidden">
+  <div class="flex flex-col h-full w-full overflow-hidden">
     <!-- Top-level tab bar -->
     <div class="flex items-center border-b border-(--border) bg-(--chrome-bg) px-2 pt-1 shrink-0 relative" data-tauri-drag-region>
       <div class="flex">

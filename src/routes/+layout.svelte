@@ -64,8 +64,23 @@
 </script>
 
 <Toaster position="bottom-right" duration={5000} richColors closeButton />
-{#if !isOverlayWindow}
-  <OrgExpiryBanner />
+{#if isOverlayWindow}
+  {@render children()}
+{:else}
+  <!--
+    Wrap the app in a viewport-sized flex column so the org-expiry banner
+    renders IN-FLOW as the first child and pushes the page content down.
+    This keeps the top tab bar (and its `data-tauri-drag-region`) visible
+    and clickable when an org is expired — the previous `position: fixed`
+    banner overlapped the tab nav and the macOS traffic-light strip.
+    When the banner has no message it renders nothing, leaving the
+    `flex-1` child at full viewport height — pixel-identical to before.
+  -->
+  <div class="flex flex-col h-screen w-screen overflow-hidden">
+    <OrgExpiryBanner />
+    <div class="flex-1 min-h-0">
+      {@render children()}
+    </div>
+  </div>
 {/if}
-{@render children()}
 

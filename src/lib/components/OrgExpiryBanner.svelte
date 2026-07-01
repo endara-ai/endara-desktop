@@ -80,7 +80,7 @@
 {#if message}
   <div
     role="alert"
-    class="fixed top-0 left-0 right-0 z-50 border-b border-(--degraded) bg-(--degraded)/10 text-(--fg1) px-4 py-2 flex items-center gap-3"
+    class="shrink-0 border-b border-(--degraded) bg-(--degraded)/10 text-(--fg1) px-4 py-2 flex items-center gap-3"
   >
     <span
       class="shrink-0 w-2 h-2 rounded-full bg-(--degraded)"
