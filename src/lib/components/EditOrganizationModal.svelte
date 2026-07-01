@@ -91,6 +91,20 @@
         return;
       }
     }
+    // Switching between two templated providers (e.g. okta → ping) needs a
+    // fresh slug — the relay stores the FULL issuer and can't reverse a slug
+    // from the previous provider's URL. Without this guard we'd send
+    // `provider` alone and the relay would rebuild an issuer using an empty
+    // slug. Mirrors the create-flow requirement in `buildCreateOrgParams`.
+    if (
+      selectedProvider &&
+      providerNeedsSlug(selectedProvider) &&
+      providerId !== org.provider &&
+      !slugOrUrl.trim()
+    ) {
+      error = 'Enter the organization slug for the new provider.';
+      return;
+    }
     submitting = true;
     try {
       const res = await updateOrganization(org.name, buildParams());

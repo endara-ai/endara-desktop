@@ -709,6 +709,21 @@ describe('EditOrganizationModal uses the update API + reauth fork', () => {
     expect(source).not.toContain('id="edit-org-resource-client-id"');
     expect(source).not.toContain('id="edit-org-resource-client-secret"');
   });
+
+  it('requires a slug when switching to a different templated provider', async () => {
+    const source = (await import('./EditOrganizationModal.svelte?raw')).default;
+    // Custom-provider switch still requires an issuer URL.
+    expect(source).toMatch(
+      /isCustomProvider\(selectedProvider\)[\s\S]*?providerId\s*!==\s*org\.provider[\s\S]*?slugOrUrl\.trim\(\)[\s\S]*?Enter the issuer URL/,
+    );
+    // Templated-to-templated switch (okta → ping) requires a fresh slug —
+    // the previous guard only fired for custom providers, so a blank slug
+    // silently sent `provider` without `slug` and the relay rebuilt the
+    // issuer with an empty slug.
+    expect(source).toMatch(
+      /providerNeedsSlug\(selectedProvider\)[\s\S]*?providerId\s*!==\s*org\.provider[\s\S]*?slugOrUrl\.trim\(\)[\s\S]*?Enter the organization slug/,
+    );
+  });
 });
 
 describe('addEndpointsWithRefresh', () => {
