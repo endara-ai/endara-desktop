@@ -319,12 +319,17 @@ export interface IdpProvider {
  * One organization from `GET /api/organizations`. `authenticated` reflects
  * whether the relay's credential pool holds usable IdP credentials for the org
  * (a non-expired ID token or a refresh token to silently re-mint one).
+ *
+ * `client_secret_set` is optional — older relays omit it. When present and
+ * `true` the org has a confidential-client secret persisted in the secure
+ * credential store; the secret value itself is never returned to the UI.
  */
 export interface Organization {
   name: string;
   provider: string;
   idp: string;
   authenticated: boolean;
+  client_secret_set?: boolean;
 }
 
 /**

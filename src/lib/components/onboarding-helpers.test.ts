@@ -17,6 +17,9 @@ import {
   orgStatusLabel,
   startOrgConnection,
   reauthenticateOrg,
+  pollForOrgAuth,
+  unauthenticatedOrgs,
+  orgExpiryBannerMessage,
 } from './onboarding-helpers';
 import type { AddEndpointParams } from '$lib/api';
 
@@ -141,6 +144,53 @@ describe('buildCreateOrgParams', () => {
       provider: 'custom',
       idp: 'https://id.example.com',
       client_id: 'abc123',
+    });
+  });
+
+  it('includes a trimmed client_secret when provided', () => {
+    expect(buildCreateOrgParams(okta, 'Acme', 'acme', 'abc123', '  s3cret  ')).toEqual({
+      name: 'Acme',
+      provider: 'okta',
+      slug: 'acme',
+      client_id: 'abc123',
+      client_secret: 's3cret',
+    });
+  });
+
+  it('omits client_secret when blank or whitespace-only', () => {
+    expect(buildCreateOrgParams(okta, 'Acme', 'acme', 'abc123', '   ')).toEqual({
+      name: 'Acme',
+      provider: 'okta',
+      slug: 'acme',
+      client_id: 'abc123',
+    });
+    expect(buildCreateOrgParams(okta, 'Acme', 'acme', 'abc123')).toEqual({
+      name: 'Acme',
+      provider: 'okta',
+      slug: 'acme',
+      client_id: 'abc123',
+    });
+  });
+
+  it('allows a client_secret without a client_id (confidential public-client edge case)', () => {
+    expect(buildCreateOrgParams(custom, 'Acme', 'https://id.example.com', '', 's3cret')).toEqual({
+      name: 'Acme',
+      provider: 'custom',
+      idp: 'https://id.example.com',
+      client_secret: 's3cret',
+    });
+  });
+
+  it('omits client creds when blank or whitespace-only', () => {
+    expect(buildCreateOrgParams(okta, 'Acme', 'acme', '   ', '   ')).toEqual({
+      name: 'Acme',
+      provider: 'okta',
+      slug: 'acme',
+    });
+    expect(buildCreateOrgParams(okta, 'Acme', 'acme')).toEqual({
+      name: 'Acme',
+      provider: 'okta',
+      slug: 'acme',
     });
   });
 });
@@ -400,6 +450,116 @@ describe('reauthenticateOrg', () => {
 });
 
 // ---------------------------------------------------------------------------
+// pollForOrgAuth — shared by ConnectOrgModal and OrganizationsSection so both
+// initial-connect and Settings re-authenticate flip the row from "Sign-in
+// required" to "Connected" on the same cadence.
+// ---------------------------------------------------------------------------
+
+const orgRow = (name: string, authenticated: boolean): Organization => ({
+  name,
+  provider: 'okta',
+  idp: 'okta',
+  authenticated,
+});
+
+describe('pollForOrgAuth', () => {
+  it('resolves once the org flips to authenticated', async () => {
+    const listOrganizations = vi
+      .fn()
+      .mockResolvedValueOnce([orgRow('Acme', false)])
+      .mockResolvedValueOnce([orgRow('Acme', false)])
+      .mockResolvedValueOnce([orgRow('Acme', true)]);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const outcome = await pollForOrgAuth(
+      'Acme',
+      { listOrganizations },
+      { intervalMs: 10, timeoutMs: 1000, sleep },
+    );
+
+    expect(outcome).toEqual({ status: 'authenticated' });
+    expect(listOrganizations).toHaveBeenCalledTimes(3);
+    // Sleep runs once per poll iteration before the list call.
+    expect(sleep).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledWith(10);
+  });
+
+  it('keeps polling through transient list failures', async () => {
+    const listOrganizations = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('relay hiccup'))
+      .mockResolvedValueOnce([orgRow('Acme', true)]);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const outcome = await pollForOrgAuth(
+      'Acme',
+      { listOrganizations },
+      { intervalMs: 1, timeoutMs: 100, sleep },
+    );
+
+    expect(outcome).toEqual({ status: 'authenticated' });
+    expect(listOrganizations).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns cancelled without touching the relay when aborted before the first list call', async () => {
+    const listOrganizations = vi.fn();
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const outcome = await pollForOrgAuth(
+      'Acme',
+      { listOrganizations },
+      { intervalMs: 1, timeoutMs: 100, sleep, shouldCancel: () => true },
+    );
+
+    expect(outcome).toEqual({ status: 'cancelled' });
+    expect(listOrganizations).not.toHaveBeenCalled();
+  });
+
+  it('returns cancelled mid-poll and stops issuing list calls', async () => {
+    let cancelled = false;
+    const listOrganizations = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        cancelled = true;
+        return [orgRow('Acme', false)];
+      })
+      .mockImplementation(async () => [orgRow('Acme', false)]);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const outcome = await pollForOrgAuth(
+      'Acme',
+      { listOrganizations },
+      { intervalMs: 1, timeoutMs: 1000, sleep, shouldCancel: () => cancelled },
+    );
+
+    expect(outcome).toEqual({ status: 'cancelled' });
+    // First iteration issued the list call that flipped the cancel flag;
+    // the second iteration bails at the pre-list cancel check.
+    expect(listOrganizations).toHaveBeenCalledTimes(1);
+  });
+
+  it('times out when the org never reports authenticated', async () => {
+    const listOrganizations = vi.fn().mockResolvedValue([orgRow('Acme', false)]);
+    let now = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const sleep = vi.fn().mockImplementation(async (ms: number) => {
+      now += ms;
+    });
+
+    const outcome = await pollForOrgAuth(
+      'Acme',
+      { listOrganizations },
+      { intervalMs: 50, timeoutMs: 100, sleep },
+    );
+
+    expect(outcome).toEqual({ status: 'timeout' });
+    // Loop budget covers two iterations (50 + 50 = 100), then deadline fails.
+    expect(listOrganizations).toHaveBeenCalledTimes(2);
+    nowSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Wiring (source-level, mirroring the `?raw` convention in Settings.test.ts)
 // ---------------------------------------------------------------------------
 
@@ -432,6 +592,36 @@ describe('OrganizationsSection wires list / re-auth / remove', () => {
   });
 });
 
+describe('OrganizationsSection polls for auth after re-authenticate', () => {
+  it('kicks off pollForOrgAuth and cancels stale polls on unmount / repeat click', async () => {
+    const source = (await import('./OrganizationsSection.svelte?raw')).default;
+    // Uses the shared helper (not a copy-pasted loop) so the initial-connect
+    // and Settings re-auth flows stay in lockstep.
+    expect(source).toMatch(/pollForOrgAuth\(/);
+    expect(source).toMatch(/listOrganizations/);
+    // Per-row `busy` clears once the browser opens; poll continues in the
+    // background inside a `void (async () => ...)` block.
+    expect(source).toMatch(/void\s*\(async\s*\(\)\s*=>/);
+    // Cancellation plumbing: repeat click cancels the prior poll, and
+    // `onDestroy` cancels every outstanding poll so no timers leak.
+    expect(source).toMatch(/onDestroy/);
+    expect(source).toMatch(/activeReauthPolls/);
+    expect(source).toMatch(/cancelReauthPoll/);
+    expect(source).toMatch(/shouldCancel:/);
+  });
+});
+
+describe('ConnectOrgModal reuses the shared poll-for-auth helper', () => {
+  it('delegates pollForAuth to pollForOrgAuth so both flows share cadence + cancel', async () => {
+    const source = (await import('./ConnectOrgModal.svelte?raw')).default;
+    expect(source).toMatch(/pollForOrgAuth\(/);
+    // Cancellation is threaded via `shouldCancel` — the raw setTimeout loop
+    // that used to live here is gone.
+    expect(source).toMatch(/shouldCancel:\s*\(\)\s*=>\s*pollCancelled/);
+    expect(source).not.toMatch(/setTimeout\(r,\s*2000\)/);
+  });
+});
+
 describe('OrganizationsSection offers per-org re-detect', () => {
   it('renders ConnectOrgModal in re-detect mode, gated on sign-in', async () => {
     const source = (await import('./OrganizationsSection.svelte?raw')).default;
@@ -452,6 +642,72 @@ describe('ConnectOrgModal supports re-detect + already-installed greying', () =>
     expect(source).toContain('runProbe(redetectOrg)');
     expect(source).toContain('isAlreadyInstalled');
     expect(source).toContain('Already added');
+  });
+});
+
+describe('ConnectOrgModal exposes a Client Secret field', () => {
+  it('binds a clientSecret state to a password input and threads it through buildCreateOrgParams', async () => {
+    const source = (await import('./ConnectOrgModal.svelte?raw')).default;
+    expect(source).toMatch(/let\s+clientSecret\s*=\s*\$state\(/);
+    expect(source).toContain('id="org-client-secret"');
+    expect(source).toMatch(/type="password"/);
+    expect(source).toMatch(
+      /buildCreateOrgParams\(\s*selectedProvider\s*,\s*name\s*,\s*slugOrUrl\s*,\s*clientId\s*,\s*clientSecret\s*,?\s*\)/,
+    );
+  });
+});
+
+describe('ConnectOrgModal no longer exposes resource credential fields', () => {
+  it('moved the resource (Step-3 MAS) credential to the per-endpoint Config tab (R3)', async () => {
+    const source = (await import('./ConnectOrgModal.svelte?raw')).default;
+    expect(source).not.toContain('id="org-resource-client-id"');
+    expect(source).not.toContain('id="org-resource-client-secret"');
+  });
+});
+
+describe('ConfigTab exposes per-endpoint EMA resource credential fields', () => {
+  it('binds resource client id/secret for EMA endpoints and persists via updateEndpoint', async () => {
+    const source = (await import('./ConfigTab.svelte?raw')).default;
+    // Fields live under the EMA-binding section, gated on showEmaBinding.
+    expect(source).toContain('id="config-ep-resource-client-id"');
+    expect(source).toContain('id="config-ep-resource-client-secret"');
+    expect(source).toMatch(/let\s+resourceClientId\s*=\s*\$state\(/);
+    expect(source).toMatch(/let\s+resourceClientSecret\s*=\s*\$state\(/);
+    // Write-only secret with an explicit clear toggle (absent-vs-empty merge).
+    expect(source).toContain('clearResourceSecret');
+    expect(source).toMatch(/params\.resource_client_secret\s*=\s*''/);
+    expect(source).toMatch(/params\.resource_client_id\s*=/);
+  });
+});
+
+describe('OrganizationsSection offers per-org Edit', () => {
+  it('renders an Edit button that opens EditOrganizationModal', async () => {
+    const source = (await import('./OrganizationsSection.svelte?raw')).default;
+    expect(source).toMatch(
+      /import\s+EditOrganizationModal\s+from\s+['"]\.\/EditOrganizationModal\.svelte['"]/,
+    );
+    expect(source).toContain('editingOrg');
+    expect(source).toMatch(/>\s*Edit\s*<\/button>/);
+    expect(source).toMatch(/<EditOrganizationModal[\s\S]*org=\{editingOrg\}/);
+  });
+});
+
+describe('EditOrganizationModal uses the update API + reauth fork', () => {
+  it('calls updateOrganization and opens authorize_url when identity changed', async () => {
+    const source = (await import('./EditOrganizationModal.svelte?raw')).default;
+    expect(source).toMatch(/updateOrganization\(/);
+    expect(source).toMatch(/updateRequiresReauth\(/);
+    // Client secret field never shows the stored secret back to the user.
+    expect(source).toContain('id="edit-org-client-secret"');
+    expect(source).toMatch(/type="password"/);
+    // The "clear" toggles send an explicit empty string (per relay contract).
+    expect(source).toContain('clearSecret');
+    expect(source).toContain('clearClientId');
+    expect(source).toMatch(/refreshOrganizations\(/);
+    // R3 moved the resource (Step-3 MAS) credential fields off the org modal to
+    // the per-endpoint Config tab — they must no longer appear here.
+    expect(source).not.toContain('id="edit-org-resource-client-id"');
+    expect(source).not.toContain('id="edit-org-resource-client-secret"');
   });
 });
 
@@ -511,5 +767,47 @@ describe('addEndpointsWithRefresh', () => {
 
     expect(getEndpoints).toHaveBeenCalledTimes(1);
     expect(setEndpoints).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 20 — Org-expiry banner derive logic
+// ---------------------------------------------------------------------------
+
+describe('unauthenticatedOrgs / orgExpiryBannerMessage (banner derive)', () => {
+  const mk = (name: string, authenticated: boolean): Organization => ({
+    name,
+    provider: 'okta',
+    idp: 'okta',
+    authenticated,
+  });
+
+  it('filters to only orgs with authenticated === false', () => {
+    const list = [mk('acme', true), mk('beta-co', false), mk('gamma', true), mk('delta', false)];
+    expect(unauthenticatedOrgs(list).map((o) => o.name)).toEqual(['beta-co', 'delta']);
+  });
+
+  it('returns null when there are zero orgs (banner hidden)', () => {
+    expect(orgExpiryBannerMessage([])).toBeNull();
+  });
+
+  it('returns null when every org is authenticated (banner hidden)', () => {
+    expect(orgExpiryBannerMessage([mk('acme', true), mk('gamma', true)])).toBeNull();
+  });
+
+  it('names the org for a single unauthenticated org', () => {
+    expect(orgExpiryBannerMessage([mk('acme', true), mk('beta-co', false)])).toBe(
+      'Sign-in required for beta-co',
+    );
+  });
+
+  it('counts unauthenticated orgs when more than one need re-auth', () => {
+    const msg = orgExpiryBannerMessage([
+      mk('acme', true),
+      mk('beta-co', false),
+      mk('delta', false),
+      mk('eps', false),
+    ]);
+    expect(msg).toBe('3 organizations need re-authentication');
   });
 });

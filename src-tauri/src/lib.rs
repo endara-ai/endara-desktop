@@ -2024,6 +2024,15 @@ struct EndpointConfig {
     /// or — for legacy entries — in `config.toml`). The secret value itself is
     /// never returned to the UI; the field is masked write-only.
     client_secret_set: bool,
+    /// The EMA **resource** `client_id` stored per-endpoint in the DCR record
+    /// (R3); absent when unset. Not a secret, so the value is returned and the
+    /// Config tab renders it editable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resource_client_id: Option<String>,
+    /// True iff an EMA **resource** `client_secret` is stored for this endpoint
+    /// (DCR record). The secret value itself is never returned to the UI; the
+    /// field is masked write-only.
+    resource_client_secret_set: bool,
     scopes: Option<String>,
     token_endpoint: Option<String>,
     /// Mirrors `server_type_override` from `config.toml`; absent when no
@@ -2039,6 +2048,26 @@ struct EndpointConfig {
     /// configured. The UI seeds its mount editor from this and passes the
     /// array back on update so the relay's PUT doesn't drop stored mounts.
     mounts: Option<Vec<String>>,
+    /// Mirrors the `[endpoints.auth]` sub-table for endpoints bound to an EMA
+    /// organization. Absent for ordinary endpoints — keeps their JSON shape
+    /// unchanged. The UI passes it back on update so the relay's PUT, which
+    /// rebuilds the whole endpoint config from the body, doesn't drop the
+    /// stored org binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth: Option<EndpointAuth>,
+}
+
+/// EMA org-binding block mirrored back to the UI from `[endpoints.auth]`.
+/// Mirrors the relay's `EmaAuthSummary` shape so the desktop can both display
+/// and round-trip the binding on PUT without translation.
+#[derive(Serialize)]
+struct EndpointAuth {
+    #[serde(rename = "type")]
+    auth_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    organization: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resource: Option<String>,
 }
 
 /// Path to the DCR credentials file for an endpoint, e.g.
@@ -2047,6 +2076,49 @@ struct EndpointConfig {
 /// round-trip.
 fn dcr_file_path(name: &str) -> Result<std::path::PathBuf, String> {
     Ok(data_dir()?.join("tokens").join(format!("{name}.dcr.json")))
+}
+
+/// Credential presence read from an endpoint's `{name}.dcr.json` DCR record.
+/// Mirrors the relay's `DcrCredentials` fields the Config tab needs: whether a
+/// requesting `client_secret` is stored, the (non-secret) EMA
+/// `resource_client_id`, and whether a `resource_client_secret` is stored.
+#[derive(Default)]
+struct DcrCredentialView {
+    client_secret_set: bool,
+    resource_client_id: Option<String>,
+    resource_client_secret_set: bool,
+}
+
+/// Parse a DCR record's JSON into the credential view. A malformed record
+/// degrades gracefully to the all-absent default.
+fn parse_dcr_credential_view(json: &str) -> DcrCredentialView {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return DcrCredentialView::default();
+    };
+    let non_empty = |key: &str| {
+        value
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+    };
+    DcrCredentialView {
+        client_secret_set: non_empty("client_secret").is_some(),
+        resource_client_id: non_empty("resource_client_id"),
+        resource_client_secret_set: non_empty("resource_client_secret").is_some(),
+    }
+}
+
+/// Read and parse an endpoint's DCR record. Returns the all-absent default when
+/// no file exists or it can't be read.
+fn read_dcr_credential_view(name: &str) -> DcrCredentialView {
+    let Ok(path) = dcr_file_path(name) else {
+        return DcrCredentialView::default();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => parse_dcr_credential_view(&contents),
+        Err(_) => DcrCredentialView::default(),
+    }
 }
 
 #[tauri::command]
@@ -2109,8 +2181,13 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .filter(|s| !s.is_empty());
-                let dcr_exists = dcr_file_path(&name).map(|p| p.exists()).unwrap_or(false);
-                let client_secret_set = dcr_exists || legacy_toml_secret.is_some();
+                // Read the DCR record's actual contents (not just existence): a
+                // resource-only EMA record (R3) has no requesting `client_secret`,
+                // so file presence alone must not imply one is stored.
+                let dcr_view = read_dcr_credential_view(&name);
+                let client_secret_set = dcr_view.client_secret_set || legacy_toml_secret.is_some();
+                let resource_client_id = dcr_view.resource_client_id;
+                let resource_client_secret_set = dcr_view.resource_client_secret_set;
                 let scopes = ep.get("scopes").and_then(|v| v.as_array()).map(|arr| {
                     arr.iter()
                         .filter_map(|v| v.as_str())
@@ -2140,6 +2217,33 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                             .collect::<Vec<_>>()
                     })
                     .filter(|m| !m.is_empty());
+                // Surface the `[endpoints.auth]` sub-table for EMA-bound
+                // endpoints so the UI can both display the org and pass the
+                // block back on update (the relay's PUT rebuilds the whole
+                // endpoint config from the body — omitting `auth` would drop
+                // the binding).
+                let auth = ep.get("auth").and_then(|v| v.as_table()).map(|t| {
+                    let auth_type = t
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let organization = t
+                        .get("organization")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty());
+                    let resource = t
+                        .get("resource")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty());
+                    EndpointAuth {
+                        auth_type,
+                        organization,
+                        resource,
+                    }
+                });
 
                 return Ok(EndpointConfig {
                     name: name.clone(),
@@ -2154,11 +2258,14 @@ async fn get_endpoint_config(name: String) -> Result<EndpointConfig, String> {
                     oauth_server_url,
                     client_id,
                     client_secret_set,
+                    resource_client_id,
+                    resource_client_secret_set,
                     scopes,
                     token_endpoint,
                     server_type_override,
                     isolation,
                     mounts,
+                    auth,
                 });
             }
         }
@@ -2773,6 +2880,48 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod dcr_credential_view_tests {
+    use super::*;
+
+    #[test]
+    fn parses_requesting_and_resource_creds() {
+        let json = r#"{"client_id":"req","client_secret":"sec","resource_client_id":"res","resource_client_secret":"res-sec"}"#;
+        let view = parse_dcr_credential_view(json);
+        assert!(view.client_secret_set);
+        assert_eq!(view.resource_client_id.as_deref(), Some("res"));
+        assert!(view.resource_client_secret_set);
+    }
+
+    #[test]
+    fn resource_only_record_does_not_imply_a_client_secret() {
+        // R3: a per-endpoint EMA record may carry only the resource pair with an
+        // empty requesting client_id and no requesting secret.
+        let json = r#"{"client_id":"","resource_client_id":"res"}"#;
+        let view = parse_dcr_credential_view(json);
+        assert!(!view.client_secret_set);
+        assert_eq!(view.resource_client_id.as_deref(), Some("res"));
+        assert!(!view.resource_client_secret_set);
+    }
+
+    #[test]
+    fn empty_strings_count_as_absent() {
+        let json = r#"{"client_secret":"","resource_client_id":"","resource_client_secret":""}"#;
+        let view = parse_dcr_credential_view(json);
+        assert!(!view.client_secret_set);
+        assert!(view.resource_client_id.is_none());
+        assert!(!view.resource_client_secret_set);
+    }
+
+    #[test]
+    fn malformed_json_degrades_to_default() {
+        let view = parse_dcr_credential_view("not json");
+        assert!(!view.client_secret_set);
+        assert!(view.resource_client_id.is_none());
+        assert!(!view.resource_client_secret_set);
+    }
 }
 
 #[cfg(test)]

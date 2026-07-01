@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getEndpointConfig, updateEndpoint, getEndpoints, getStatus, type UpdateEndpointParams } from '$lib/api';
+  import { getEndpointConfig, updateEndpoint, getEndpoints, getStatus, type UpdateEndpointParams, type EmaAuthConfig } from '$lib/api';
   import { selectedEndpoint, endpoints, selectedEndpointData } from '$lib/stores';
   import { registerDirtyChecker } from '$lib/stores/unsavedChangesGuard';
   import {
@@ -41,6 +41,14 @@
   // this state — the backend exposes only `client_secret_set: boolean`.
   let clientSecret = $state('');
   let clientSecretSet = $state(false);
+  // EMA resource (Step-3 MAS) pairing credential (R3), stored per-endpoint. The
+  // id is not a secret, so its stored value is loaded and editable; emptying it
+  // sends "" to clear. The secret is write-only — blank keeps the stored value,
+  // the "clear" toggle sends "" to drop it, and a typed value sets a new one.
+  let resourceClientId = $state('');
+  let resourceClientSecret = $state('');
+  let resourceClientSecretSet = $state(false);
+  let clearResourceSecret = $state(false);
   let scopes = $state('');
   // Optional override that replaces the upstream-reported server name in the
   // relay's connected-servers advertisement.
@@ -75,6 +83,19 @@
   // Volume mounts (stdio + container isolation only), seeded from the stored
   // `mounts` array. Mirrors the env-var editor; serialized on save.
   let mountRows: MountRow[] = $state([]);
+  // EMA org-binding mirrored from the persisted `[endpoints.auth]` sub-table.
+  // Display-only in this form (the binding is configured via Add Server), but
+  // round-tripped back on save so the relay's PUT — which rebuilds the whole
+  // endpoint config from the body — doesn't drop the binding. Null/undefined
+  // for ordinary (non-EMA) endpoints, in which case no `auth` key is sent.
+  let loadedAuth = $state<EmaAuthConfig | null>(null);
+  let emaOrganization = $derived(
+    loadedAuth?.type === 'ema' ? loadedAuth.organization ?? '' : ''
+  );
+  let emaResource = $derived(
+    loadedAuth?.type === 'ema' ? loadedAuth.resource ?? '' : ''
+  );
+  let showEmaBinding = $derived(loadedAuth?.type === 'ema');
   // The mount section only applies when the endpoint runs in a container.
   let showMounts = $derived(transport === 'stdio' && isolationEnabled);
   // Resolved user home directory, used to build a valid absolute-path mount
@@ -114,6 +135,7 @@
   let originalHeaderVars = $state('[]');
   let originalOauthServerUrl = $state('');
   let originalClientId = $state('');
+  let originalResourceClientId = $state('');
   let originalScopes = $state('');
   let originalServerTypeOverride = $state('');
   let originalIsolationEnabled = $state(false);
@@ -136,6 +158,7 @@
     originalHeaderVars = JSON.stringify(headerVars);
     originalOauthServerUrl = oauthServerUrl;
     originalClientId = clientId;
+    originalResourceClientId = resourceClientId.trim();
     originalScopes = scopes;
     originalServerTypeOverride = serverTypeOverride;
     originalIsolationEnabled = isolationEnabled;
@@ -148,6 +171,9 @@
   // The secret field is dirty only when the user has actually typed
   // something — the displayed placeholder/mask never counts as a change.
   let clientSecretDirty = $derived(clientSecret.trim().length > 0);
+  // The resource secret is dirty only when typed — the masked placeholder and
+  // the "clear" toggle are tracked separately below.
+  let resourceClientSecretDirty = $derived(resourceClientSecret.trim().length > 0);
 
   let isDirty = $derived(
     name !== originalName ||
@@ -166,7 +192,10 @@
     scopes !== originalScopes ||
     serverTypeOverride !== originalServerTypeOverride ||
     isolationEnabled !== originalIsolationEnabled ||
-    JSON.stringify(mountRows) !== originalMountRows
+    JSON.stringify(mountRows) !== originalMountRows ||
+    resourceClientId.trim() !== originalResourceClientId ||
+    resourceClientSecretDirty ||
+    clearResourceSecret
   );
 
   // Register a dirty-checker with the shared navigation guard so that any
@@ -226,10 +255,17 @@
         // the user is never able to read or accidentally re-submit it.
         clientSecret = '';
         clientSecretSet = config.client_secret_set ?? false;
+        // EMA resource creds (R3): the id is returned and editable; the secret
+        // is never returned, so we track only whether one is stored.
+        resourceClientId = config.resource_client_id ?? '';
+        resourceClientSecret = '';
+        resourceClientSecretSet = config.resource_client_secret_set ?? false;
+        clearResourceSecret = false;
         scopes = config.scopes ?? '';
         serverTypeOverride = config.server_type_override ?? '';
         isolationEnabled = isolationEnabledFromConfig(config.isolation);
         mountRows = parseMountRows(config.mounts);
+        loadedAuth = config.auth ?? null;
         snapshotOriginals();
       })
       .catch(() => {
@@ -329,6 +365,31 @@
     // typed mixed-case or whitespace.
     params.server_type_override = sanitizeName(serverTypeOverride);
 
+    // Round-trip the EMA org-binding (`[endpoints.auth]`) verbatim. The
+    // relay's PUT rebuilds the whole endpoint config from the body, so
+    // omitting `auth` would silently drop the stored binding. Non-EMA
+    // endpoints leave `loadedAuth` null and no `auth` key is sent — the PUT
+    // body stays byte-for-byte unchanged in that case.
+    if (loadedAuth) {
+      params.auth = loadedAuth;
+    }
+
+    // EMA resource (Step-3 MAS) credential (R3), persisted per-endpoint via the
+    // /credentials route. Only for EMA endpoints. `resource_client_id` is sent
+    // whenever it changed (emptied = clear, typed = set); the write-only secret
+    // is sent on an explicit clear ("") or when the user typed a new value.
+    if (showEmaBinding) {
+      const trimmedResourceClientId = resourceClientId.trim();
+      if (trimmedResourceClientId !== originalResourceClientId) {
+        params.resource_client_id = trimmedResourceClientId;
+      }
+      if (clearResourceSecret) {
+        params.resource_client_secret = '';
+      } else if (resourceClientSecretDirty) {
+        params.resource_client_secret = resourceClientSecret.trim();
+      }
+    }
+
     saving = true;
     try {
       await updateEndpoint(params);
@@ -350,6 +411,15 @@
         clientSecretSet = true;
       }
       clientSecret = '';
+      // Reflect resource-cred changes in the masked state, then reset inputs so
+      // the secret field returns to its placeholder and the clear toggle resets.
+      if (params.resource_client_secret) {
+        resourceClientSecretSet = true;
+      } else if (clearResourceSecret) {
+        resourceClientSecretSet = false;
+      }
+      resourceClientSecret = '';
+      clearResourceSecret = false;
       snapshotOriginals();
       success = 'Configuration saved';
       setTimeout(() => { success = ''; }, 3000);
@@ -432,6 +502,61 @@
           <input id="config-ep-desc" type="text" bind:value={description} placeholder="Brief description of this server"
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
         </div>
+
+        <!-- EMA org-binding (read-only). Shown only for endpoints whose
+             `[endpoints.auth]` block is `type = "ema"`; the binding itself is
+             configured via Add Server and is preserved on save. -->
+        {#if showEmaBinding}
+          <div>
+            <span class="block text-xs font-medium mb-1 text-(--fg2)">Organization</span>
+            <div
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface)/50 text-(--fg1)"
+              data-testid="config-ep-ema-organization"
+            >
+              {emaOrganization || '(unbound)'}
+            </div>
+            {#if emaResource}
+              <p class="text-[11px] text-(--fg2) mt-0.5">Resource: <code>{emaResource}</code></p>
+            {/if}
+            <p class="text-[11px] text-(--fg2) mt-0.5">
+              This server authenticates via the organization's shared sign-in. Change the binding by removing and re-adding the server.
+            </p>
+          </div>
+
+          <!-- EMA resource (Step-3 MAS) pairing credential (R3), stored
+               per-endpoint. Only for xaa.dev/Okta-style MASes that require a
+               distinct client at the ID-JAG redemption; blank for everything
+               else. The id is editable; the secret is write-only. -->
+          <div>
+            <label for="config-ep-resource-client-id" class="block text-xs font-medium mb-1 text-(--fg2)">
+              Resource Client ID <span class="text-(--fg2)/50">(optional)</span>
+            </label>
+            <input id="config-ep-resource-client-id" type="text" bind:value={resourceClientId}
+              placeholder="Resource (MAS) client ID"
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+            <p class="text-[11px] text-(--fg2) mt-0.5">
+              Only for MCP servers that require a separate client at the Step-3 token exchange. Leave blank for everything else.
+            </p>
+          </div>
+          <div>
+            <label for="config-ep-resource-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">
+              Resource Client Secret <span class="text-(--fg2)/50">(optional)</span>
+            </label>
+            <input id="config-ep-resource-client-secret" type="password" autocomplete="new-password" bind:value={resourceClientSecret}
+              placeholder={resourceClientSecretSet ? '•••••••• (stored — type to replace)' : ''}
+              disabled={clearResourceSecret}
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) disabled:opacity-50" />
+            {#if resourceClientSecretSet}
+              <label class="flex items-center gap-1.5 text-[11px] text-(--fg2) mt-1 cursor-pointer">
+                <input type="checkbox" class="accent-(--accent)" bind:checked={clearResourceSecret} />
+                Clear stored resource client secret
+              </label>
+            {/if}
+            <p class="text-[11px] text-(--fg2) mt-0.5">
+              Paired with the resource client ID. Stored in the owner-scoped credential directory, separate from <code>config.toml</code>.
+            </p>
+          </div>
+        {/if}
 
         {#if transport === 'stdio'}
           <div>

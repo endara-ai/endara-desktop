@@ -76,6 +76,12 @@
   let clientSecret = $state('');
   let scopes = $state('');
   let selectedScopes: Set<string> = $state(new Set());
+  // Optional EMA resource pairing credential (R3), settable at add-time on the
+  // org-bound custom flow. Mirrors the D2 Config-tab fields: id is editable,
+  // secret is write-only. Blank fields => no resource cred sent on create.
+  let orgBoundScopes = $state('');
+  let resourceClientId = $state('');
+  let resourceClientSecret = $state('');
   let selectedOAuthEntry: OAuthCatalogEntry | null = $state(null);
   let showingDcrFallback = $state(false);
   let dcrFallbackData: { authorization_endpoint?: string } = $state({});
@@ -153,11 +159,13 @@
   refreshOrganizations().catch(() => { /* relay unreachable — leave list empty */ });
 
   // The Organization selector only applies to the custom (non-catalog) add
-  // flow and only for the http transport — EMA endpoints are http by
-  // construction (see `buildOrgBoundEndpointParams`), so binding an org while
-  // sse/oauth is selected would silently create an http endpoint. `orgBound` is
-  // true once an org is actually chosen, switching submit to the plain EMA add
-  // path.
+  // flow and only for transports the relay accepts EMA on — currently `http`
+  // and `oauth` (see `orgBindingApplies`). EMA endpoints are built as `http`
+  // by construction (see `buildOrgBoundEndpointParams`); under an `oauth`
+  // selection that just means the org-bound add routes through the EMA `http`
+  // path and the per-server OAuth setup is dropped. `sse`/`stdio` never show
+  // the selector. `orgBound` is true once an org is actually chosen, switching
+  // submit to the plain EMA add path and bypassing `handleOAuthSubmit`.
   let orgSelectorVisible = $derived(!selectedCatalog && !selectedOAuthEntry && orgBindingApplies(transport));
   let orgBound = $derived(orgSelectorVisible && selectedOrganization.trim() !== '');
 
@@ -186,6 +194,9 @@
       clientId,
       clientSecret,
       scopes,
+      orgBoundScopes,
+      resourceClientId,
+      resourceClientSecret,
       serverTypeOverride,
       isolationEnabled,
       mounts: mountRows,
@@ -209,6 +220,9 @@
       clientId,
       clientSecret,
       scopes,
+      orgBoundScopes,
+      resourceClientId,
+      resourceClientSecret,
       serverTypeOverride,
       isolationEnabled,
       mounts: mountRows.map((m) => ({ host: m.host, container: m.container })),
@@ -285,6 +299,9 @@
     oauthServerUrl = service.oauthServerUrl || '';
     clientId = '';
     clientSecret = '';
+    orgBoundScopes = '';
+    resourceClientId = '';
+    resourceClientSecret = '';
     if (service.availableScopes && service.availableScopes.length > 0) {
       scopes = '';
       selectedScopes = new Set(service.defaultScopes);
@@ -329,6 +346,9 @@
     clientSecret = '';
     scopes = '';
     selectedScopes = new Set();
+    orgBoundScopes = '';
+    resourceClientId = '';
+    resourceClientSecret = '';
     showingDcrFallback = false;
     serverTypeOverride = server.serverTypeOverride ?? '';
     serverTypeOverrideHasDefault = Boolean(server.serverTypeOverride);
@@ -361,6 +381,9 @@
     clientSecret = '';
     scopes = '';
     selectedScopes = new Set();
+    orgBoundScopes = '';
+    resourceClientId = '';
+    resourceClientSecret = '';
     showingDcrFallback = false;
     serverTypeOverride = '';
     serverTypeOverrideHasDefault = false;
@@ -489,7 +512,14 @@
     // probe/escalation + browser-SSO path entirely — no per-server auth needed.
     const emaParams = buildOrgBoundEndpointParams(
       orgBound ? selectedOrganization : '',
-      { name, url, description },
+      {
+        name,
+        url,
+        description,
+        scopes: orgBoundScopes,
+        resourceClientId,
+        resourceClientSecret,
+      },
     );
     if (emaParams) {
       submitting = true;
@@ -1138,9 +1168,12 @@
             class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
         </div>
 
-        <!-- Organization binding (custom, http transport only). Selecting an
-             org makes the server authenticate via that org's shared EMA
-             credentials instead of its own per-server OAuth. -->
+        <!-- Organization binding (custom add only, http + oauth transports).
+             Selecting an org makes the server authenticate via that org's
+             shared EMA credentials instead of its own per-server OAuth — the
+             submit then routes through `buildOrgBoundEndpointParams` which
+             builds a plain `http` EMA endpoint, dropping the per-server OAuth
+             setup entirely. -->
         {#if orgSelectorVisible}
           <div>
             <label for="modal-ep-org" class="block text-xs font-medium mb-1 text-(--fg2)">Organization <span class="text-(--fg2)/50">(optional)</span></label>
@@ -1159,12 +1192,23 @@
               <p class="text-[11px] text-(--fg2) mt-0.5">
                 No organizations yet — use “Connect an organization” to sign in once and share its credentials across servers.
               </p>
-            {:else}
+            {:else if !orgBound}
               <p class="text-[11px] text-(--fg2) mt-0.5">
                 Bind this server to an organization to authenticate with its shared credentials instead of per-server OAuth.
               </p>
             {/if}
           </div>
+          {#if orgBound}
+            <!-- EMA outcome notice. Shown for both http and oauth selections
+                 once an org is chosen, since the submit path collapses to the
+                 same `auth.type="ema"` http endpoint and per-server OAuth is
+                 dropped. -->
+            <div class="px-3 py-2 rounded-lg border border-(--border) bg-(--surface-hover)">
+              <p class="text-[11px] text-(--fg2)">
+                This server will be added as an organization-managed (EMA) endpoint and use <strong>{selectedOrganization}</strong>'s shared credentials instead of its own OAuth.
+              </p>
+            </div>
+          {/if}
         {/if}
 
         {#if transport === 'stdio'}
@@ -1227,11 +1271,10 @@
               class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {fieldErrors.url ? 'border-(--offline)' : 'border-(--border)'}" />
           </div>
 
-          {#if orgBound}
-            <p class="text-[11px] text-(--fg2)">
-              Authentication is handled by the selected organization — no per-server OAuth setup is needed.
-            </p>
-          {:else}
+          {#if !orgBound}
+          <!-- Per-server OAuth fields are dropped when an org is bound — the
+               EMA `http` endpoint reuses the org's shared credentials instead.
+               The user-facing explainer lives in the shared notice above. -->
           <!-- Curated scope checkbox list (only when the catalog entry exposes availableScopes) -->
           {#if scopeMode === 'checkbox' && selectedOAuthEntry?.availableScopes}
             <div>
@@ -1496,40 +1539,89 @@
           </div>
         {/if}
 
-        <!-- Generic Advanced section for non-OAuth transports. Auto-expanded
-             when the catalog entry ships a default `serverTypeOverride`. -->
-        {#if transport !== 'oauth'}
+        <!-- Generic Advanced section. Gated to render for non-oauth
+             transports OR any org-bound selection: org-bound OAUTH still
+             collapses to an EMA http endpoint at submit, so the EMA fields
+             (Scopes + Resource Client ID/Secret) belong here even on the
+             oauth transport. Auto-expanded when the catalog entry ships a
+             default `serverTypeOverride`. -->
+        {#if orgBound || transport !== 'oauth'}
           <details class="border border-(--border) rounded-lg" open={serverTypeOverrideHasDefault}>
             <summary class="px-3 py-2 text-xs font-medium text-(--fg2) cursor-pointer hover:bg-(--surface-hover) rounded-lg select-none">
               Advanced
             </summary>
             <div class="px-3 pb-3 space-y-3">
-              <div>
-                <label for="modal-ep-server-type-override-generic" class="block text-xs font-medium mb-1 text-(--fg2)">Server type override <span class="text-(--fg2)/50">(optional)</span></label>
-                <input
-                  id="modal-ep-server-type-override-generic"
-                  type="text"
-                  bind:value={serverTypeOverride}
-                  placeholder="e.g. my-server"
-                  maxlength={64}
-                  class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
-                <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Max 64 characters.</p>
-                {#if serverTypeOverridePreviewVisible}
-                  <p class="text-[11px] text-(--fg2) mt-0.5">Will be saved as: <code>{serverTypeOverrideSanitized}</code></p>
-                {/if}
-                {#if serverTypeOverrideInvalid}
-                  <p class="text-[11px] text-(--offline) mt-0.5">No usable characters — please include lowercase letters, digits, <code>-</code>, or <code>_</code>.</p>
-                {/if}
-                {#if serverTypeOverrideTooLong}
-                  <p class="text-[11px] text-(--offline) mt-0.5">Maximum 64 characters.</p>
-                {/if}
-              </div>
+              {#if orgBound}
+                <!-- Optional EMA scopes + resource pairing credential.
+                     `scopes` lands in the endpoint's `config.toml` (drives
+                     R2's IdP scope on first sign-in); the resource pair is
+                     stripped by `addEndpoint()` and POSTed to
+                     `/api/endpoints/{name}/credentials` (DCR file, chmod
+                     0600), never in `config.toml`. Mirrors the D2 Config-tab
+                     fields' labels and UX. -->
+                <div>
+                  <label for="modal-ep-orgbound-scopes" class="block text-xs font-medium mb-1 text-(--fg2)">Scopes <span class="text-(--fg2)/50">(optional, space-separated)</span></label>
+                  <input id="modal-ep-orgbound-scopes" type="text" bind:value={orgBoundScopes} placeholder="read write"
+                    class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Space-separated. Leave blank for server defaults.</p>
+                </div>
+                <div>
+                  <label for="modal-ep-orgbound-resource-client-id" class="block text-xs font-medium mb-1 text-(--fg2)">
+                    Resource Client ID <span class="text-(--fg2)/50">(optional)</span>
+                  </label>
+                  <input id="modal-ep-orgbound-resource-client-id" type="text" bind:value={resourceClientId}
+                    placeholder="Resource (MAS) client ID"
+                    class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+                  <p class="text-[11px] text-(--fg2) mt-0.5">
+                    Only for MCP servers that require a separate client at the Step-3 token exchange. Leave blank for everything else.
+                  </p>
+                </div>
+                <div>
+                  <label for="modal-ep-orgbound-resource-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">
+                    Resource Client Secret <span class="text-(--fg2)/50">(optional)</span>
+                  </label>
+                  <input id="modal-ep-orgbound-resource-client-secret" type="password" autocomplete="new-password" bind:value={resourceClientSecret}
+                    placeholder=""
+                    class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)" />
+                  <p class="text-[11px] text-(--fg2) mt-0.5">
+                    Paired with the resource client ID. Stored in the owner-scoped credential directory, separate from <code>config.toml</code>.
+                  </p>
+                </div>
+              {/if}
+              {#if transport !== 'oauth'}
+                <div>
+                  <label for="modal-ep-server-type-override-generic" class="block text-xs font-medium mb-1 text-(--fg2)">Server type override <span class="text-(--fg2)/50">(optional)</span></label>
+                  <input
+                    id="modal-ep-server-type-override-generic"
+                    type="text"
+                    bind:value={serverTypeOverride}
+                    placeholder="e.g. my-server"
+                    maxlength={64}
+                    class="w-full text-sm px-3 py-1.5 rounded-lg border bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent) {serverTypeOverrideInvalid || serverTypeOverrideTooLong ? 'border-(--offline)' : 'border-(--border)'}" />
+                  <p class="text-[11px] text-(--fg2) mt-0.5">Optional. Replaces the name this server reports to MCP clients. Max 64 characters.</p>
+                  {#if serverTypeOverridePreviewVisible}
+                    <p class="text-[11px] text-(--fg2) mt-0.5">Will be saved as: <code>{serverTypeOverrideSanitized}</code></p>
+                  {/if}
+                  {#if serverTypeOverrideInvalid}
+                    <p class="text-[11px] text-(--offline) mt-0.5">No usable characters — please include lowercase letters, digits, <code>-</code>, or <code>_</code>.</p>
+                  {/if}
+                  {#if serverTypeOverrideTooLong}
+                    <p class="text-[11px] text-(--offline) mt-0.5">Maximum 64 characters.</p>
+                  {/if}
+                </div>
+              {/if}
             </div>
           </details>
         {/if}
 
-        <!-- Test Connection (not shown for OAuth) -->
-        {#if transport !== 'oauth'}
+        <!-- Test Connection. Suppressed when:
+             - transport is `oauth` (per-server OAuth flow has its own probe), or
+             - `orgBound` is true on any transport (the org-managed EMA path
+               can't be exercised with just transport+url — the access token
+               only exists after add-time, once the org's IdP chain runs).
+             When org-bound, a short note replaces the button so the user
+             understands health is verified after adding. -->
+        {#if transport !== 'oauth' && !orgBound}
           <div class="flex items-center gap-2">
             <button
               type="button"
@@ -1562,6 +1654,10 @@
               {/if}
             {/if}
           </div>
+        {:else if orgBound}
+          <p class="text-[11px] text-(--fg2)">
+            Connection is verified via <strong>{selectedOrganization}</strong>'s shared credentials after you add the server.
+          </p>
         {/if}
 
         {#if error}

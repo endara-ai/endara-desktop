@@ -9,6 +9,62 @@ import type {
 } from '$lib/types';
 
 // ---------------------------------------------------------------------------
+// Poll-for-auth (shared by initial-connect flow and Settings re-authenticate)
+// ---------------------------------------------------------------------------
+
+export interface PollForOrgAuthDeps {
+  listOrganizations: () => Promise<Organization[]>;
+}
+
+export interface PollForOrgAuthOptions {
+  /** Poll cadence in ms. Default 2000. */
+  intervalMs?: number;
+  /** Overall budget in ms. Default 120_000. */
+  timeoutMs?: number;
+  /** Callback checked before each list call — return true to abort. */
+  shouldCancel?: () => boolean;
+  /** Sleep primitive; overridable for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export type PollForOrgAuthResult =
+  | { status: 'authenticated' }
+  | { status: 'cancelled' }
+  | { status: 'timeout' };
+
+/**
+ * Poll the org list until the relay reports the named org as authenticated
+ * (its IdP callback landed) or the budget elapses. Used by both the Connect-
+ * org flow and Settings → re-authenticate so the two share a single cadence
+ * and cancellation contract. Transient list failures are swallowed so a brief
+ * relay hiccup does not abort the wait.
+ */
+export async function pollForOrgAuth(
+  name: string,
+  deps: PollForOrgAuthDeps,
+  opts: PollForOrgAuthOptions = {},
+): Promise<PollForOrgAuthResult> {
+  const intervalMs = opts.intervalMs ?? 2000;
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const shouldCancel = opts.shouldCancel ?? (() => false);
+  const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(intervalMs);
+    if (shouldCancel()) return { status: 'cancelled' };
+    try {
+      const orgs = await deps.listOrganizations();
+      const org = orgs.find((o) => o.name === name);
+      if (org?.authenticated) return { status: 'authenticated' };
+    } catch {
+      // transient — keep polling
+    }
+  }
+  return { status: 'timeout' };
+}
+
+// ---------------------------------------------------------------------------
 // Provider picker — issuer build (M6/M8)
 // ---------------------------------------------------------------------------
 
@@ -49,17 +105,23 @@ export function buildIssuerPreview(provider: IdpProvider, slug: string): string 
  * raw issuer as `idp`; templated providers send `slug` (omitted when the
  * provider needs none, e.g. Google). An optional pre-registered `client_id`
  * (required for Okta/Entra) is trimmed and only included when non-empty;
- * leaving it blank takes the CIMD/DCR path.
+ * leaving it blank takes the CIMD/DCR path. An optional confidential-client
+ * `client_secret` is trimmed and only included when non-empty; the relay
+ * persists it in the secure credential store, never `config.toml`. The EMA
+ * **resource** pairing credential is per-resource (R3) and is configured on the
+ * endpoint's Config tab, not here.
  */
 export function buildCreateOrgParams(
   provider: IdpProvider,
   name: string,
   slugOrUrl: string,
   clientId = '',
+  clientSecret = '',
 ): CreateOrganizationParams {
   const trimmedName = name.trim();
   const trimmedValue = slugOrUrl.trim();
   const trimmedClientId = clientId.trim();
+  const trimmedClientSecret = clientSecret.trim();
   let params: CreateOrganizationParams;
   if (isCustomProvider(provider)) {
     params = { name: trimmedName, provider: provider.id, idp: trimmedValue };
@@ -71,6 +133,9 @@ export function buildCreateOrgParams(
   }
   if (trimmedClientId) {
     params.client_id = trimmedClientId;
+  }
+  if (trimmedClientSecret) {
+    params.client_secret = trimmedClientSecret;
   }
   return params;
 }
@@ -248,6 +313,32 @@ export async function addEndpointsWithRefresh(
 /** Human-readable auth-status label for an org row in the management list. */
 export function orgStatusLabel(org: Organization): string {
   return org.authenticated ? 'Connected' : 'Sign-in required';
+}
+
+// ---------------------------------------------------------------------------
+// Org-expiry banner — derive logic (Wave 20)
+// ---------------------------------------------------------------------------
+
+/**
+ * The list of orgs whose IdP auth is expired/unauthenticated. `authenticated`
+ * is already computed by the relay from the stored ID token's expiry, so this
+ * is a plain filter — no client-side clock math.
+ */
+export function unauthenticatedOrgs(orgs: Organization[]): Organization[] {
+  return orgs.filter((o) => o.authenticated === false);
+}
+
+/**
+ * Banner headline for the global org-expiry banner. Returns `null` when no
+ * orgs need re-auth (the banner then renders nothing). Single-org copy names
+ * the org so the user knows exactly which sign-in lapsed; multi-org copy
+ * counts them so the banner stays short.
+ */
+export function orgExpiryBannerMessage(orgs: Organization[]): string | null {
+  const stale = unauthenticatedOrgs(orgs);
+  if (stale.length === 0) return null;
+  if (stale.length === 1) return `Sign-in required for ${stale[0].name}`;
+  return `${stale.length} organizations need re-authentication`;
 }
 
 // ---------------------------------------------------------------------------

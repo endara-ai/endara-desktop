@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import addEndpointModalSource from './AddEndpointModal.svelte?raw';
 import { sanitizeName } from '$lib/utils';
 import { CATALOG_SERVERS, type CatalogServer } from '$lib/catalog';
 import { oauthCatalog, type OAuthCatalogEntry } from '$lib/data/oauth-catalog';
@@ -733,6 +734,9 @@ describe('computeAddEndpointIsDirty', () => {
       clientId: '',
       clientSecret: '',
       scopes: '',
+      orgBoundScopes: '',
+      resourceClientId: '',
+      resourceClientSecret: '',
       serverTypeOverride: '',
       isolationEnabled: true,
       mounts: [],
@@ -767,6 +771,9 @@ describe('computeAddEndpointIsDirty', () => {
       'clientId',
       'clientSecret',
       'scopes',
+      'orgBoundScopes',
+      'resourceClientId',
+      'resourceClientSecret',
       'serverTypeOverride',
     ];
     for (const key of cases) {
@@ -1017,15 +1024,19 @@ describe('catalog containerizable flags', () => {
 });
 
 describe('orgBindingApplies', () => {
-  // EMA org-binding builds an http endpoint, so the Organization selector must
-  // be offered for http only — otherwise an sse/oauth selection would silently
-  // be converted to http by `buildOrgBoundEndpointParams`.
-  it('is true only for the http transport', () => {
+  // The relay only accepts EMA on http/oauth (watcher.rs:
+  // "EMA endpoint requires transport http or oauth"), and
+  // `buildOrgBoundEndpointParams` always emits an http EMA endpoint regardless
+  // of the chosen transport — so the Organization selector is safe to surface
+  // for both. sse carries no per-request headers (EMA can't inject Authorization)
+  // and stdio has no remote auth surface at all, so both stay excluded.
+  it('is true for the http and oauth transports', () => {
     expect(orgBindingApplies('http')).toBe(true);
+    expect(orgBindingApplies('oauth')).toBe(true);
   });
 
-  it('is false for sse, oauth, and stdio', () => {
-    for (const t of ['sse', 'oauth', 'stdio'] as const) {
+  it('is false for sse and stdio', () => {
+    for (const t of ['sse', 'stdio'] as const) {
       expect(orgBindingApplies(t)).toBe(false);
     }
   });
@@ -1085,6 +1096,183 @@ describe('buildOrgBoundEndpointParams', () => {
       description: '   ',
     });
     expect(blankDesc && 'description' in blankDesc).toBe(false);
+  });
+
+  // D3 — optional EMA scopes + resource pair (R3), settable at add-time.
+  // `scopes` stays on the POST `/endpoints` body (config.toml); the resource
+  // pair is stripped by `addEndpoint()` and POSTed to `/credentials` (DCR
+  // file). Blank/whitespace input omits each field entirely.
+  it('omits scopes / resource_client_id / resource_client_secret when no extras are supplied', () => {
+    const params = buildOrgBoundEndpointParams('Acme', {
+      name: 'My Server',
+      url: 'https://mcp.example.com/mcp',
+    });
+    expect(params && 'scopes' in params).toBe(false);
+    expect(params && 'resource_client_id' in params).toBe(false);
+    expect(params && 'resource_client_secret' in params).toBe(false);
+  });
+
+  it('includes scopes / resource_client_id / resource_client_secret when non-empty (trimmed)', () => {
+    const params = buildOrgBoundEndpointParams('Acme', {
+      name: 'My Server',
+      url: 'https://mcp.example.com/mcp',
+      scopes: '  todos.read   mcp.access  ',
+      resourceClientId: '  mas-client-abc  ',
+      resourceClientSecret: '  super-secret  ',
+    });
+    expect(params?.scopes).toBe('todos.read mcp.access');
+    expect(params?.resource_client_id).toBe('mas-client-abc');
+    expect(params?.resource_client_secret).toBe('super-secret');
+  });
+
+  it('omits each extra field independently when blank or whitespace-only', () => {
+    const params = buildOrgBoundEndpointParams('Acme', {
+      name: 'My Server',
+      url: 'https://mcp.example.com/mcp',
+      scopes: '   ',
+      resourceClientId: '',
+      resourceClientSecret: '\t\n  ',
+    });
+    expect(params && 'scopes' in params).toBe(false);
+    expect(params && 'resource_client_id' in params).toBe(false);
+    expect(params && 'resource_client_secret' in params).toBe(false);
+  });
+
+  it('still returns null when no organization is selected, even with extras supplied', () => {
+    expect(
+      buildOrgBoundEndpointParams('', {
+        name: 'My Server',
+        url: 'https://mcp.example.com/mcp',
+        scopes: 'todos.read',
+        resourceClientId: 'mas-client-abc',
+        resourceClientSecret: 'super-secret',
+      }),
+    ).toBeNull();
+  });
+
+  it('treats a partial extras set independently (scopes only, resource pair only)', () => {
+    const scopesOnly = buildOrgBoundEndpointParams('Acme', {
+      name: 'My Server',
+      url: 'https://mcp.example.com/mcp',
+      scopes: 'todos.read',
+    });
+    expect(scopesOnly?.scopes).toBe('todos.read');
+    expect(scopesOnly && 'resource_client_id' in scopesOnly).toBe(false);
+    expect(scopesOnly && 'resource_client_secret' in scopesOnly).toBe(false);
+
+    const resourceOnly = buildOrgBoundEndpointParams('Acme', {
+      name: 'My Server',
+      url: 'https://mcp.example.com/mcp',
+      resourceClientId: 'mas-client-abc',
+      resourceClientSecret: 'super-secret',
+    });
+    expect(resourceOnly && 'scopes' in resourceOnly).toBe(false);
+    expect(resourceOnly?.resource_client_id).toBe('mas-client-abc');
+    expect(resourceOnly?.resource_client_secret).toBe('super-secret');
+  });
+});
+
+// ── Test Connection suppression when org-bound ──
+//
+// When an org is selected, the EMA add-time path can't be exercised by a raw
+// transport+url probe — the access token only exists once the org's IdP chain
+// runs at add-time. Showing "Test Connection" would just return a misleading
+// 401, so it's hidden and replaced with a short post-add verification note.
+// Test environment is node (not jsdom), so the assertion is on the Svelte
+// source — mirrors the static-source style used elsewhere in this suite.
+describe('AddEndpointModal — Test Connection gating when org-bound', () => {
+  it('gates the Test Connection block on `transport !== "oauth" && !orgBound`', () => {
+    // The button only shows for non-oauth transports AND when no org is bound.
+    // The combined guard is what restores today's behavior when org is "None"
+    // (orgBound=false → the `!orgBound` branch passes → button visible).
+    expect(addEndpointModalSource).toMatch(/\{#if transport !== 'oauth' && !orgBound\}/);
+  });
+
+  it('replaces Test Connection with a post-add verification note when org-bound', () => {
+    // The `:else if orgBound` branch handles the http+orgBound case (oauth is
+    // already excluded by the outer guard) and explains the test is unavailable
+    // because verification happens via the org's shared credentials at add-time.
+    const replacementBlock = addEndpointModalSource.match(
+      /\{:else if orgBound\}[\s\S]*?Connection is verified via[\s\S]*?\{selectedOrganization\}[\s\S]*?after you add the server[\s\S]*?\{\/if\}/,
+    );
+    expect(replacementBlock, 'expected the org-bound replacement note for Test Connection').not.toBeNull();
+  });
+
+  it('renders the EMA outcome notice under an `{#if orgBound}` guard naming the selected org', () => {
+    // Shared notice rendered right after the org selector for both http and
+    // oauth selections, so the user sees the EMA endpoint outcome explicitly
+    // before submitting.
+    const noticeBlock = addEndpointModalSource.match(
+      /\{#if orgBound\}[\s\S]*?organization-managed \(EMA\) endpoint[\s\S]*?\{selectedOrganization\}[\s\S]*?shared credentials instead of its own OAuth[\s\S]*?\{\/if\}/,
+    );
+    expect(noticeBlock, 'expected the EMA outcome notice block').not.toBeNull();
+  });
+
+  // D3/D4 — The optional EMA Scopes + Resource Client ID/Secret inputs live
+  // inside the single consolidated Advanced <details>, gated on
+  // `{#if orgBound}` so they only appear once an org is actually selected.
+  // Each input is bound to its own local `$state` and threaded into
+  // `buildOrgBoundEndpointParams` on submit.
+  it('renders Scopes + Resource Client ID/Secret inputs guarded by `{#if orgBound}` inside the Advanced section', () => {
+    expect(addEndpointModalSource).toMatch(/id="modal-ep-orgbound-scopes"[\s\S]*?bind:value=\{orgBoundScopes\}/);
+    expect(addEndpointModalSource).toMatch(
+      /id="modal-ep-orgbound-resource-client-id"[\s\S]*?bind:value=\{resourceClientId\}/,
+    );
+    expect(addEndpointModalSource).toMatch(
+      /id="modal-ep-orgbound-resource-client-secret"[\s\S]*?type="password"[\s\S]*?bind:value=\{resourceClientSecret\}/,
+    );
+    // The EMA field group is nested inside the shared Advanced <details>
+    // gated on `{#if orgBound || transport !== 'oauth'}`.
+    expect(addEndpointModalSource).toMatch(
+      /\{#if orgBound \|\| transport !== 'oauth'\}[\s\S]*?<summary[^>]*>\s*Advanced\s*<\/summary>[\s\S]*?\{#if orgBound\}[\s\S]*?id="modal-ep-orgbound-scopes"/,
+    );
+  });
+
+  // D4 — After the org-bound EMA fields were folded into the pre-existing
+  // Server-type-override Advanced <details>, the http/stdio branch of the
+  // modal must have exactly ONE Advanced section, and the D3 duplicate
+  // Advanced <details> that used to live directly inside `{#if orgBound}`
+  // (sandwiching the URL/Env/Headers fields with a second Advanced summary)
+  // must no longer exist. The remaining Advanced <summary> occurrences in
+  // source are: (1) the per-server OAuth branch's Advanced (gated on
+  // `transport === 'oauth'` + `{#if !orgBound}` — never renders in the
+  // org-bound flow), and (2) the single consolidated Advanced gated on
+  // `{#if orgBound || transport !== 'oauth'}` that this task establishes.
+  it('no longer renders a duplicate Advanced <details> directly inside `{#if orgBound}` (D3 sandwich fix)', () => {
+    // The D3 layout put a full `<details>...Advanced...</details>` block
+    // directly under the `{#if orgBound}` guard, above the URL field. D4
+    // moves those fields into the consolidated Advanced further down, so
+    // no Advanced <summary> should appear between `{#if orgBound}` and the
+    // closing `{/if}` that ends the org-bound guarded block.
+    const orgBoundInnerBlock = addEndpointModalSource.match(
+      /\{#if orgBound\}\s*<!--\s*EMA outcome notice[\s\S]*?\{\/if\}/,
+    );
+    expect(orgBoundInnerBlock, 'expected the org-bound EMA notice block').not.toBeNull();
+    expect(orgBoundInnerBlock![0]).not.toMatch(/<summary[^>]*>\s*Advanced\s*<\/summary>/);
+  });
+
+  // D4 — Total Advanced <summary> occurrences in source are exactly 2:
+  // the per-server OAuth branch's Advanced (mutually exclusive with the
+  // org-bound branch via `{#if !orgBound}`) and the single consolidated
+  // Advanced. No third one may exist.
+  it('renders exactly two Advanced <summary> occurrences in source (per-server OAuth + consolidated)', () => {
+    const matches = addEndpointModalSource.match(/<summary[^>]*>\s*Advanced\s*<\/summary>/g) ?? [];
+    expect(matches.length).toBe(2);
+  });
+
+  it('keeps per-server OAuth fields under a `{#if !orgBound}` guard on the oauth transport', () => {
+    // The per-server OAuth fields (scopes, client ID/secret, etc.) are
+    // unused on the EMA path, so they're hidden when an org is bound. The
+    // outer oauth-transport branch wraps them in `{#if !orgBound}`.
+    expect(addEndpointModalSource).toMatch(/\{#if !orgBound\}[\s\S]*?Per-server OAuth fields are dropped/);
+  });
+
+  it('routes the submit button to handleSubmit (EMA path) when org-bound, bypassing handleOAuthSubmit', () => {
+    // Even on the oauth transport, an org-bound submit must go through
+    // `handleSubmit` → `buildOrgBoundEndpointParams` → plain EMA add.
+    expect(addEndpointModalSource).toMatch(
+      /onclick=\{transport === 'oauth' && !orgBound \? handleOAuthSubmit : \(\) => handleSubmit\(\)\}/,
+    );
   });
 });
 

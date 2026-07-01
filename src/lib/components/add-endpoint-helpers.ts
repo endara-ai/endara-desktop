@@ -108,14 +108,19 @@ export function resolveIsolation(
 
 /**
  * Whether the EMA Organization selector applies to the custom add flow for a
- * given transport. Only the plain `http` transport qualifies: EMA endpoints are
- * http by construction (`buildOrgBoundEndpointParams` builds an `http` endpoint
- * whose EMA `resource` is the server URL), so offering org-binding for
- * `sse`/`oauth`/`stdio` would let a non-http selection silently create an http
- * endpoint. The caller still applies the catalog/OAuth-entry guards.
+ * given transport. The relay only accepts EMA on `http` or `oauth` transports
+ * (`watcher.rs`: "EMA endpoint requires transport http or oauth"), and EMA
+ * endpoints are built as `http` by construction
+ * (`buildOrgBoundEndpointParams` builds an `http` endpoint whose EMA `resource`
+ * is the server URL) — so offering the selector under `oauth` is safe (it just
+ * routes the org-bound add through the same EMA `http` path, dropping the
+ * per-server OAuth setup). `sse` and `stdio` stay excluded: SSE carries no
+ * per-request headers so EMA can't inject the Authorization header, and stdio
+ * has no remote auth surface at all. The caller still applies the catalog /
+ * OAuth-entry guards.
  */
 export function orgBindingApplies(transport: AddEndpointTransport): boolean {
-  return transport === 'http';
+  return transport === 'http' || transport === 'oauth';
 }
 
 /**
@@ -283,10 +288,26 @@ export function validateAddEndpointForm(input: AddEndpointFormInput): AddEndpoin
  * `auth.type="ema"` block whose `resource` is the server URL the minted access
  * token is scoped to. The URL is required (it becomes the `resource`); the name
  * is still required by the caller's own form validation.
+ *
+ * Optional `scopes` / `resourceClientId` / `resourceClientSecret` mirror the
+ * D2 Config-tab fields and are included on the returned params **only when
+ * non-empty after trim**. `scopes` stays on the POST `/endpoints` body (lands
+ * in the endpoint's `config.toml` and drives R2's IdP scope on first sign-in);
+ * the resource pair is stripped by `addEndpoint()` and POSTed to
+ * `/api/endpoints/{name}/credentials` (DCR file, chmod 0600), never in
+ * `config.toml`. Blank/whitespace input for any of the three behaves exactly
+ * as the no-extras path (field omitted entirely).
  */
 export function buildOrgBoundEndpointParams(
   organization: string,
-  fields: { name: string; url: string; description?: string },
+  fields: {
+    name: string;
+    url: string;
+    description?: string;
+    scopes?: string;
+    resourceClientId?: string;
+    resourceClientSecret?: string;
+  },
 ): AddEndpointParams | null {
   const org = organization.trim();
   if (!org) return null;
@@ -305,6 +326,18 @@ export function buildOrgBoundEndpointParams(
   const description = fields.description?.trim();
   if (description) {
     params.description = description;
+  }
+  const scopes = fields.scopes?.trim();
+  if (scopes) {
+    params.scopes = scopes.split(/\s+/).join(' ');
+  }
+  const resourceClientId = fields.resourceClientId?.trim();
+  if (resourceClientId) {
+    params.resource_client_id = resourceClientId;
+  }
+  const resourceClientSecret = fields.resourceClientSecret?.trim();
+  if (resourceClientSecret) {
+    params.resource_client_secret = resourceClientSecret;
   }
   return params;
 }
@@ -340,6 +373,12 @@ export interface AddEndpointFormSnapshot {
   clientId: string;
   clientSecret: string;
   scopes: string;
+  /** Org-bound (EMA) endpoint scopes — separate from the OAuth `scopes` field
+   *  above since the org-bound advanced block is mutually exclusive with the
+   *  per-server OAuth advanced block (`{#if !orgBound}`). */
+  orgBoundScopes: string;
+  resourceClientId: string;
+  resourceClientSecret: string;
   serverTypeOverride: string;
   isolationEnabled: boolean;
   mounts: MountRow[];
@@ -396,6 +435,9 @@ export function computeAddEndpointIsDirty(
   if (snapshot.clientId !== current.clientId) return true;
   if (snapshot.clientSecret !== current.clientSecret) return true;
   if (snapshot.scopes !== current.scopes) return true;
+  if (snapshot.orgBoundScopes !== current.orgBoundScopes) return true;
+  if (snapshot.resourceClientId !== current.resourceClientId) return true;
+  if (snapshot.resourceClientSecret !== current.resourceClientSecret) return true;
   if (snapshot.serverTypeOverride !== current.serverTypeOverride) return true;
   if (snapshot.isolationEnabled !== current.isolationEnabled) return true;
   if (!sameMountList(snapshot.mounts, current.mounts)) return true;

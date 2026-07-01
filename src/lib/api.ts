@@ -145,6 +145,19 @@ export interface AddEndpointParams {
    * (chmod 0600); never persisted in `config.toml`. Empty/absent = no secret.
    */
   client_secret?: string;
+  /**
+   * Optional EMA **resource** `client_id` presented at the MCP Authorization
+   * Server in Step 3 (ID-JAG redemption). Per-resource (R3), so it is persisted
+   * out-of-band via `/api/endpoints/{name}/credentials` (DCR file, chmod 0600),
+   * never in `config.toml`. Only needed for xaa.dev/Okta-style MASes.
+   */
+  resource_client_id?: string;
+  /**
+   * Optional EMA **resource** `client_secret` paired with `resource_client_id`.
+   * Write-only; persisted via `/api/endpoints/{name}/credentials` (DCR file,
+   * chmod 0600), never in `config.toml`.
+   */
+  resource_client_secret?: string;
   scopes?: string;
   token_endpoint?: string;
   /**
@@ -199,13 +212,36 @@ function mgmtError(res: ApiResponse): Error {
  */
 async function postEndpointCredentials(
   name: string,
-  fields: { client_id?: string; client_secret?: string; oauth_server_url?: string },
+  fields: {
+    client_id?: string;
+    client_secret?: string;
+    oauth_server_url?: string;
+    resource_client_id?: string;
+    resource_client_secret?: string;
+  },
 ): Promise<void> {
   const body: Record<string, string> = {};
+  // Requesting creds are write-only: only sent when non-empty (blank = keep).
   if (fields.client_id) body.client_id = fields.client_id;
   if (fields.client_secret) body.client_secret = fields.client_secret;
   if (fields.oauth_server_url) body.oauth_server_url = fields.oauth_server_url;
-  if (!body.client_id && !body.client_secret) return;
+  // EMA resource pair (R3): absent = keep, empty string = clear, value = set.
+  // Distinguish `undefined` (omit) from `''` (explicit clear) so the relay's
+  // merge can drop a stored value.
+  if (fields.resource_client_id !== undefined) body.resource_client_id = fields.resource_client_id;
+  if (fields.resource_client_secret !== undefined) {
+    body.resource_client_secret = fields.resource_client_secret;
+  }
+  // No-op when there is no credential material to set or clear. A lone
+  // `oauth_server_url` is informational and never worth a round-trip.
+  if (
+    !body.client_id &&
+    !body.client_secret &&
+    body.resource_client_id === undefined &&
+    body.resource_client_secret === undefined
+  ) {
+    return;
+  }
   const res = await mgmtRequest(
     'POST',
     `/endpoints/${encodeURIComponent(name)}/credentials`,
@@ -217,9 +253,10 @@ async function postEndpointCredentials(
 }
 
 export async function addEndpoint(params: AddEndpointParams): Promise<void> {
-  // Body excludes the write-only client_secret; credentials are persisted via
-  // the separate /credentials endpoint below (DCR file, chmod 0600).
-  const { client_secret, ...body } = params;
+  // Body excludes the write-only client_secret and the EMA resource pair;
+  // credentials are persisted via the separate /credentials endpoint below
+  // (DCR file, chmod 0600).
+  const { client_secret, resource_client_id, resource_client_secret, ...body } = params;
   const res = await mgmtRequest('POST', '/endpoints', body);
   if (res.status < 200 || res.status >= 300) {
     throw mgmtError(res);
@@ -228,6 +265,8 @@ export async function addEndpoint(params: AddEndpointParams): Promise<void> {
     client_id: params.client_id,
     client_secret,
     oauth_server_url: params.oauth_server_url,
+    resource_client_id,
+    resource_client_secret,
   });
 }
 
@@ -277,6 +316,17 @@ export interface EndpointConfig {
    * write-only field.
    */
   client_secret_set?: boolean;
+  /**
+   * The EMA **resource** `client_id` stored per-endpoint (R3); absent when
+   * unset. Not a secret, so the value is returned and rendered editable.
+   */
+  resource_client_id?: string;
+  /**
+   * `true` when an EMA **resource** `client_secret` is stored for this endpoint
+   * (DCR file). The secret value itself is never returned; the UI renders a
+   * masked, write-only field.
+   */
+  resource_client_secret_set?: boolean;
   scopes?: string;
   token_endpoint?: string;
   /**
@@ -295,6 +345,14 @@ export interface EndpointConfig {
    * `-v` `"host_path:container_path"` pairs. Absent when none are configured.
    */
   mounts?: string[];
+  /**
+   * EMA org-binding mirrored from the persisted `[endpoints.auth]` sub-table.
+   * Absent for ordinary endpoints. The UI displays the bound organization
+   * (read-only) and passes the block back on `updateEndpoint` so the relay's
+   * PUT — which rebuilds the whole endpoint config from the body — preserves
+   * the binding.
+   */
+  auth?: EmaAuthConfig;
 }
 
 export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
@@ -321,6 +379,17 @@ export interface UpdateEndpointParams {
    * `config.toml`.
    */
   client_secret?: string;
+  /**
+   * EMA **resource** `client_id` (R3, MAS Step-3 credential). Absent preserves
+   * the stored value, an empty string clears it, a non-empty value sets it.
+   * Persisted via `/api/endpoints/{name}/credentials`, never in `config.toml`.
+   */
+  resource_client_id?: string;
+  /**
+   * EMA **resource** `client_secret` paired with `resource_client_id`. Same
+   * merge semantics; write-only and never returned to the UI.
+   */
+  resource_client_secret?: string;
   scopes?: string;
   token_endpoint?: string;
   /**
@@ -342,6 +411,14 @@ export interface UpdateEndpointParams {
    * array (possibly empty, to clear) for stdio endpoints.
    */
   mounts?: string[];
+  /**
+   * EMA org-binding block (`[endpoints.auth]`) round-tripped on update. The
+   * relay's PUT rebuilds the whole endpoint config from the body, so the
+   * stored binding must be sent back verbatim or it would be silently dropped.
+   * Absent for ordinary (non-EMA) endpoints — no empty `auth` key is sent in
+   * that case, keeping the PUT body byte-for-byte unchanged.
+   */
+  auth?: EmaAuthConfig;
 }
 
 export async function startOAuth(name: string): Promise<OAuthStartResult> {
@@ -396,7 +473,8 @@ export async function updateEndpoint(params: UpdateEndpointParams): Promise<void
   // Body mirrors the POST `/api/endpoints` shape: `original_name` moves to the
   // path, and `client_secret` is excluded so it is persisted out-of-band via
   // /credentials (DCR file, chmod 0600) rather than stored in `config.toml`.
-  const { original_name, client_secret, ...body } = params;
+  const { original_name, client_secret, resource_client_id, resource_client_secret, ...body } =
+    params;
   const res = await mgmtRequest(
     'PUT',
     `/endpoints/${encodeURIComponent(original_name)}`,
@@ -409,6 +487,8 @@ export async function updateEndpoint(params: UpdateEndpointParams): Promise<void
     client_id: params.client_id,
     client_secret,
     oauth_server_url: params.oauth_server_url,
+    resource_client_id,
+    resource_client_secret,
   });
 }
 
@@ -703,6 +783,13 @@ export interface CreateOrganizationParams {
   idp?: string;
   /** Pre-registered IdP client id (required for Okta/Entra; omit for CIMD/DCR). */
   client_id?: string;
+  /**
+   * Pre-registered confidential-client `client_secret`. Required for Okta/Entra
+   * apps configured as confidential clients. Persisted in the relay's secure
+   * credential store (`{org}.dcr.json`, 0600); never written to `config.toml`
+   * and never returned to the UI.
+   */
+  client_secret?: string;
 }
 
 /**
@@ -716,6 +803,78 @@ export async function createOrganization(
     method: 'POST',
     body: params,
   });
+}
+
+/**
+ * Body for `PUT /api/organizations/{org}`. All fields are optional — omitted
+ * fields preserve the current value. `client_id` and `client_secret` use an
+ * empty string (`""`) as the explicit "clear" signal so callers can
+ * distinguish "keep" (absent) from "remove" (present-and-empty).
+ */
+export interface UpdateOrganizationParams {
+  /** New display name; rename purges pooled IdP credentials. */
+  name?: string;
+  /** New provider template id (`okta`, `entra`, `google`, `ping`, `custom`). */
+  provider?: string;
+  /** New slug for templated providers. */
+  slug?: string;
+  /** New full issuer URL for `provider = "custom"`. */
+  idp?: string;
+  /** New explicit `client_id`. Empty string clears the persisted id. */
+  client_id?: string;
+  /** New confidential-client `client_secret`. Empty string deletes the stored secret. */
+  client_secret?: string;
+}
+
+/**
+ * Identity-unchanged variant of the `PUT /api/organizations/{org}` response:
+ * the org metadata was updated but credentials were preserved. Mirrors the
+ * shape of an entry in `GET /api/organizations`.
+ */
+export interface OrganizationUpdated {
+  name: string;
+  provider: string;
+  idp: string;
+  authenticated: boolean;
+  client_secret_set?: boolean;
+}
+
+/**
+ * Identity-changed variant of the `PUT /api/organizations/{org}` response:
+ * the rename/issuer/client_id change invalidated pooled credentials so the
+ * caller must re-run the IdP sign-in by opening `authorize_url`.
+ */
+export interface OrganizationReauthRequired {
+  name: string;
+  provider: string;
+  idp: string;
+  authorize_url: string;
+}
+
+/** Discriminated by the presence of `authorize_url`. */
+export type UpdateOrganizationResponse = OrganizationUpdated | OrganizationReauthRequired;
+
+/** True when the PUT response requires re-running the IdP sign-in. */
+export function updateRequiresReauth(
+  res: UpdateOrganizationResponse,
+): res is OrganizationReauthRequired {
+  return 'authorize_url' in res && typeof res.authorize_url === 'string';
+}
+
+/**
+ * PUT /api/organizations/{org} — update an existing organization's metadata
+ * and/or its persisted IdP credentials. Returns either the refreshed org
+ * metadata (credentials preserved) or a fresh SSO authorize URL (identity
+ * changed; re-authentication required).
+ */
+export async function updateOrganization(
+  name: string,
+  params: UpdateOrganizationParams,
+): Promise<UpdateOrganizationResponse> {
+  return fetchJson<UpdateOrganizationResponse>(
+    `/organizations/${encodeURIComponent(name)}`,
+    { method: 'PUT', body: params },
+  );
 }
 
 /** GET /api/organizations — configured organizations with auth status. */

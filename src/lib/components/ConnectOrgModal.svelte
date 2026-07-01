@@ -20,6 +20,7 @@
     addEndpointsWithRefresh,
     startOrgConnection,
     isAlreadyInstalled,
+    pollForOrgAuth,
     type OnboardingCandidate,
   } from './onboarding-helpers';
   import { endpoints, relayPort } from '$lib/stores';
@@ -42,6 +43,8 @@
   let orgName = $state('');
   let slugOrUrl = $state('');
   let clientId = $state('');
+  // Write-only; never echoed back. Cleared on cancel/submit failure.
+  let clientSecret = $state('');
   let error = $state('');
   let submitting = $state(false);
 
@@ -120,7 +123,13 @@
       return;
     }
 
-    const params = buildCreateOrgParams(selectedProvider, name, slugOrUrl, clientId);
+    const params = buildCreateOrgParams(
+      selectedProvider,
+      name,
+      slugOrUrl,
+      clientId,
+      clientSecret,
+    );
     submitting = true;
     try {
       const res = await startOrgConnection(params, { createOrganization, openUrl });
@@ -141,35 +150,29 @@
     }
   }
 
-  // Poll the org list until the relay reports the org as authenticated (the IdP
-  // callback has landed) or the budget elapses. ~2s interval, ~120s budget.
+  // Wait for the relay to report the org as authenticated (IdP callback
+  // landed) via the shared `pollForOrgAuth` helper, then republish the org
+  // list and advance to detection. Timeout drops back to the provider step.
   async function pollForAuth(name: string) {
     pollCancelled = false;
-    const deadline = Date.now() + 120_000;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2000));
-      if (pollCancelled) return;
-      try {
-        const orgs = await listOrganizations();
-        const org = orgs.find((o) => o.name === name);
-        if (org?.authenticated) {
-          // Sign-in landed: republish so Settings flips the org to "Connected".
-          try {
-            await refreshOrganizations();
-          } catch {
-            // Non-fatal; the Settings mount poll reconciles later.
-          }
-          await runProbe(name);
-          return;
-        }
-      } catch {
-        // transient — keep polling
-      }
-    }
-    if (!pollCancelled) {
+    const outcome = await pollForOrgAuth(
+      name,
+      { listOrganizations },
+      { shouldCancel: () => pollCancelled },
+    );
+    if (outcome.status === 'cancelled') return;
+    if (outcome.status === 'timeout') {
       error = 'Sign-in timed out. Please try again.';
       step = 'provider';
+      return;
     }
+    // Sign-in landed: republish so Settings flips the org to "Connected".
+    try {
+      await refreshOrganizations();
+    } catch {
+      // Non-fatal; the Settings mount poll reconciles later.
+    }
+    await runProbe(name);
   }
 
   async function runProbe(name: string) {
@@ -320,6 +323,24 @@
             <p class="text-[11px] text-(--fg2) mt-0.5">
               Required for Okta/Entra. The IdP app must whitelist
               <code>http://127.0.0.1:{$relayPort}/oauth/callback</code>.
+            </p>
+          </div>
+
+          <div>
+            <label for="org-client-secret" class="block text-xs font-medium mb-1 text-(--fg2)">
+              Client Secret <span class="text-(--fg2)/60">(optional)</span>
+            </label>
+            <input
+              id="org-client-secret"
+              type="password"
+              autocomplete="new-password"
+              bind:value={clientSecret}
+              placeholder="Pre-registered IdP client secret"
+              class="w-full text-sm px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface) text-(--fg1) placeholder:text-(--fg2)/50 focus:outline-none focus:border-(--accent)"
+            />
+            <p class="text-[11px] text-(--fg2) mt-0.5">
+              Required for confidential Okta/Entra/custom IdP apps that issue a secret. Stored in
+              owner-scoped credential directory, separate from <code>config.toml</code>.
             </p>
           </div>
         </div>

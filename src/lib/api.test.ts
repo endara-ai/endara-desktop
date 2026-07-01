@@ -544,6 +544,93 @@ describe('api', () => {
     });
   });
 
+  describe('createOrganization (client_secret)', () => {
+    it('threads client_secret through the POST body', async () => {
+      const { createOrganization } = await import('./api');
+      const mockResponse = {
+        name: 'Acme Corp',
+        provider: 'okta',
+        idp: 'https://acme.okta.com',
+        authorize_url: 'https://acme.okta.com/authorize?client_id=x',
+      };
+      vi.mocked(invoke).mockResolvedValue({ status: 201, body: JSON.stringify(mockResponse) });
+
+      const params = {
+        name: 'Acme Corp',
+        provider: 'okta',
+        slug: 'acme',
+        client_id: 'abc',
+        client_secret: 's3cret',
+      };
+      await createOrganization(params);
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({ method: 'POST', path: '/api/organizations', body: params }),
+      );
+    });
+  });
+
+  describe('updateOrganization', () => {
+    it('PUTs to the org path, URL-encoding the name', async () => {
+      const { updateOrganization } = await import('./api');
+      const mockResponse = {
+        name: 'Acme Corp',
+        provider: 'okta',
+        idp: 'https://acme.okta.com',
+        authenticated: true,
+        client_secret_set: true,
+      };
+      mockOk(mockResponse);
+
+      const params = { client_secret: 's3cret' };
+      const res = await updateOrganization('Acme Corp', params);
+      expect(res).toEqual(mockResponse);
+      expect(invoke).toHaveBeenCalledWith(
+        'mgmt_api_request',
+        expect.objectContaining({
+          method: 'PUT',
+          path: '/api/organizations/Acme%20Corp',
+          body: params,
+        }),
+      );
+    });
+
+    it('returns the reauth response shape when the relay says identity changed', async () => {
+      const { updateOrganization, updateRequiresReauth } = await import('./api');
+      const mockResponse = {
+        name: 'Acme Renamed',
+        provider: 'okta',
+        idp: 'https://acme.okta.com',
+        authorize_url: 'https://acme.okta.com/authorize?client_id=x',
+      };
+      mockOk(mockResponse);
+
+      const res = await updateOrganization('Acme Corp', { name: 'Acme Renamed' });
+      expect(res).toEqual(mockResponse);
+      expect(updateRequiresReauth(res)).toBe(true);
+    });
+
+    it('updateRequiresReauth is false when the response carries authenticated metadata', async () => {
+      const { updateRequiresReauth } = await import('./api');
+      expect(
+        updateRequiresReauth({
+          name: 'Acme',
+          provider: 'okta',
+          idp: 'https://acme.okta.com',
+          authenticated: true,
+        }),
+      ).toBe(false);
+    });
+
+    it('throws on a relay error status', async () => {
+      const { updateOrganization } = await import('./api');
+      mockHttpError(404, JSON.stringify({ error: 'not_found' }));
+      await expect(
+        updateOrganization('Acme Corp', { client_secret: '' }),
+      ).rejects.toThrow('HTTP 404');
+    });
+  });
+
   describe('deleteOrganization', () => {
     it('DELETEs the org, encoding the name in the path', async () => {
       const { deleteOrganization } = await import('./api');
