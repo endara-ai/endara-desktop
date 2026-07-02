@@ -127,6 +127,20 @@ export interface EmaAuthConfig {
   resource: string;
 }
 
+/**
+ * Read/round-trip shape of the persisted `[endpoints.auth]` sub-table, as
+ * surfaced by `getEndpointConfig` and echoed back on `updateEndpoint`. Unlike
+ * the strict add-time `EmaAuthConfig`, `organization`/`resource` are optional
+ * here because the Tauri backend serializes them from an `Option`-typed
+ * `EndpointAuth`, so a stored binding may round-trip without every field
+ * present. `type` stays the `'ema'` discriminant the UI keys off.
+ */
+export interface EmaAuthSummary {
+  type: 'ema';
+  organization?: string;
+  resource?: string;
+}
+
 export interface AddEndpointParams {
   name: string;
   transport: 'stdio' | 'sse' | 'http' | 'oauth';
@@ -352,7 +366,7 @@ export interface EndpointConfig {
    * PUT — which rebuilds the whole endpoint config from the body — preserves
    * the binding.
    */
-  auth?: EmaAuthConfig;
+  auth?: EmaAuthSummary;
 }
 
 export async function getEndpointConfig(name: string): Promise<EndpointConfig> {
@@ -418,7 +432,7 @@ export interface UpdateEndpointParams {
    * Absent for ordinary (non-EMA) endpoints — no empty `auth` key is sent in
    * that case, keeping the PUT body byte-for-byte unchanged.
    */
-  auth?: EmaAuthConfig;
+  auth?: EmaAuthSummary;
 }
 
 export async function startOAuth(name: string): Promise<OAuthStartResult> {

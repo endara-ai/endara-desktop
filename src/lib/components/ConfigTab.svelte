@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getEndpointConfig, updateEndpoint, getEndpoints, getStatus, type UpdateEndpointParams, type EmaAuthConfig } from '$lib/api';
+  import { getEndpointConfig, updateEndpoint, getEndpoints, getStatus, type UpdateEndpointParams, type EmaAuthSummary } from '$lib/api';
   import { selectedEndpoint, endpoints, selectedEndpointData } from '$lib/stores';
   import { registerDirtyChecker } from '$lib/stores/unsavedChangesGuard';
   import {
@@ -88,7 +88,7 @@
   // round-tripped back on save so the relay's PUT — which rebuilds the whole
   // endpoint config from the body — doesn't drop the binding. Null/undefined
   // for ordinary (non-EMA) endpoints, in which case no `auth` key is sent.
-  let loadedAuth = $state<EmaAuthConfig | null>(null);
+  let loadedAuth = $state<EmaAuthSummary | null>(null);
   let emaOrganization = $derived(
     loadedAuth?.type === 'ema' ? loadedAuth.organization ?? '' : ''
   );
