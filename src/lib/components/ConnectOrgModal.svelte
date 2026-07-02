@@ -43,7 +43,7 @@
   let orgName = $state('');
   let slugOrUrl = $state('');
   let clientId = $state('');
-  // Write-only; never echoed back. Cleared on cancel/submit failure.
+  // Write-only; never echoed back. Retained in memory while the modal is open.
   let clientSecret = $state('');
   let error = $state('');
   let submitting = $state(false);
