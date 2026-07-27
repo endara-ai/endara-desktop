@@ -61,8 +61,9 @@ function canReauth(status: MinimalOAuthStatus | null): boolean {
   );
 }
 
-// Pure mirror of the `connectivityFailure` derivation in AuthTab.svelte, which
-// delegates to `isConnectivityFailure()` from $lib/oauth/actions. Kept in sync
+// Pure mirror of the `connectivityFailure` derivation in AuthTab.svelte. This
+// is a direct string comparison that must be kept in sync with
+// `isConnectivityFailure()` from $lib/oauth/actions (and AuthTab's derivation)
 // so we can unit-test which statuses trigger the connectivity presentation
 // (explanatory copy + Refresh Now promoted to primary).
 function connectivityFailure(status: MinimalOAuthStatus | null): boolean {
