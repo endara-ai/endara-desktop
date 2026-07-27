@@ -167,7 +167,16 @@ export interface OAuthStartDiscoveryFailed {
   detail?: string;
 }
 
-export type OAuthStartResult = OAuthStartSuccess | OAuthStartDcrUnsupported | OAuthStartDiscoveryFailed;
+export interface OAuthStartDiscoveryUnreachable {
+  error: 'discovery_unreachable';
+  detail?: string;
+}
+
+export type OAuthStartResult =
+  | OAuthStartSuccess
+  | OAuthStartDcrUnsupported
+  | OAuthStartDiscoveryFailed
+  | OAuthStartDiscoveryUnreachable;
 
 export type OAuthSetupStatus = 'awaiting_credentials' | 'awaiting_auth' | 'authorized';
 

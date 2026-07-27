@@ -11,6 +11,15 @@ export function canReauthorize(status: OAuthStatusValue): boolean {
   return REAUTHORIZE_STATUSES.includes(status);
 }
 
+/**
+ * `connection_failed` means the server is unreachable — the stored tokens are
+ * likely still valid, so retry/refresh (not re-authentication) should be the
+ * suggested first step in the UI.
+ */
+export function isConnectivityFailure(status: OAuthStatusValue): boolean {
+  return status === 'connection_failed';
+}
+
 export interface ReauthorizeDeps {
   startOAuth: (name: string) => Promise<OAuthStartResult>;
   openUrl: (url: string) => Promise<void>;
@@ -23,6 +32,8 @@ export async function reauthorize(name: string, deps: ReauthorizeDeps): Promise<
   if ('authorize_url' in result) {
     await deps.openUrl(result.authorize_url);
     deps.onSuccess('Browser opened for authorization');
+  } else if ('error' in result && result.error === 'discovery_unreachable') {
+    deps.onError("Couldn't reach the server to start authorization. Check your connection and try again.");
   } else if ('error' in result && result.error === 'discovery_failed') {
     deps.onError('OAuth discovery failed. Go to Settings to configure OAuth server URL manually.');
   } else if ('error' in result && result.error === 'dcr_unsupported') {

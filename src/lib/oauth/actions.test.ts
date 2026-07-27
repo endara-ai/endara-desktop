@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { canReauthorize, reauthorize, type ReauthorizeDeps } from './actions';
+import { canReauthorize, isConnectivityFailure, reauthorize, type ReauthorizeDeps } from './actions';
 import type { OAuthStartResult, OAuthStatusValue } from '$lib/types';
 
 function makeDeps(overrides: Partial<ReauthorizeDeps> = {}): ReauthorizeDeps {
@@ -49,6 +49,18 @@ describe('reauthorize', () => {
     );
   });
 
+  it('reports a connectivity error when startOAuth returns discovery_unreachable', async () => {
+    const deps = makeDeps({
+      startOAuth: vi.fn().mockResolvedValue({ error: 'discovery_unreachable' } as OAuthStartResult),
+    });
+    await reauthorize('srv', deps);
+    expect(deps.openUrl).not.toHaveBeenCalled();
+    expect(deps.onSuccess).not.toHaveBeenCalled();
+    expect(deps.onError).toHaveBeenCalledWith(
+      "Couldn't reach the server to start authorization. Check your connection and try again.",
+    );
+  });
+
   it('reports a dcr_unsupported error when startOAuth returns that error', async () => {
     const deps = makeDeps({
       startOAuth: vi.fn().mockResolvedValue({ error: 'dcr_unsupported' } as OAuthStartResult),
@@ -75,6 +87,23 @@ describe('canReauthorize', () => {
   for (const [status, expected] of cases) {
     it(`returns ${expected} for status "${status}"`, () => {
       expect(canReauthorize(status)).toBe(expected);
+    });
+  }
+});
+
+describe('isConnectivityFailure', () => {
+  const cases: Array<[OAuthStatusValue, boolean]> = [
+    ['connection_failed', true],
+    ['disconnected', false],
+    ['auth_required', false],
+    ['needs_login', false],
+    ['authenticated', false],
+    ['refreshing', false],
+  ];
+
+  for (const [status, expected] of cases) {
+    it(`returns ${expected} for status "${status}"`, () => {
+      expect(isConnectivityFailure(status)).toBe(expected);
     });
   }
 });

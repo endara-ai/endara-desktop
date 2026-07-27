@@ -3,7 +3,7 @@
   import { selectedEndpoint, oauthStatuses } from '$lib/stores';
   import { getOAuthStatus, refreshOAuth, startOAuth } from '$lib/api';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { canReauthorize, reauthorize } from '$lib/oauth/actions';
+  import { canReauthorize, isConnectivityFailure, reauthorize } from '$lib/oauth/actions';
   import { toast } from 'svelte-sonner';
 
   let status = $state<OAuthStatus | null>(null);
@@ -111,6 +111,7 @@
       (['authenticated', 'connection_failed'] as OAuthStatusValue[]).includes(status.status),
   );
   let canReauth = $derived(status !== null && canReauthorize(status.status));
+  let connectivityFailure = $derived(status !== null && isConnectivityFailure(status.status));
   let actionBusy = $derived(actionInProgress || reauthInProgress);
 </script>
 
@@ -131,6 +132,11 @@
         <span class="inline-block w-2.5 h-2.5 rounded-full {statusColors[status.status]}"></span>
         <span class="t-body font-medium text-(--fg1)">{statusLabels[status.status]}</span>
       </div>
+      {#if connectivityFailure}
+        <p class="mt-2 text-xs text-(--fg2)">
+          Server unreachable — your authorization is likely still valid. Retry once your connection is back.
+        </p>
+      {/if}
     </div>
 
     <!-- Token Details -->
@@ -176,14 +182,14 @@
       <div class="flex gap-2">
         {#if canRefresh}
           <button
-            class="btn-sec"
+            class={connectivityFailure ? 'btn-pri' : 'btn-sec'}
             onclick={handleRefresh}
             disabled={actionBusy}
           >Refresh Now</button>
         {/if}
         {#if canReauth}
           <button
-            class="btn-pri"
+            class={connectivityFailure && canRefresh ? 'btn-sec' : 'btn-pri'}
             onclick={handleReauthorize}
             disabled={actionBusy}
             title="Open the browser to sign in again"

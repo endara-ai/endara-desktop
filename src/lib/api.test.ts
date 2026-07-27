@@ -432,6 +432,30 @@ describe('api', () => {
     });
   });
 
+  describe('startOAuth', () => {
+    // Regression coverage: the relay returns HTTP 502 with
+    // `{"error":"discovery_unreachable","detail":...}` when RFC 8414 discovery
+    // times out. It must pass through as a typed result (like dcr_unsupported /
+    // discovery_failed) so reauthorize() can show the connectivity toast — not
+    // fall into the generic non-2xx branch and throw.
+    it('returns discovery_unreachable as a typed result instead of throwing on 502', async () => {
+      const { startOAuth } = await import('./api');
+      mockHttpError(
+        502,
+        JSON.stringify({
+          error: 'discovery_unreachable',
+          detail: 'Could not reach the OAuth server to discover its endpoints.',
+        }),
+      );
+
+      const result = await startOAuth('sunsama');
+      expect(result).toEqual({
+        error: 'discovery_unreachable',
+        detail: 'Could not reach the OAuth server to discover its endpoints.',
+      });
+    });
+  });
+
   describe('oauthProbe', () => {
     // The add-server flow relies on this probe being non-blocking: any
     // failure/timeout/non-2xx must resolve to `{ oauth_supported: false }`

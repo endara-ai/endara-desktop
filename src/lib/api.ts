@@ -438,11 +438,14 @@ export interface UpdateEndpointParams {
 export async function startOAuth(name: string): Promise<OAuthStartResult> {
   const res = await mgmtRequest('POST', `/endpoints/${encodeURIComponent(name)}/oauth/start`);
   const data = res.body ? JSON.parse(res.body) : {};
-  // dcr_unsupported / discovery_failed are returned as typed responses, not thrown
+  // dcr_unsupported / discovery_failed / discovery_unreachable are returned as typed responses, not thrown
   if ((res.status < 200 || res.status >= 300) && data?.error === 'dcr_unsupported') {
     return data as OAuthStartResult;
   }
   if ((res.status < 200 || res.status >= 300) && data?.error === 'discovery_failed') {
+    return data as OAuthStartResult;
+  }
+  if ((res.status < 200 || res.status >= 300) && data?.error === 'discovery_unreachable') {
     return data as OAuthStartResult;
   }
   if (res.status < 200 || res.status >= 300) {
