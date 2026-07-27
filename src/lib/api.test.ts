@@ -454,6 +454,50 @@ describe('api', () => {
         detail: 'Could not reach the OAuth server to discover its endpoints.',
       });
     });
+
+    it('returns dcr_unsupported as a typed result instead of throwing on 4xx', async () => {
+      const { startOAuth } = await import('./api');
+      mockHttpError(
+        400,
+        JSON.stringify({
+          error: 'dcr_unsupported',
+          detail: 'The OAuth server does not support Dynamic Client Registration.',
+        }),
+      );
+
+      const result = await startOAuth('sunsama');
+      expect(result).toEqual({
+        error: 'dcr_unsupported',
+        detail: 'The OAuth server does not support Dynamic Client Registration.',
+      });
+    });
+
+    it('returns discovery_failed as a typed result instead of throwing on 400', async () => {
+      const { startOAuth } = await import('./api');
+      mockHttpError(
+        400,
+        JSON.stringify({
+          error: 'discovery_failed',
+          detail: 'OAuth discovery returned an invalid metadata document.',
+        }),
+      );
+
+      const result = await startOAuth('sunsama');
+      expect(result).toEqual({
+        error: 'discovery_failed',
+        detail: 'OAuth discovery returned an invalid metadata document.',
+      });
+    });
+
+    it('throws on a 500 with an unrelated error body (generic non-2xx branch)', async () => {
+      const { startOAuth } = await import('./api');
+      mockHttpError(
+        500,
+        JSON.stringify({ error: 'internal_error', detail: 'unexpected relay failure' }),
+      );
+
+      await expect(startOAuth('sunsama')).rejects.toThrow('unexpected relay failure');
+    });
   });
 
   describe('oauthProbe', () => {

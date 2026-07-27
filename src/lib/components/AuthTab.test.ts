@@ -61,6 +61,14 @@ function canReauth(status: MinimalOAuthStatus | null): boolean {
   );
 }
 
+// Pure mirror of the `connectivityFailure` derivation in AuthTab.svelte, which
+// delegates to `isConnectivityFailure()` from $lib/oauth/actions. Kept in sync
+// so we can unit-test which statuses trigger the connectivity presentation
+// (explanatory copy + Refresh Now promoted to primary).
+function connectivityFailure(status: MinimalOAuthStatus | null): boolean {
+  return status !== null && status.status === 'connection_failed';
+}
+
 // Pure mirror of the `actionBusy` derivation in AuthTab.svelte. Both the
 // "Refresh Now" and "Re-authenticate" buttons bind their `disabled` state to
 // this shared guard so neither can be triggered while either flow is running,
@@ -202,6 +210,29 @@ describe('canReauth', () => {
   });
 });
 
+describe('connectivityFailure', () => {
+  it('returns true only for connection_failed', () => {
+    expect(connectivityFailure({ status: 'connection_failed', has_refresh_token: true })).toBe(true);
+    expect(connectivityFailure({ status: 'connection_failed', has_refresh_token: false })).toBe(true);
+  });
+
+  it('returns false for auth-expiry and other statuses', () => {
+    for (const status of [
+      'authenticated',
+      'needs_login',
+      'refreshing',
+      'auth_required',
+      'disconnected',
+    ] as OAuthStatusValue[]) {
+      expect(connectivityFailure({ status, has_refresh_token: true })).toBe(false);
+    }
+  });
+
+  it('returns false when status is null', () => {
+    expect(connectivityFailure(null)).toBe(false);
+  });
+});
+
 describe('actionBusy', () => {
   it('is false when neither action is in progress', () => {
     expect(actionBusy(false, false)).toBe(false);
@@ -259,6 +290,51 @@ describe('AuthTab busy-guard wiring (source contract)', () => {
       source.match(/if\s*\(!name\s*\|\|\s*actionInProgress\s*\|\|\s*reauthInProgress\)\s*return;/g) ??
       [];
     expect(guards).toHaveLength(2);
+  });
+});
+
+// Source contract for the connection_failed presentation: when the server is
+// unreachable the stored tokens are likely still valid, so Refresh Now becomes
+// the primary action, Re-authenticate is demoted to secondary (only when a
+// refresh is actually possible), and explanatory copy replaces the implied
+// "auth expired" framing.
+describe('AuthTab connectivity-failure wiring (source contract)', () => {
+  let source = '';
+
+  beforeAll(async () => {
+    // @ts-expect-error node builtin types not installed
+    const { readFileSync } = await import('node:fs');
+    // @ts-expect-error node builtin types not installed
+    const { fileURLToPath } = await import('node:url');
+    source = readFileSync(fileURLToPath(new URL('./AuthTab.svelte', import.meta.url)), 'utf8') as string;
+  });
+
+  it('derives connectivityFailure from isConnectivityFailure(status.status)', () => {
+    expect(source).toMatch(
+      /connectivityFailure\s*=\s*\$derived\(\s*status\s*!==\s*null\s*&&\s*isConnectivityFailure\(status\.status\)\s*\)/,
+    );
+  });
+
+  it('promotes Refresh Now to primary on connectivity failure', () => {
+    expect(source).toMatch(/class=\{connectivityFailure\s*\?\s*'btn-pri'\s*:\s*'btn-sec'\}/);
+  });
+
+  it('demotes Re-authenticate to secondary only when a refresh is possible', () => {
+    expect(source).toMatch(
+      /class=\{connectivityFailure\s*&&\s*canRefresh\s*\?\s*'btn-sec'\s*:\s*'btn-pri'\}/,
+    );
+  });
+
+  it('gates the connectivity copy block on connectivityFailure', () => {
+    expect(source).toMatch(
+      /\{#if connectivityFailure\}[\s\S]*?Server unreachable — your authorization is likely still valid\.[\s\S]*?\{\/if\}/,
+    );
+  });
+
+  it('points the copy at Re-authenticate when no refresh token is available', () => {
+    expect(source).toMatch(
+      /\{canRefresh\s*\?\s*'Retry once your connection is back\.'\s*:\s*'Re-authenticate once your connection is back\.'\}/,
+    );
   });
 });
 

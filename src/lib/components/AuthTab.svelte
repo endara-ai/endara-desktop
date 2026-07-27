@@ -134,7 +134,10 @@
       </div>
       {#if connectivityFailure}
         <p class="mt-2 text-xs text-(--fg2)">
-          Server unreachable — your authorization is likely still valid. Retry once your connection is back.
+          Server unreachable — your authorization is likely still valid.
+          {canRefresh
+            ? 'Retry once your connection is back.'
+            : 'Re-authenticate once your connection is back.'}
         </p>
       {/if}
     </div>
