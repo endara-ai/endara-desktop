@@ -457,18 +457,23 @@ describe('api', () => {
 
     it('returns dcr_unsupported as a typed result instead of throwing on 4xx', async () => {
       const { startOAuth } = await import('./api');
+      // The relay's dcr_unsupported envelope uses `message` (plus endpoint
+      // metadata), not the `{ error, detail }` ErrorResponse shape used by the
+      // discovery_* errors — see OAuthDcrUnsupportedResponse in the relay.
       mockHttpError(
-        400,
+        422,
         JSON.stringify({
           error: 'dcr_unsupported',
-          detail: 'The OAuth server does not support Dynamic Client Registration.',
+          message: 'The OAuth server does not support Dynamic Client Registration.',
+          authorization_endpoint: 'https://auth.example.com/authorize',
         }),
       );
 
       const result = await startOAuth('sunsama');
       expect(result).toEqual({
         error: 'dcr_unsupported',
-        detail: 'The OAuth server does not support Dynamic Client Registration.',
+        message: 'The OAuth server does not support Dynamic Client Registration.',
+        authorization_endpoint: 'https://auth.example.com/authorize',
       });
     });
 
