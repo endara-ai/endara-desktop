@@ -1,7 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { listProfiles, type ProfileSummary } from '$lib/api';
+  import { activeTopLevelTab, relaySidecarStatus, type RelaySidecarStatusType } from '$lib/stores';
+  import type { TopLevelTabId } from '$lib/relaySidecarUi';
   import { requestNavigation } from '$lib/stores/unsavedChangesGuard';
+  import {
+    shouldAutoReloadOnRelayRecovery,
+    shouldAutoReloadOnTabActivation,
+  } from './profiles-retry-helpers';
   import ProfileSidebar from './ProfileSidebar.svelte';
   import ProfileDetail from './ProfileDetail.svelte';
   import CreateProfileModal from './CreateProfileModal.svelte';
@@ -10,6 +16,7 @@
   let selectedPath: string | null = $state(null);
   let loading = $state(true);
   let loadError = $state('');
+  let retrying = $state(false);
   let showCreateModal = $state(false);
 
   async function load() {
@@ -25,8 +32,44 @@
     }
   }
 
+  async function retry() {
+    if (retrying) return;
+    retrying = true;
+    try {
+      await load();
+    } finally {
+      retrying = false;
+    }
+  }
+
   onMount(() => {
     load();
+
+    // Auto-recover from a transient load failure: re-run load() when the
+    // Profiles tab becomes active again, or when the relay sidecar comes
+    // back to `running` (the tab stays mounted via display:none keep-alive,
+    // so a relay restart otherwise strands it on the error state). Both
+    // only fire while `loadError` is set — successful loads never refetch.
+    let prevTab: TopLevelTabId | undefined;
+    const unsubTab = activeTopLevelTab.subscribe((tab) => {
+      if (shouldAutoReloadOnTabActivation(tab, prevTab, Boolean(loadError))) {
+        void retry();
+      }
+      prevTab = tab;
+    });
+
+    let prevRelayStatus: RelaySidecarStatusType | undefined;
+    const unsubRelay = relaySidecarStatus.subscribe((status) => {
+      if (shouldAutoReloadOnRelayRecovery(status, prevRelayStatus, Boolean(loadError))) {
+        void retry();
+      }
+      prevRelayStatus = status;
+    });
+
+    return () => {
+      unsubTab();
+      unsubRelay();
+    };
   });
 
   function handleSelect(path: string | null) {
@@ -57,8 +100,11 @@
 
 <div class="h-full flex flex-col">
   {#if loadError && profiles.length === 0}
-    <div class="flex-1 flex items-center justify-center text-(--offline) text-sm">
-      {loadError}
+    <div class="flex-1 flex flex-col items-center justify-center gap-3">
+      <div class="text-(--offline) text-sm">{loadError}</div>
+      <button class="btn-sec btn-sm" onclick={retry} disabled={retrying}>
+        {retrying ? 'Retrying…' : 'Retry'}
+      </button>
     </div>
   {:else if !loading && profiles.length === 0}
     <div

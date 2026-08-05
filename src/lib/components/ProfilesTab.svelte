@@ -72,7 +72,17 @@
       {/each}
     </div>
   {:else if error}
-    <div class="text-sm text-(--offline)">{error}</div>
+    <div class="flex flex-col items-start gap-2">
+      <div class="text-sm text-(--offline)">{error}</div>
+      <button
+        class="btn-sec btn-sm"
+        onclick={() => {
+          if ($selectedEndpoint) load($selectedEndpoint);
+        }}
+      >
+        Retry
+      </button>
+    </div>
   {:else if rows.length === 0}
     <div class="text-sm text-(--fg3) text-center py-6">
       No profiles yet — create one in the Profiles tab to namespace your servers.
