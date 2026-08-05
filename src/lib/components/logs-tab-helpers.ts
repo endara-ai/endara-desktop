@@ -55,6 +55,16 @@ export function mergeDeduped(
 }
 
 /**
+ * Stable string key for a merged display line, wired into VirtualLogList's
+ * `getKey`. `mergeDeduped` guarantees `raw` is unique within the merged
+ * list, so keying on it (instead of object identity) lets a re-seed replace
+ * the array without tearing down every mounted row.
+ */
+export function logLineKey(line: ParsedLogLine): string {
+  return line.raw;
+}
+
+/**
  * Filter the global relay log stream down to lines belonging to a specific
  * endpoint. Defined here (instead of inlined in LogsTab.svelte) so the
  * live-streaming behaviour can be unit tested without mounting Svelte.

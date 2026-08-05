@@ -1,28 +1,30 @@
 <script lang="ts">
-  import { tick } from 'svelte';
   import { selectedEndpoint, relayLogLines, activeTab } from '$lib/stores';
   import { getEndpointLogs } from '$lib/api';
-  import { isAtBottom } from '$lib/scrollUtils';
   import type { ParsedLogLine } from '$lib/logParser';
   import LogRow from './LogRow.svelte';
+  import VirtualLogList from './VirtualLogList.svelte';
   import {
     parseHistoricalSeed,
     mergeDeduped,
     filterLinesForEndpoint,
+    logLineKey,
   } from './logs-tab-helpers';
 
   // Live-streaming per-endpoint log view (engineering spec §2.3, Slice D.2).
   // Seeds with a one-shot fetch of the relay's in-memory ring for pre-mount
   // history, then appends every matching `relay-log` event in real time.
   // Display = historical ++ live, deduped by `raw` so an overlap doesn't
-  // double up.
+  // double up. Rows are rendered through VirtualLogList so only the visible
+  // window (+ overscan) of LogRows is mounted, keyed by `raw` so a re-seed
+  // doesn't tear down every row. The list starts pinned to the bottom and
+  // handles auto-scroll / re-pinning internally.
 
   let historical: ParsedLogLine[] = $state([]);
   let loading = $state(true);
-  let scrollContainer: HTMLDivElement | undefined = $state();
   let autoScroll = $state(true);
-  let isTabSwitching = $state(false);
   let now = $state(Date.now());
+  let list: VirtualLogList<ParsedLogLine> | undefined = $state();
 
   // Hover-tooltip clock — same pattern as RelayLogs.svelte; only ticks while
   // this tab is the active detail-panel tab to avoid background work.
@@ -51,11 +53,6 @@
       })
       .finally(() => {
         loading = false;
-        requestAnimationFrame(() => {
-          if (scrollContainer) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
-          }
-        });
       });
   });
 
@@ -67,31 +64,9 @@
 
   const displayLines = $derived(mergeDeduped(historical, liveLines));
 
-  function handleScroll() {
-    if (!scrollContainer || isTabSwitching) return;
-    const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-    autoScroll = isAtBottom(scrollTop, scrollHeight, clientHeight);
-  }
-
-  async function scrollToBottom() {
-    if (!autoScroll) return;
-    await tick();
-    requestAnimationFrame(() => {
-      if (scrollContainer && autoScroll) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      }
-    });
-  }
-
   function goToEnd() {
     autoScroll = true;
-    tick().then(() => {
-      requestAnimationFrame(() => {
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }
-      });
-    });
+    list?.scrollToBottom();
   }
 
   // Clear empties the historical seed; live events keep streaming in for as
@@ -100,32 +75,6 @@
   function clearLogs() {
     historical = [];
   }
-
-  // Auto-scroll when new lines arrive.
-  $effect(() => {
-    displayLines;
-    scrollToBottom();
-  });
-
-  // Force scroll when the user re-opens the Logs tab.
-  $effect(() => {
-    const tab = $activeTab;
-    if (tab === 'logs' && autoScroll && scrollContainer) {
-      isTabSwitching = true;
-      const timer = setTimeout(() => {
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }
-        requestAnimationFrame(() => {
-          isTabSwitching = false;
-        });
-      }, 50);
-      return () => {
-        clearTimeout(timer);
-        isTabSwitching = false;
-      };
-    }
-  });
 </script>
 
 <div class="h-full flex flex-col">
@@ -142,23 +91,29 @@
       >Clear</button>
     </div>
   </div>
-  <div
-    bind:this={scrollContainer}
-    onscroll={handleScroll}
-    class="flex-1 overflow-y-auto t-mono-log bg-(--surface-sunken)"
-  >
-    {#if loading}
+  {#if loading}
+    <div class="flex-1 overflow-y-auto t-mono-log bg-(--surface-sunken)">
       <div class="space-y-1 p-4">
         {#each [1, 2, 3, 4, 5] as _}
           <div class="h-4 w-3/4 rounded bg-(--surface-hover) animate-pulse"></div>
         {/each}
       </div>
-    {:else if displayLines.length === 0}
+    </div>
+  {:else if displayLines.length === 0}
+    <div class="flex-1 overflow-y-auto t-mono-log bg-(--surface-sunken)">
       <div class="text-(--fg3) text-center py-6">No logs available</div>
-    {:else}
-      {#each displayLines as line (line)}
+    </div>
+  {:else}
+    <VirtualLogList
+      bind:this={list}
+      items={displayLines}
+      getKey={logLineKey}
+      class="flex-1 t-mono-log bg-(--surface-sunken)"
+      onscrollstate={(pinned) => (autoScroll = pinned)}
+    >
+      {#snippet row(line, _index)}
         <LogRow {line} nowMs={now} />
-      {/each}
-    {/if}
-  </div>
+      {/snippet}
+    </VirtualLogList>
+  {/if}
 </div>

@@ -3,6 +3,11 @@ import { get } from 'svelte/store';
 
 import { selectedEndpoint, activeTopLevelTab } from '$lib/stores';
 import { applyGoToEndpoint, toggleEndpointFilter } from './relay-logs-helpers';
+import {
+  DEFAULT_OVERSCAN,
+  DEFAULT_ROW_ESTIMATE_PX,
+  computeMountedRange,
+} from './virtual-log-list-helpers';
 
 // Engineering spec §5 — Slice B test rows #11 (click-to-filter) and #13
 // (cross-link to Servers tab). Exercised against the pure helpers extracted
@@ -61,5 +66,39 @@ describe('applyGoToEndpoint (test #13 — cross-link to Servers tab)', () => {
     applyGoToEndpoint('postgres');
     expect(get(activeTopLevelTab)).toBe('servers');
     expect(get(selectedEndpoint)).toBe('postgres');
+  });
+});
+
+// RelayLogs renders rows through VirtualLogList. The test env is Node (no
+// jsdom), so — per the Wave 1 pattern — the mounted-row-count assertions run
+// against `computeMountedRange`, the pure mirror of the virtualizer's
+// windowing math under RelayLogs' actual estimate/overscan configuration.
+describe('virtualized row window (5,000 buffered lines)', () => {
+  const base = { rowHeight: DEFAULT_ROW_ESTIMATE_PX, overscan: DEFAULT_OVERSCAN };
+  const count = 5000;
+
+  it('mounts only the visible window (+overscan) when pinned to the bottom on tab switch', () => {
+    const viewportHeight = 600;
+    const totalHeight = count * DEFAULT_ROW_ESTIMATE_PX;
+    const range = computeMountedRange({
+      ...base,
+      count,
+      scrollOffset: totalHeight - viewportHeight,
+      viewportHeight,
+    });
+    expect(range!.end).toBe(count - 1);
+    const mounted = range!.end - range!.start + 1;
+    expect(mounted).toBe(viewportHeight / DEFAULT_ROW_ESTIMATE_PX + DEFAULT_OVERSCAN);
+    expect(mounted).toBeLessThan(count / 100);
+  });
+
+  it('mounts nothing while the tab is hidden (display:none → zero-height viewport)', () => {
+    const range = computeMountedRange({
+      ...base,
+      count,
+      scrollOffset: 0,
+      viewportHeight: 0,
+    });
+    expect(range).toBeNull();
   });
 });

@@ -6,7 +6,14 @@ import {
   parseHistoricalSeed,
   mergeDeduped,
   filterLinesForEndpoint,
+  logLineKey,
 } from './logs-tab-helpers';
+import {
+  DEFAULT_OVERSCAN,
+  DEFAULT_ROW_ESTIMATE_PX,
+  computeMountedRange,
+  itemKeyAt,
+} from './virtual-log-list-helpers';
 
 // Engineering spec §5 — Slice D.2 test rows #20, #21, #22, #23. The desktop
 // test env is Node (vitest.config.ts), so we exercise the pure helpers that
@@ -145,5 +152,70 @@ describe('LogRow structural identity across RelayLogs + LogsTab (test #23)', () 
 
     expect(fields(liveLineForTab)).toEqual(fields(relayLogsLine));
     expect(fields(seedLineForTab)).toEqual(fields(relayLogsLine));
+  });
+});
+
+// Wave 2 — LogsTab renders through VirtualLogList with stable string keys.
+describe('logLineKey (stable keys for VirtualLogList)', () => {
+  it('keys on raw, so a re-seeded fresh instance keeps the same key', () => {
+    const raw = 'endpoint{endpoint=github}: Initialize handshake complete';
+    const first = parseHistoricalSeed([raw], 'github')[0];
+    const reSeeded = parseHistoricalSeed([raw], 'github')[0];
+    expect(reSeeded).not.toBe(first);
+    expect(logLineKey(reSeeded)).toBe(logLineKey(first));
+  });
+
+  it('is unique across a merged historical + live list (dedup by raw)', () => {
+    const seed = parseHistoricalSeed(['a', 'b', 'a'], 'github');
+    const live = [
+      parseLogLine('info', 'endpoint{endpoint=github}: c'),
+      parseLogLine('info', 'a'),
+    ];
+    const merged = mergeDeduped(seed, live);
+    const keys = merged.map(logLineKey);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('keeps keys stable when the merged array is rebuilt with more live lines', () => {
+    const seed = parseHistoricalSeed(['old-1', 'old-2'], 'github');
+    const before = mergeDeduped(seed, []);
+    const after = mergeDeduped(seed, [
+      parseLogLine('info', 'endpoint{endpoint=github}: new-1'),
+    ]);
+    expect(itemKeyAt(after, 1, logLineKey)).toBe(itemKeyAt(before, 1, logLineKey));
+  });
+});
+
+// Definition of Done — with a 5,000-line historical seed, mounting LogsTab
+// creates only the visible window (+ overscan) of LogRows, scrolled to the
+// bottom. The vitest env is Node (no DOM), so per the Wave 1 pattern we
+// assert the windowed subset through computeMountedRange, the pure mirror of
+// VirtualLogList's windowing math.
+describe('windowed mount with a 5,000-line historical seed', () => {
+  it('mounts only the visible window (+ overscan) on first paint at the bottom', () => {
+    const seed = parseHistoricalSeed(
+      Array.from({ length: 5000 }, (_, i) => `seed-line-${i}`),
+      'github',
+    );
+    const displayLines = mergeDeduped(seed, []);
+    expect(displayLines).toHaveLength(5000);
+
+    const rowHeight = DEFAULT_ROW_ESTIMATE_PX;
+    const viewportHeight = 400;
+    const totalHeight = displayLines.length * rowHeight;
+    const range = computeMountedRange({
+      count: displayLines.length,
+      scrollOffset: totalHeight - viewportHeight,
+      viewportHeight,
+      rowHeight,
+      overscan: DEFAULT_OVERSCAN,
+    });
+
+    expect(range).not.toBeNull();
+    expect(range!.end).toBe(4999);
+    const mounted = range!.end - range!.start + 1;
+    const visibleRows = viewportHeight / rowHeight;
+    expect(mounted).toBe(visibleRows + DEFAULT_OVERSCAN);
+    expect(mounted).toBeLessThan(displayLines.length / 100);
   });
 });

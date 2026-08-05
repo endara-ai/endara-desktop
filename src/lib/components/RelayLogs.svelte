@@ -1,20 +1,20 @@
 <script lang="ts">
-  import { tick } from 'svelte';
   import { relayLogLines, activeTopLevelTab } from '$lib/stores';
-  import type { LogLevel } from '$lib/logParser';
-  import { isAtBottom } from '$lib/scrollUtils';
+  import type { LogLevel, ParsedLogLine } from '$lib/logParser';
   import LogFilterBar from './LogFilterBar.svelte';
   import LogRow from './LogRow.svelte';
-  import { toggleEndpointFilter } from './relay-logs-helpers';
+  import VirtualLogList from './VirtualLogList.svelte';
+  import { lineKey, toggleEndpointFilter } from './relay-logs-helpers';
 
   type Props = {
     ongotoendpoint?: (name: string) => void;
   };
   let { ongotoendpoint }: Props = $props();
 
-  let scrollContainer: HTMLDivElement | undefined = $state();
+  // Rows render through the shared VirtualLogList; `list` exposes its
+  // scrollToBottom/isPinned API and `autoScroll` mirrors its pinned state.
+  let list = $state<{ scrollToBottom: () => void; isPinned: () => boolean }>();
   let autoScroll = $state(true);
-  let isTabSwitching = $state(false);
 
   // Right-click "Go to endpoint" context menu state. `null` = no menu open.
   let contextMenu = $state<{ x: number; y: number; endpoint: string } | null>(null);
@@ -53,63 +53,23 @@
     });
   });
 
-  function handleScroll() {
-    if (!scrollContainer || isTabSwitching) return;
-    const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-    autoScroll = isAtBottom(scrollTop, scrollHeight, clientHeight);
+  // Auto-scroll while pinned, tail-follow when new lines arrive, and re-pin
+  // when this tab flips from display:none back to visible are all handled
+  // inside VirtualLogList; it reports pinned-state flips here so the
+  // "Go to end" button can react.
+  function onScrollState(pinned: boolean) {
+    autoScroll = pinned;
   }
 
-  async function scrollToBottom() {
-    if (!autoScroll) return;
-    await tick();
-    requestAnimationFrame(() => {
-      if (scrollContainer && autoScroll) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      }
-    });
-  }
-
+  // Re-pin and scroll to the last row via the component API — no
+  // scrollHeight/scrollTop work against the full list.
   function goToEnd() {
-    autoScroll = true;
-    tick().then(() => {
-      requestAnimationFrame(() => {
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }
-      });
-    });
+    list?.scrollToBottom();
   }
 
   function clearLogs() {
     relayLogLines.set([]);
   }
-
-  // Auto-scroll when new lines arrive (subscribe to filtered list so toggling
-  // a level back on also pins us to bottom).
-  $effect(() => {
-    filteredLines;
-    scrollToBottom();
-  });
-
-  // Force scroll when switching back to the relay-logs tab.
-  $effect(() => {
-    const tab = $activeTopLevelTab;
-    if (tab === 'relay-logs' && autoScroll && scrollContainer) {
-      isTabSwitching = true;
-      const timer = setTimeout(() => {
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }
-        requestAnimationFrame(() => {
-          isTabSwitching = false;
-        });
-      }, 50);
-      return () => {
-        clearTimeout(timer);
-        isTabSwitching = false;
-      };
-    }
-  });
 
   const trimmedSearch = $derived(searchText.trim());
 
@@ -164,21 +124,27 @@
       <button class="btn-sec btn-sm" onclick={goToEnd}>Go to end</button>
     {/if}
   </div>
-  <div
-    bind:this={scrollContainer}
-    onscroll={handleScroll}
-    class="flex-1 overflow-y-auto t-mono-log bg-(--surface-sunken)"
-  >
-    {#if $relayLogLines.length === 0}
+  {#if $relayLogLines.length === 0}
+    <div class="flex-1 overflow-y-auto t-mono-log bg-(--surface-sunken)">
       <div class="text-(--fg3) text-center py-6">
         No relay logs yet. Logs will appear here when the relay sidecar produces output.
       </div>
-    {:else if filteredLines.length === 0}
+    </div>
+  {:else if filteredLines.length === 0}
+    <div class="flex-1 overflow-y-auto t-mono-log bg-(--surface-sunken)">
       <div class="text-(--fg3) text-center py-6">
         No lines match the current filters.
       </div>
-    {:else}
-      {#each filteredLines as line (line)}
+    </div>
+  {:else}
+    <VirtualLogList
+      bind:this={list}
+      items={filteredLines}
+      getKey={lineKey}
+      class="flex-1 t-mono-log bg-(--surface-sunken)"
+      onscrollstate={onScrollState}
+    >
+      {#snippet row(line: ParsedLogLine)}
         {@const isActive = !!line.endpoint && selectedEndpoints.size === 1 && selectedEndpoints.has(line.endpoint)}
         <LogRow
           {line}
@@ -188,9 +154,9 @@
           onEndpointClick={onEndpointClick}
           onEndpointContextMenu={onEndpointContextMenu}
         />
-      {/each}
-    {/if}
-  </div>
+      {/snippet}
+    </VirtualLogList>
+  {/if}
 
   {#if contextMenu}
     <ul

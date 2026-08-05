@@ -20,6 +20,7 @@
   "license": "MIT",
   "dependencies": {
     "@humanspeak/svelte-json-view-lite": "^0.1.2",
+    "@tanstack/svelte-virtual": "^3.13.35",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
