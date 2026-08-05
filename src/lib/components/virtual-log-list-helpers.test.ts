@@ -6,6 +6,7 @@ import {
   computeMountedRange,
   isPinnedToBottom,
   itemKeyAt,
+  shouldReportInitialPinned,
   shouldStickToBottom,
 } from './virtual-log-list-helpers';
 
@@ -58,16 +59,34 @@ describe('isPinnedToBottom (isAtBottom semantics)', () => {
 });
 
 describe('shouldStickToBottom (bottom-pinned behavior)', () => {
-  it('follows the tail while pinned and items exist', () => {
-    expect(shouldStickToBottom(true, 10)).toBe(true);
+  it('follows the tail while pinned, items exist and the viewport is visible', () => {
+    expect(shouldStickToBottom(true, 10, 400)).toBe(true);
   });
 
   it('does not follow when the user scrolled away', () => {
-    expect(shouldStickToBottom(false, 10)).toBe(false);
+    expect(shouldStickToBottom(false, 10, 400)).toBe(false);
   });
 
   it('does nothing after Clear (empty list)', () => {
-    expect(shouldStickToBottom(true, 0)).toBe(false);
+    expect(shouldStickToBottom(true, 0, 400)).toBe(false);
+  });
+
+  it('skips the dead scroll work while hidden (0-height viewport)', () => {
+    expect(shouldStickToBottom(true, 10, 0)).toBe(false);
+  });
+});
+
+describe('shouldReportInitialPinned (parent resync after {#if} remounts)', () => {
+  it('reports once the scroll element is bound', () => {
+    expect(shouldReportInitialPinned(true, false)).toBe(true);
+  });
+
+  it('does not report before the scroll element is bound', () => {
+    expect(shouldReportInitialPinned(false, false)).toBe(false);
+  });
+
+  it('reports only once per instance', () => {
+    expect(shouldReportInitialPinned(true, true)).toBe(false);
   });
 });
 

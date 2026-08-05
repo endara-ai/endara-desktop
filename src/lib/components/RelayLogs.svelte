@@ -12,8 +12,8 @@
   let { ongotoendpoint }: Props = $props();
 
   // Rows render through the shared VirtualLogList; `list` exposes its
-  // scrollToBottom/isPinned API and `autoScroll` mirrors its pinned state.
-  let list = $state<{ scrollToBottom: () => void; isPinned: () => boolean }>();
+  // scrollToBottom API and `autoScroll` mirrors its pinned state.
+  let list: VirtualLogList<ParsedLogLine> | undefined = $state();
   let autoScroll = $state(true);
 
   // Right-click "Go to endpoint" context menu state. `null` = no menu open.

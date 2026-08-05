@@ -51,10 +51,31 @@ export function isPinnedToBottom(
 /**
  * Whether the list should follow the tail after `items` changed (append,
  * wholesale replace). Only when the user is pinned and there is something to
- * scroll to — a Clear (count 0) has nothing to follow.
+ * scroll to — a Clear (count 0) has nothing to follow — and the viewport has
+ * a real height: under a `display:none` ancestor `clientHeight` is 0 and any
+ * scroll work is a dead no-op (the visibility ResizeObserver re-pins on
+ * unhide instead).
  */
-export function shouldStickToBottom(pinned: boolean, count: number): boolean {
-  return pinned && count > 0;
+export function shouldStickToBottom(
+  pinned: boolean,
+  count: number,
+  viewportHeight: number,
+): boolean {
+  return pinned && count > 0 && viewportHeight > 0;
+}
+
+/**
+ * Whether the component should report its initial pinned state to the
+ * parent. `handleScroll` only notifies on flips, so after an `{#if}` remount
+ * a fresh list (pinned = true) would leave a parent holding a stale value
+ * (e.g. a stuck "Go to end" button). Report once, as soon as the scroll
+ * element is bound.
+ */
+export function shouldReportInitialPinned(
+  hasScrollEl: boolean,
+  alreadyReported: boolean,
+): boolean {
+  return hasScrollEl && !alreadyReported;
 }
 
 /**

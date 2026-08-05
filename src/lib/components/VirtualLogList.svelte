@@ -9,6 +9,7 @@
     becameVisible,
     isPinnedToBottom,
     itemKeyAt,
+    shouldReportInitialPinned,
     shouldStickToBottom,
   } from './virtual-log-list-helpers';
 
@@ -70,16 +71,37 @@
     get(virtualizer).setOptions({ count, overscan: os });
   });
 
+  // Report the initial pinned state once the scroll element is bound, so a
+  // parent that keeps the state across {#if} remounts (e.g. RelayLogs'
+  // autoScroll) resyncs with the fresh instance — handleScroll only
+  // notifies on flips.
+  let reportedInitialPinned = false;
+  $effect(() => {
+    if (!shouldReportInitialPinned(scrollEl !== undefined, reportedInitialPinned)) return;
+    reportedInitialPinned = true;
+    onscrollstate?.(untrack(() => pinned));
+  });
+
   // Follow the tail when pinned: appends and wholesale replacements keep the
-  // view at the bottom, matching the existing auto-scroll behavior.
+  // view at the bottom, matching the existing auto-scroll behavior. Skipped
+  // while hidden (0-height viewport) — the visibility observer below re-pins
+  // on unhide.
   $effect(() => {
     const count = items.length;
     const store = virtualizer;
-    if (!shouldStickToBottom(untrack(() => pinned), count)) return;
+    if (!shouldStickToBottom(untrack(() => pinned), count, scrollEl?.clientHeight ?? 0)) return;
     tick().then(() => {
       if (!pinned) return;
       const inst = get(store);
       inst.scrollToOffset(inst.getTotalSize(), { align: 'end' });
+      // The jump above can land short when unmeasured tail rows wrap and
+      // measure taller than the estimate; correct on the next frame while
+      // still pinned so residual drift can't unpin tail-follow.
+      requestAnimationFrame(() => {
+        if (!pinned) return;
+        const next = get(store);
+        next.scrollToOffset(next.getTotalSize(), { align: 'end' });
+      });
     });
   });
 
@@ -131,21 +153,18 @@
     }
   }
 
-  /** Re-pin and scroll to the last item (drives "Go to end"). */
+  /**
+   * Re-pin and scroll to the last item (drives "Go to end"). Always reports
+   * pinned=true so parents resync even if this instance never flipped (e.g.
+   * a fresh mount after an {#if} remount).
+   */
   export function scrollToBottom() {
-    if (!pinned) {
-      pinned = true;
-      onscrollstate?.(true);
-    }
+    pinned = true;
+    onscrollstate?.(true);
     tick().then(() => {
       const inst = get(virtualizer);
       inst.scrollToOffset(inst.getTotalSize(), { align: 'end' });
     });
-  }
-
-  /** Whether the view is currently pinned to the bottom. */
-  export function isPinned(): boolean {
-    return pinned;
   }
 </script>
 
