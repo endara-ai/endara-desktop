@@ -77,7 +77,7 @@
       <button
         class="btn-sec btn-sm"
         onclick={() => {
-          if ($selectedEndpoint) load($selectedEndpoint);
+          if ($selectedEndpoint) void load($selectedEndpoint);
         }}
       >
         Retry

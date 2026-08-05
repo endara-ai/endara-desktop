@@ -111,7 +111,7 @@ describe('shouldAutoReloadOnRelayRecovery', () => {
 describe('ProfilesTab error-state Retry button (source wiring)', () => {
   it('renders a Retry button in the error branch that re-runs load($selectedEndpoint)', () => {
     expect(profilesTabSource).toMatch(
-      /\{:else if error\}[\s\S]*?\{error\}[\s\S]*?<button[\s\S]*?if \(\$selectedEndpoint\) load\(\$selectedEndpoint\);[\s\S]*?Retry[\s\S]*?\{:else if rows\.length === 0\}/,
+      /\{:else if error\}[\s\S]*?\{error\}[\s\S]*?<button[\s\S]*?if \(\$selectedEndpoint\) void load\(\$selectedEndpoint\);[\s\S]*?Retry[\s\S]*?\{:else if rows\.length === 0\}/,
     );
   });
 });
