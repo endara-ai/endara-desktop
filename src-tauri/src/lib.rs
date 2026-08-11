@@ -466,6 +466,10 @@ fn read_write_dirs() -> Vec<String> {
     let Ok(parsed) = read_config() else {
         return Vec::new();
     };
+    // De-duplicate while preserving first-seen order: a hand-edited config
+    // with duplicate entries would otherwise produce duplicate keys in the
+    // UI's keyed `{#each}` list.
+    let mut seen = std::collections::HashSet::new();
     parsed
         .get("relay")
         .and_then(|v| v.as_table())
@@ -474,6 +478,7 @@ fn read_write_dirs() -> Vec<String> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .filter(|s| seen.insert(s.clone()))
                 .collect()
         })
         .unwrap_or_default()
@@ -1829,6 +1834,18 @@ async fn get_write_dirs() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 async fn set_write_dirs(dirs: Vec<String>) -> Result<(), String> {
+    // Fail fast at the Tauri boundary: the native picker only produces
+    // absolute paths, and the relay rejects relative entries on reload —
+    // but never persist an entry the relay would later flag.
+    if let Some(bad) = dirs
+        .iter()
+        .find(|d| d.is_empty() || !std::path::Path::new(d).is_absolute())
+    {
+        return Err(format!(
+            "write_dirs entries must be absolute paths, got: {bad:?}"
+        ));
+    }
+
     let mut table = read_config().unwrap_or_else(|_| toml::Table::new());
 
     // Ensure [relay] section exists. The relay's `RelayConfig` requires
@@ -3988,6 +4005,33 @@ mod write_dirs_tests {
 
         rt.block_on(set_write_dirs(vec![]))
             .expect("clear write_dirs");
+        assert!(read_write_dirs().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_write_dirs_deduplicates_preserving_order() {
+        let _home = HomeGuard::new();
+        write_config_str(
+            "[relay]\nmachine_name = \"x\"\nwrite_dirs = [\"/tmp/a\", \"/tmp/b\", \"/tmp/a\"]\n",
+        );
+        assert_eq!(read_write_dirs(), vec!["/tmp/a", "/tmp/b"]);
+    }
+
+    #[test]
+    #[serial]
+    fn set_write_dirs_rejects_relative_and_empty_paths() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+
+        for bad in ["relative/path", "", "./dot"] {
+            let err = rt
+                .block_on(set_write_dirs(vec!["/tmp/a".to_string(), bad.to_string()]))
+                .expect_err("non-absolute entry should be rejected");
+            assert!(err.contains("absolute"), "unexpected error: {err}");
+        }
+        // Nothing was persisted by the rejected calls.
         assert!(read_write_dirs().is_empty());
     }
 
