@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { theme, jsExecutionMode, toonOutput, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from '$lib/stores';
+  import { theme, jsExecutionMode, toonOutput, writeDirs, relayPort, relayConnected, relaySidecarStatus, relaySidecarError, updateStatus, updateVersion, updateError, updateChannel, lastCheckedChannel } from '$lib/stores';
   import { autoStartEnabled, fetchAutoStart, toggleAutoStart } from '$lib/stores/autostart';
   import {
     AUTO_DISMISS_MS_MAX,
@@ -27,6 +27,8 @@
   import { canRetryRelay, getSettingsStatusLabel, restartRelay } from '$lib/relaySidecarUi';
   import { fetchJsExecutionMode, toggleJsExecutionMode } from '$lib/jsExecutionModeUi';
   import { fetchToonOutput, toggleToonOutput } from '$lib/toonOutputUi';
+  import { fetchWriteDirs, addWriteDir, removeWriteDir } from '$lib/writeDirsUi';
+  import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
   import { checkAndAutoDownload, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
   import { toast } from 'svelte-sonner';
@@ -160,6 +162,7 @@
     fetchRelayStatus();
     fetchJsExecutionMode();
     fetchToonOutput();
+    fetchWriteDirs();
     fetchAutoStart();
     fetchOverlaySettings();
     subscribeOverlaySettingsChanges()
@@ -247,6 +250,27 @@
       console.error('Failed to load observability config:', e);
     } finally {
       obsLoading = false;
+    }
+  }
+
+  let addingWriteDir = $state(false);
+
+  async function handleAddWriteDir() {
+    if (addingWriteDir) return;
+    addingWriteDir = true;
+    try {
+      const selected = await dialogOpen({
+        directory: true,
+        multiple: false,
+        title: 'Add write directory',
+      });
+      if (selected && typeof selected === 'string') {
+        await addWriteDir(selected);
+      }
+    } catch (e) {
+      console.error('Failed to pick write directory:', e);
+    } finally {
+      addingWriteDir = false;
     }
   }
 
@@ -391,6 +415,40 @@
       >
         <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {$toonOutput ? 'translate-x-5' : ''}"></span>
       </button>
+    </div>
+
+    <div>
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <div class="text-sm font-medium">Write directories</div>
+          <div class="text-xs text-(--fg2) mt-0.5">Directories that sandbox scripts may write into. Scripts cannot write anywhere else on disk.</div>
+        </div>
+        <button
+          class="shrink-0 px-3 py-1.5 text-xs rounded-lg border border-(--border) hover:bg-(--surface-hover) text-(--fg2) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+          onclick={handleAddWriteDir}
+          disabled={addingWriteDir}
+        >
+          Add directory…
+        </button>
+      </div>
+      {#if $writeDirs.length > 0}
+        <ul class="mt-2 space-y-1">
+          {#each $writeDirs as dir (dir)}
+            <li class="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface)">
+              <span class="text-xs font-mono break-all">{dir}</span>
+              <button
+                class="shrink-0 text-xs text-(--fg2) hover:text-red-500 transition-colors"
+                onclick={() => removeWriteDir(dir)}
+                aria-label="Remove write directory {dir}"
+              >
+                Remove
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="mt-2 text-xs text-(--fg2)/70">No write directories configured.</p>
+      {/if}
     </div>
 
     <div class="flex items-start justify-between gap-4">

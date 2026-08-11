@@ -459,6 +459,26 @@ fn read_toon_output() -> bool {
         .unwrap_or(true)
 }
 
+/// Read `relay.write_dirs` from `~/.endara/config.toml`.
+/// Returns an empty list on any error, missing section, or missing key —
+/// matches the relay's own default (no writable directories).
+fn read_write_dirs() -> Vec<String> {
+    let Ok(parsed) = read_config() else {
+        return Vec::new();
+    };
+    parsed
+        .get("relay")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("write_dirs"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Holds the relay sidecar child process handle.
 pub struct RelayState {
     child: Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>,
@@ -1799,6 +1819,53 @@ async fn set_toon_output(enabled: bool) -> Result<(), String> {
     write_config(&table)
 }
 
+/// Get the list of directories sandbox scripts may write into.
+/// Returns an empty list (the relay's own default) if the config is missing,
+/// malformed, has no `[relay]` section, or has no `write_dirs` field.
+#[tauri::command]
+async fn get_write_dirs() -> Result<Vec<String>, String> {
+    Ok(read_write_dirs())
+}
+
+#[tauri::command]
+async fn set_write_dirs(dirs: Vec<String>) -> Result<(), String> {
+    let mut table = read_config().unwrap_or_else(|_| toml::Table::new());
+
+    // Ensure [relay] section exists. The relay's `RelayConfig` requires
+    // `machine_name`, so populate it from the system hostname when creating
+    // the section from scratch — otherwise the relay's next config reload
+    // would fail to deserialize.
+    let relay = table
+        .entry("relay")
+        .or_insert_with(|| {
+            let mut t = toml::Table::new();
+            let machine_name = hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_else(|| "unknown".to_string());
+            t.insert(
+                "machine_name".to_string(),
+                toml::Value::String(machine_name),
+            );
+            toml::Value::Table(t)
+        })
+        .as_table_mut()
+        .ok_or("Invalid [relay] section in config")?;
+
+    // De-duplicate while preserving first-seen order so repeated picker
+    // selections never produce duplicate entries on disk.
+    let mut seen = std::collections::HashSet::new();
+    let deduped: Vec<toml::Value> = dirs
+        .into_iter()
+        .filter(|d| seen.insert(d.clone()))
+        .map(toml::Value::String)
+        .collect();
+
+    relay.insert("write_dirs".to_string(), toml::Value::Array(deduped));
+
+    write_config(&table)
+}
+
 /// Get the current update channel ("stable" or "beta").
 #[tauri::command]
 async fn get_update_channel() -> Result<String, String> {
@@ -2515,6 +2582,8 @@ pub fn run() {
             set_js_execution_mode,
             get_toon_output,
             set_toon_output,
+            get_write_dirs,
+            set_write_dirs,
             get_config_path_display,
             get_buffered_relay_logs,
             get_update_channel,
@@ -3787,6 +3856,262 @@ mod toon_output_tests {
             Some(false),
             "toon_output should be set to false"
         );
+
+        let endpoints = parsed
+            .get("endpoints")
+            .and_then(|v| v.as_array())
+            .expect("[[endpoints]] preserved");
+        assert_eq!(endpoints.len(), 1, "endpoint count should be unchanged");
+        let ep = endpoints[0].as_table().expect("endpoint is a table");
+        assert_eq!(ep.get("name").and_then(|v| v.as_str()), Some("gmail-acct"));
+        assert_eq!(ep.get("transport").and_then(|v| v.as_str()), Some("stdio"));
+        assert_eq!(
+            ep.get("tool_prefix").and_then(|v| v.as_str()),
+            Some("gmail")
+        );
+        assert_eq!(ep.get("command").and_then(|v| v.as_str()), Some("echo"));
+        let args = ep
+            .get("args")
+            .and_then(|v| v.as_array())
+            .expect("args preserved");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].as_str(), Some("hi"));
+    }
+}
+
+#[cfg(test)]
+mod write_dirs_tests {
+    //! Round-trip coverage for `read_write_dirs` and `set_write_dirs`.
+    //! Mirrors `toon_output_tests` but pins the default to an empty list —
+    //! a missing field, missing section, missing file, or malformed file all
+    //! resolve to no writable directories.
+    use super::*;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    struct HomeGuard {
+        prior: Option<String>,
+        _tmp: TempDir,
+    }
+
+    impl HomeGuard {
+        fn new() -> Self {
+            let prior = std::env::var("HOME").ok();
+            let tmp = tempfile::tempdir().expect("create tempdir");
+            std::env::set_var("HOME", tmp.path());
+            Self { prior, _tmp: tmp }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime")
+    }
+
+    fn write_config_str(contents: &str) {
+        let path = config_path().expect("config_path");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent dir");
+        }
+        std::fs::write(&path, contents).expect("write config.toml");
+    }
+
+    fn read_config_str() -> String {
+        let path = config_path().expect("config_path");
+        std::fs::read_to_string(&path).expect("read config.toml")
+    }
+
+    #[test]
+    #[serial]
+    fn get_write_dirs_returns_entries_when_set() {
+        let _home = HomeGuard::new();
+        write_config_str("[relay]\nmachine_name = \"x\"\nwrite_dirs = [\"/tmp/a\", \"/tmp/b\"]\n");
+        assert_eq!(read_write_dirs(), vec!["/tmp/a", "/tmp/b"]);
+    }
+
+    #[test]
+    #[serial]
+    fn get_write_dirs_returns_empty_when_field_missing() {
+        let _home = HomeGuard::new();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+        assert!(read_write_dirs().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_write_dirs_returns_empty_when_no_relay_section() {
+        let _home = HomeGuard::new();
+        write_config_str("[desktop]\nupdate_channel = \"stable\"\n");
+        assert!(read_write_dirs().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_write_dirs_returns_empty_when_file_missing() {
+        let _home = HomeGuard::new();
+        // No config.toml written.
+        assert!(read_write_dirs().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_write_dirs_returns_empty_when_file_malformed() {
+        let _home = HomeGuard::new();
+        write_config_str("not valid toml ====\n");
+        assert!(read_write_dirs().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn set_write_dirs_roundtrips() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+
+        rt.block_on(set_write_dirs(vec![
+            "/tmp/a".to_string(),
+            "/tmp/b".to_string(),
+        ]))
+        .expect("set write_dirs");
+        assert_eq!(read_write_dirs(), vec!["/tmp/a", "/tmp/b"]);
+
+        rt.block_on(set_write_dirs(vec![]))
+            .expect("clear write_dirs");
+        assert!(read_write_dirs().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn set_write_dirs_deduplicates_preserving_order() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+
+        rt.block_on(set_write_dirs(vec![
+            "/tmp/a".to_string(),
+            "/tmp/b".to_string(),
+            "/tmp/a".to_string(),
+        ]))
+        .expect("set write_dirs");
+
+        assert_eq!(read_write_dirs(), vec!["/tmp/a", "/tmp/b"]);
+    }
+
+    #[test]
+    #[serial]
+    fn set_write_dirs_creates_missing_relay_section() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[desktop]\nupdate_channel = \"stable\"\n");
+
+        rt.block_on(set_write_dirs(vec!["/tmp/a".to_string()]))
+            .expect("set_write_dirs should succeed");
+
+        let toml_str = read_config_str();
+        let parsed: toml::Table =
+            toml::from_str(&toml_str).expect("re-parse config.toml as toml::Table");
+
+        let relay = parsed
+            .get("relay")
+            .and_then(|v| v.as_table())
+            .expect("[relay] section should exist");
+        let dirs = relay
+            .get("write_dirs")
+            .and_then(|v| v.as_array())
+            .expect("write_dirs should be set");
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].as_str(), Some("/tmp/a"));
+        let machine_name = relay
+            .get("machine_name")
+            .and_then(|v| v.as_str())
+            .expect("machine_name should be set");
+        assert!(
+            !machine_name.is_empty(),
+            "machine_name should be non-empty, got {machine_name:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_write_dirs_preserves_other_fields() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str(
+            "[desktop]\n\
+             update_channel = \"beta\"\n\
+             \n\
+             [relay]\n\
+             machine_name = \"host\"\n\
+             token_dir = \"/tmp/x\"\n\
+             local_js_execution = true\n\
+             toon_output = false\n\
+             \n\
+             [[endpoints]]\n\
+             name = \"gmail-acct\"\n\
+             transport = \"stdio\"\n\
+             tool_prefix = \"gmail\"\n\
+             command = \"echo\"\n\
+             args = [\"hi\"]\n",
+        );
+
+        rt.block_on(set_write_dirs(vec!["/tmp/allowed".to_string()]))
+            .expect("set_write_dirs should succeed");
+
+        let toml_str = read_config_str();
+        let parsed: toml::Table =
+            toml::from_str(&toml_str).expect("re-parse config.toml as toml::Table");
+
+        let desktop = parsed
+            .get("desktop")
+            .and_then(|v| v.as_table())
+            .expect("[desktop] preserved");
+        assert_eq!(
+            desktop.get("update_channel").and_then(|v| v.as_str()),
+            Some("beta"),
+            "update_channel should be preserved"
+        );
+
+        let relay = parsed
+            .get("relay")
+            .and_then(|v| v.as_table())
+            .expect("[relay] preserved");
+        assert_eq!(
+            relay.get("machine_name").and_then(|v| v.as_str()),
+            Some("host"),
+            "machine_name should be preserved"
+        );
+        assert_eq!(
+            relay.get("token_dir").and_then(|v| v.as_str()),
+            Some("/tmp/x"),
+            "token_dir should be preserved"
+        );
+        assert_eq!(
+            relay.get("local_js_execution").and_then(|v| v.as_bool()),
+            Some(true),
+            "local_js_execution should be preserved"
+        );
+        assert_eq!(
+            relay.get("toon_output").and_then(|v| v.as_bool()),
+            Some(false),
+            "toon_output should be preserved"
+        );
+        let dirs = relay
+            .get("write_dirs")
+            .and_then(|v| v.as_array())
+            .expect("write_dirs should be set");
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].as_str(), Some("/tmp/allowed"));
 
         let endpoints = parsed
             .get("endpoints")

@@ -281,6 +281,131 @@ describe('Settings TOON output helpers', () => {
   });
 });
 
+describe('Settings write directories helpers', () => {
+  const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    invokeMock.mockReset();
+    getConfigMock.mockReset();
+    reloadConfigMock.mockReset();
+    // Reset the shared store to its default (empty) before each test so
+    // order doesn't matter.
+    const { writeDirs } = await import('$lib/stores');
+    writeDirs.set([]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetchWriteDirs updates the store from the Tauri command', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_write_dirs') return Promise.resolve(['/tmp/a', '/tmp/b']);
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { fetchWriteDirs } = await import('$lib/writeDirsUi');
+    const { writeDirs } = await import('$lib/stores');
+
+    await fetchWriteDirs();
+
+    expect(invokeMock).toHaveBeenCalledWith('get_write_dirs');
+    expect(get(writeDirs)).toEqual(['/tmp/a', '/tmp/b']);
+  });
+
+  it('fetchWriteDirs is resilient to a failing Tauri command', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { fetchWriteDirs } = await import('$lib/writeDirsUi');
+    const { writeDirs } = await import('$lib/stores');
+    writeDirs.set(['/tmp/kept']);
+
+    await expect(fetchWriteDirs()).resolves.toBeUndefined();
+    expect(get(writeDirs)).toEqual(['/tmp/kept']);
+  });
+
+  it('addWriteDir calls set_write_dirs then reloadConfig, in order', async () => {
+    const callOrder: string[] = [];
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'set_write_dirs') {
+        callOrder.push(`set:${JSON.stringify(args?.dirs)}`);
+        return Promise.resolve(undefined);
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    reloadConfigMock.mockImplementation(() => {
+      callOrder.push('reload');
+      return Promise.resolve();
+    });
+    const { addWriteDir } = await import('$lib/writeDirsUi');
+    const { writeDirs } = await import('$lib/stores');
+    writeDirs.set(['/tmp/a']);
+
+    await addWriteDir('/tmp/b');
+
+    expect(invokeMock).toHaveBeenCalledWith('set_write_dirs', { dirs: ['/tmp/a', '/tmp/b'] });
+    expect(reloadConfigMock).toHaveBeenCalledTimes(1);
+    expect(callOrder).toEqual(['set:["/tmp/a","/tmp/b"]', 'reload']);
+    expect(get(writeDirs)).toEqual(['/tmp/a', '/tmp/b']);
+  });
+
+  it('addWriteDir is a no-op for a duplicate directory', async () => {
+    const { addWriteDir } = await import('$lib/writeDirsUi');
+    const { writeDirs } = await import('$lib/stores');
+    writeDirs.set(['/tmp/a']);
+
+    await addWriteDir('/tmp/a');
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(reloadConfigMock).not.toHaveBeenCalled();
+    expect(get(writeDirs)).toEqual(['/tmp/a']);
+  });
+
+  it('removeWriteDir calls set_write_dirs then reloadConfig with the entry removed', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'set_write_dirs') return Promise.resolve(undefined);
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    reloadConfigMock.mockResolvedValue(undefined);
+    const { removeWriteDir } = await import('$lib/writeDirsUi');
+    const { writeDirs } = await import('$lib/stores');
+    writeDirs.set(['/tmp/a', '/tmp/b']);
+
+    await removeWriteDir('/tmp/a');
+
+    expect(invokeMock).toHaveBeenCalledWith('set_write_dirs', { dirs: ['/tmp/b'] });
+    expect(reloadConfigMock).toHaveBeenCalledTimes(1);
+    expect(get(writeDirs)).toEqual(['/tmp/b']);
+  });
+
+  it('removeWriteDir is a no-op for an unknown directory', async () => {
+    const { removeWriteDir } = await import('$lib/writeDirsUi');
+    const { writeDirs } = await import('$lib/stores');
+    writeDirs.set(['/tmp/a']);
+
+    await removeWriteDir('/tmp/zzz');
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(reloadConfigMock).not.toHaveBeenCalled();
+    expect(get(writeDirs)).toEqual(['/tmp/a']);
+  });
+
+  it('addWriteDir reverts the store when set_write_dirs rejects', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'set_write_dirs') return Promise.reject(new Error('write failed'));
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { addWriteDir } = await import('$lib/writeDirsUi');
+    const { writeDirs } = await import('$lib/stores');
+    writeDirs.set(['/tmp/a']);
+
+    await addWriteDir('/tmp/b');
+
+    expect(get(writeDirs)).toEqual(['/tmp/a']);
+    expect(reloadConfigMock).not.toHaveBeenCalled();
+  });
+});
+
 
 // Phase 5 — "Activity overlay" section in Settings.svelte. The handlers are
 // inline arrow functions, so following the codebase convention used in
