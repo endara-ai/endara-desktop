@@ -1,6 +1,6 @@
 {
   "name": "@endara/desktop",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "description": "Endara Desktop — Tauri + Svelte tray app for relay management",
   "type": "module",
