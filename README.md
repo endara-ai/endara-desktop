@@ -26,7 +26,8 @@ Add MCP servers, manage OAuth, browse tools — without ever opening a terminal.
 - **Endpoint profiles** — group endpoints into named profiles served under their own `/mcp/{profile}` URL so different agents can share one relay without sharing one catalog.
 - **Tray health at a glance** — the tray icon flips green / yellow / red and the menu's first line spells out the exact reason (sign-in needed, endpoint unhealthy, relay stopped) without opening the app.
 - **Search tools** across every connected server from a single ⌘K palette.
-- **Watch real-time logs** stream from each endpoint as requests flow through.
+- **Watch real-time logs** stream from each endpoint as requests flow through — log views are virtualized, so even thousands of buffered lines scroll smoothly.
+- **Grant sandbox write access visually** — pick the directories that JS-execution scripts may write into (the relay's `write_dirs` allowlist) with a native folder picker in Settings; scripts cannot write anywhere else on disk.
 - **Manage OAuth flows** end-to-end inside the app — sign in just in time when a server needs it, and re-authenticate or refresh from the **Auth** tab without copy-pasting tokens.
 - **Connect enterprise SSO once per organization** — add your identity provider (e.g. Okta) as an organization, sign in, and Endara detects which of your MCP servers accept it; every server sharing an organization draws from one pooled, silently-refreshed credential.
 - **Single-click add server** for STDIO, SSE, or HTTP MCP servers — paste a command or URL (and, for STDIO servers, optionally run it in a container), and you're done.
@@ -83,7 +84,8 @@ Or [build from source](#development) if you prefer.
 - **Relay lifecycle management** — Auto-starts the relay on launch, monitors it, auto-restarts on crash, kills on quit
 - **Endpoint dashboard** — View all configured MCP server endpoints with live health indicators (🟢 healthy / 🟡 degraded / 🔴 down), plus Starting… / Stopping… progress hints while a server is toggled on or off
 - **Tool browser** — Browse and search all tools exposed by each endpoint
-- **Real-time logs** — Stream log output from each endpoint as it happens
+- **Real-time logs** — Stream log output from each endpoint as it happens; the Relay Logs and per-endpoint Logs views render only the visible rows (virtualized), so the full 5,000-line buffer never bogs down the UI
+- **Write directories** — A **Write directories** section in Settings manages the relay's `[relay] write_dirs` allowlist — the directories sandbox scripts may write into via `writeFile()`. Add entries with a native folder picker, remove them with one click; changes are persisted to `config.toml` and pushed to the running relay without a restart
 - **Config viewer** — Inspect the current relay configuration
 - **Dark mode** — Follows your system preference automatically
 - **Auto-updates** — Checks GitHub Releases for new versions via the Tauri updater plugin
@@ -124,7 +126,7 @@ Endara Desktop is a [Tauri 2](https://v2.tauri.app) application with two layers:
 
 - **Relay lifecycle** — `start_relay`, `stop_relay`, `restart_relay`, `relay_status`, `get_sidecar_status`, `get_buffered_relay_logs`, `get_relay_port`, `set_relay_port`.
 - **Management-API proxy** — `mgmt_api_request` proxies HTTP-shaped `/api/*` calls from the SvelteKit frontend over the relay's per-user Unix socket / Named Pipe; `get_mgmt_api_socket_path` exposes the socket path for diagnostics.
-- **Config & endpoints** — `get_endpoint_config`, `add_endpoint`, `update_endpoint`, `remove_endpoint`, `get_config_path_display`, `set_js_execution_mode`.
+- **Config & endpoints** — `get_endpoint_config`, `add_endpoint`, `update_endpoint`, `remove_endpoint`, `get_config_path_display`, `set_js_execution_mode`, `get_write_dirs`, `set_write_dirs`.
 - **Updates & autostart** — `get_update_channel`, `set_update_channel`, `check_for_update`, `download_and_install_update`, `show_update_notification`, `get_autostart`, `set_autostart`, `get_build_info`.
 
 **Frontend (SvelteKit):** Talks to the relay's management API to fetch endpoint status, tools, logs, and configuration. The UI is organized around a sidebar (endpoint list) + detail panel (per-endpoint tabs for tools, logs, config, auth) layout. Auxiliary components include onboarding, search palette, settings, an add-endpoint modal, and a unified tool catalog.
