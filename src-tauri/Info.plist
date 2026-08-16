@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Endara connects to MCP servers on your local network, such as home automation hubs.</string>
+	<string>This app connects to devices and services on your local network that you configure, such as home automation hubs.</string>
 </dict>
 </plist>
