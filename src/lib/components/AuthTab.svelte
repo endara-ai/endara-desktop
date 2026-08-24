@@ -3,7 +3,7 @@
   import { selectedEndpoint, oauthStatuses } from '$lib/stores';
   import { getOAuthStatus, refreshOAuth, startOAuth, resetOAuth } from '$lib/api';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { canReauthorize, isConnectivityFailure, reauthorize, resetAuthorization } from '$lib/oauth/actions';
+  import { canReauthorize, canResetAuthorization, isConnectivityFailure, reauthorize, resetAuthorization } from '$lib/oauth/actions';
   import { toast } from 'svelte-sonner';
 
   let status = $state<OAuthStatus | null>(null);
@@ -130,6 +130,7 @@
       (['authenticated', 'connection_failed'] as OAuthStatusValue[]).includes(status.status),
   );
   let canReauth = $derived(status !== null && canReauthorize(status.status));
+  let canReset = $derived(status !== null && canResetAuthorization(status.status));
   let connectivityFailure = $derived(status !== null && isConnectivityFailure(status.status));
   let actionBusy = $derived(actionInProgress || reauthInProgress || resetInProgress);
 </script>
@@ -200,7 +201,7 @@
     </div>
 
     <!-- Actions -->
-    {#if canRefresh || canReauth}
+    {#if canRefresh || canReauth || canReset}
       <div class="flex gap-2">
         {#if canRefresh}
           <button
@@ -218,7 +219,7 @@
             aria-label="Re-authenticate"
           >Re-authenticate</button>
         {/if}
-        {#if canReauth}
+        {#if canReset}
           <button
             class="btn-sec"
             onclick={handleReset}

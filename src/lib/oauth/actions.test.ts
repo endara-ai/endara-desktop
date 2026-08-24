@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   canReauthorize,
+  canResetAuthorization,
   isConnectivityFailure,
   reauthorize,
   resetAuthorization,
@@ -116,8 +117,10 @@ describe('resetAuthorization', () => {
     await resetAuthorization('srv', deps);
     expect(deps.openUrl).not.toHaveBeenCalled();
     expect(deps.onSuccess).not.toHaveBeenCalled();
+    // The relay has already discarded the old grant by the time the start
+    // half fails, so the copy must say the reset happened.
     expect(deps.onError).toHaveBeenCalledWith(
-      "Couldn't reach the server to start authorization. Check your connection and try again.",
+      "Authorization was reset, but the new sign-in couldn't start: the server is unreachable. Re-authenticate when the connection is back.",
     );
   });
 
@@ -128,7 +131,7 @@ describe('resetAuthorization', () => {
     await resetAuthorization('srv', deps);
     expect(deps.openUrl).not.toHaveBeenCalled();
     expect(deps.onError).toHaveBeenCalledWith(
-      'OAuth discovery failed. Go to Settings to configure OAuth server URL manually.',
+      'Authorization was reset, but OAuth discovery failed. Go to Settings to configure the OAuth server URL, then re-authenticate.',
     );
   });
 
@@ -139,7 +142,7 @@ describe('resetAuthorization', () => {
     await resetAuthorization('srv', deps);
     expect(deps.openUrl).not.toHaveBeenCalled();
     expect(deps.onError).toHaveBeenCalledWith(
-      'This server requires manual OAuth app registration. Go to Settings to enter your Client ID.',
+      'Authorization was reset, but this server requires manual OAuth app registration. Go to Settings to enter your Client ID, then re-authenticate.',
     );
   });
 
@@ -166,6 +169,25 @@ describe('canReauthorize', () => {
   for (const [status, expected] of cases) {
     it(`returns ${expected} for status "${status}"`, () => {
       expect(canReauthorize(status)).toBe(expected);
+    });
+  }
+});
+
+// Reset targets a LIVE grant the user wants to re-approve, so unlike
+// canReauthorize it must also return true for `authenticated`.
+describe('canResetAuthorization', () => {
+  const cases: Array<[OAuthStatusValue, boolean]> = [
+    ['authenticated', true],
+    ['disconnected', true],
+    ['auth_required', true],
+    ['needs_login', true],
+    ['connection_failed', true],
+    ['refreshing', false],
+  ];
+
+  for (const [status, expected] of cases) {
+    it(`returns ${expected} for status "${status}"`, () => {
+      expect(canResetAuthorization(status)).toBe(expected);
     });
   }
 });

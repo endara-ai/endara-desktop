@@ -330,9 +330,20 @@ describe('AuthTab reset-authorization wiring (source contract)', () => {
     expect(source).toMatch(/await resetAuthorization\(name,\s*\{\s*resetOAuth,/);
   });
 
-  it('gates the button on the same canReauth derivation as Re-authenticate', () => {
-    const gates = source.match(/\{#if canReauth\}/g) ?? [];
-    expect(gates).toHaveLength(2);
+  // The reset button must be reachable while AUTHENTICATED (the primary use
+  // case is resetting a live grant), so it gates on canReset — derived from
+  // canResetAuthorization() — not on canReauth, which excludes that state.
+  it('gates the button on canReset derived from canResetAuthorization', () => {
+    expect(source).toMatch(
+      /canReset\s*=\s*\$derived\(\s*status\s*!==\s*null\s*&&\s*canResetAuthorization\(status\.status\)\s*\)/,
+    );
+    expect(source).toMatch(
+      /\{#if canReset\}[\s\S]*?aria-label="Reset authorization"[\s\S]*?\{\/if\}/,
+    );
+  });
+
+  it('includes canReset in the actions-row visibility gate', () => {
+    expect(source).toMatch(/\{#if canRefresh \|\| canReauth \|\| canReset\}/);
   });
 });
 

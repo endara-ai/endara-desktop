@@ -435,8 +435,12 @@ export interface UpdateEndpointParams {
   auth?: EmaAuthSummary;
 }
 
-export async function startOAuth(name: string): Promise<OAuthStartResult> {
-  const res = await mgmtRequest('POST', `/endpoints/${encodeURIComponent(name)}/oauth/start`);
+/**
+ * Shared POST for the OAuth flow-starting endpoints (`start` and `reset`),
+ * which return the identical `OAuthStartResult` shape.
+ */
+async function oauthFlowRequest(name: string, action: 'start' | 'reset'): Promise<OAuthStartResult> {
+  const res = await mgmtRequest('POST', `/endpoints/${encodeURIComponent(name)}/oauth/${action}`);
   const data = res.body ? JSON.parse(res.body) : {};
   if (res.status < 200 || res.status >= 300) {
     // dcr_unsupported / discovery_failed / discovery_unreachable are returned as typed responses, not thrown
@@ -448,22 +452,17 @@ export async function startOAuth(name: string): Promise<OAuthStartResult> {
   return data as OAuthStartResult;
 }
 
+export async function startOAuth(name: string): Promise<OAuthStartResult> {
+  return oauthFlowRequest(name, 'start');
+}
+
 /**
  * "Reset authorization": the relay revokes the old grant (upstream +
  * local) and starts a fresh flow with forced consent. Response shape is
  * identical to `startOAuth`.
  */
 export async function resetOAuth(name: string): Promise<OAuthStartResult> {
-  const res = await mgmtRequest('POST', `/endpoints/${encodeURIComponent(name)}/oauth/reset`);
-  const data = res.body ? JSON.parse(res.body) : {};
-  if (res.status < 200 || res.status >= 300) {
-    // dcr_unsupported / discovery_failed / discovery_unreachable are returned as typed responses, not thrown
-    if (['dcr_unsupported', 'discovery_failed', 'discovery_unreachable'].includes(data?.error)) {
-      return data as OAuthStartResult;
-    }
-    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
-  }
-  return data as OAuthStartResult;
+  return oauthFlowRequest(name, 'reset');
 }
 
 export async function setOAuthCredentials(
