@@ -448,6 +448,24 @@ export async function startOAuth(name: string): Promise<OAuthStartResult> {
   return data as OAuthStartResult;
 }
 
+/**
+ * "Reset authorization": the relay revokes the old grant (upstream +
+ * local) and starts a fresh flow with forced consent. Response shape is
+ * identical to `startOAuth`.
+ */
+export async function resetOAuth(name: string): Promise<OAuthStartResult> {
+  const res = await mgmtRequest('POST', `/endpoints/${encodeURIComponent(name)}/oauth/reset`);
+  const data = res.body ? JSON.parse(res.body) : {};
+  if (res.status < 200 || res.status >= 300) {
+    // dcr_unsupported / discovery_failed / discovery_unreachable are returned as typed responses, not thrown
+    if (['dcr_unsupported', 'discovery_failed', 'discovery_unreachable'].includes(data?.error)) {
+      return data as OAuthStartResult;
+    }
+    throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
+  }
+  return data as OAuthStartResult;
+}
+
 export async function setOAuthCredentials(
   name: string,
   clientId: string,

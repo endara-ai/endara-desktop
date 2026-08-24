@@ -43,3 +43,32 @@ export async function reauthorize(name: string, deps: ReauthorizeDeps): Promise<
   }
 }
 
+export interface ResetAuthorizationDeps {
+  resetOAuth: (name: string) => Promise<OAuthStartResult>;
+  openUrl: (url: string) => Promise<void>;
+  onSuccess: (message: string) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * "Reset authorization": the relay discards the old grant (upstream revoke +
+ * local token delete) and returns a forced-consent authorize URL, so the
+ * provider re-shows its consent screen instead of silently reusing the prior
+ * grant.
+ */
+export async function resetAuthorization(name: string, deps: ResetAuthorizationDeps): Promise<void> {
+  const result = await deps.resetOAuth(name);
+  if ('authorize_url' in result) {
+    await deps.openUrl(result.authorize_url);
+    deps.onSuccess('Authorization reset — approve access on the consent screen to finish');
+  } else if ('error' in result && result.error === 'discovery_unreachable') {
+    deps.onError("Couldn't reach the server to start authorization. Check your connection and try again.");
+  } else if ('error' in result && result.error === 'discovery_failed') {
+    deps.onError('OAuth discovery failed. Go to Settings to configure OAuth server URL manually.');
+  } else if ('error' in result && result.error === 'dcr_unsupported') {
+    deps.onError('This server requires manual OAuth app registration. Go to Settings to enter your Client ID.');
+  } else {
+    deps.onError('Failed to reset authorization');
+  }
+}
+

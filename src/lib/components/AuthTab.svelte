@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { OAuthStatus, OAuthStatusValue } from '$lib/types';
   import { selectedEndpoint, oauthStatuses } from '$lib/stores';
-  import { getOAuthStatus, refreshOAuth, startOAuth } from '$lib/api';
+  import { getOAuthStatus, refreshOAuth, startOAuth, resetOAuth } from '$lib/api';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { canReauthorize, isConnectivityFailure, reauthorize } from '$lib/oauth/actions';
+  import { canReauthorize, isConnectivityFailure, reauthorize, resetAuthorization } from '$lib/oauth/actions';
   import { toast } from 'svelte-sonner';
 
   let status = $state<OAuthStatus | null>(null);
@@ -11,6 +11,7 @@
   let error = $state('');
   let actionInProgress = $state(false);
   let reauthInProgress = $state(false);
+  let resetInProgress = $state(false);
 
   const statusColors: Record<OAuthStatusValue, string> = {
     authenticated: 'bg-(--healthy)',
@@ -76,7 +77,7 @@
 
   async function handleRefresh() {
     const name = $selectedEndpoint;
-    if (!name || actionInProgress || reauthInProgress) return;
+    if (!name || actionInProgress || reauthInProgress || resetInProgress) return;
     actionInProgress = true;
     try {
       await refreshOAuth(name);
@@ -90,7 +91,7 @@
 
   async function handleReauthorize() {
     const name = $selectedEndpoint;
-    if (!name || actionInProgress || reauthInProgress) return;
+    if (!name || actionInProgress || reauthInProgress || resetInProgress) return;
     reauthInProgress = true;
     try {
       await reauthorize(name, {
@@ -105,6 +106,24 @@
     reauthInProgress = false;
   }
 
+  async function handleReset() {
+    const name = $selectedEndpoint;
+    if (!name || actionInProgress || reauthInProgress || resetInProgress) return;
+    resetInProgress = true;
+    try {
+      await resetAuthorization(name, {
+        resetOAuth,
+        openUrl,
+        onSuccess: toast.success,
+        onError: toast.error,
+      });
+      await fetchStatus(name);
+    } catch {
+      toast.error('Failed to reset authorization');
+    }
+    resetInProgress = false;
+  }
+
   let canRefresh = $derived(
     status !== null &&
       status.has_refresh_token &&
@@ -112,7 +131,7 @@
   );
   let canReauth = $derived(status !== null && canReauthorize(status.status));
   let connectivityFailure = $derived(status !== null && isConnectivityFailure(status.status));
-  let actionBusy = $derived(actionInProgress || reauthInProgress);
+  let actionBusy = $derived(actionInProgress || reauthInProgress || resetInProgress);
 </script>
 
 <div class="h-full overflow-y-auto p-4 space-y-4">
@@ -198,6 +217,15 @@
             title="Open the browser to sign in again"
             aria-label="Re-authenticate"
           >Re-authenticate</button>
+        {/if}
+        {#if canReauth}
+          <button
+            class="btn-sec"
+            onclick={handleReset}
+            disabled={actionBusy}
+            title="Discard the old grant and re-approve access — the provider will show its consent screen again"
+            aria-label="Reset authorization"
+          >Reset authorization</button>
         {/if}
       </div>
     {/if}

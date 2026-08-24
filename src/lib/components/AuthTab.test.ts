@@ -70,12 +70,17 @@ function connectivityFailure(status: MinimalOAuthStatus | null): boolean {
   return status !== null && status.status === 'connection_failed';
 }
 
-// Pure mirror of the `actionBusy` derivation in AuthTab.svelte. Both the
-// "Refresh Now" and "Re-authenticate" buttons bind their `disabled` state to
-// this shared guard so neither can be triggered while either flow is running,
-// avoiding an overlapping token refresh + browser OAuth flow.
-function actionBusy(actionInProgress: boolean, reauthInProgress: boolean): boolean {
-  return actionInProgress || reauthInProgress;
+// Pure mirror of the `actionBusy` derivation in AuthTab.svelte. The
+// "Refresh Now", "Re-authenticate" and "Reset authorization" buttons all bind
+// their `disabled` state to this shared guard so none can be triggered while
+// any flow is running, avoiding overlapping token refresh + browser OAuth
+// flows.
+function actionBusy(
+  actionInProgress: boolean,
+  reauthInProgress: boolean,
+  resetInProgress = false,
+): boolean {
+  return actionInProgress || reauthInProgress || resetInProgress;
 }
 
 
@@ -253,6 +258,11 @@ describe('actionBusy', () => {
   it('is true when both actions are in progress', () => {
     expect(actionBusy(true, true)).toBe(true);
   });
+
+  // ...and a reset in progress must disable the other two buttons as well.
+  it('is true when a reset is in progress', () => {
+    expect(actionBusy(false, false, true)).toBe(true);
+  });
 });
 
 // The vitest environment here is `node`, so we can't mount the component and
@@ -272,25 +282,57 @@ describe('AuthTab busy-guard wiring (source contract)', () => {
     source = readFileSync(fileURLToPath(new URL('./AuthTab.svelte', import.meta.url)), 'utf8') as string;
   });
 
-  it('derives a shared actionBusy guard from both in-progress flags', () => {
+  it('derives a shared actionBusy guard from all three in-progress flags', () => {
     expect(source).toMatch(
-      /actionBusy\s*=\s*\$derived\(\s*actionInProgress\s*\|\|\s*reauthInProgress\s*\)/,
+      /actionBusy\s*=\s*\$derived\(\s*actionInProgress\s*\|\|\s*reauthInProgress\s*\|\|\s*resetInProgress\s*\)/,
     );
   });
 
-  it('binds both Refresh Now and Re-authenticate buttons to the shared guard', () => {
+  it('binds Refresh Now, Re-authenticate and Reset authorization buttons to the shared guard', () => {
     const disabledBindings = source.match(/disabled=\{actionBusy\}/g) ?? [];
-    expect(disabledBindings).toHaveLength(2);
-    // Neither button should bind disabled to a single per-flow flag anymore.
+    expect(disabledBindings).toHaveLength(3);
+    // No button should bind disabled to a single per-flow flag anymore.
     expect(source).not.toMatch(/disabled=\{actionInProgress\}/);
     expect(source).not.toMatch(/disabled=\{reauthInProgress\}/);
+    expect(source).not.toMatch(/disabled=\{resetInProgress\}/);
   });
 
-  it('early-returns from both handlers while either flow is active', () => {
+  it('early-returns from all three handlers while any flow is active', () => {
     const guards =
-      source.match(/if\s*\(!name\s*\|\|\s*actionInProgress\s*\|\|\s*reauthInProgress\)\s*return;/g) ??
-      [];
-    expect(guards).toHaveLength(2);
+      source.match(
+        /if\s*\(!name\s*\|\|\s*actionInProgress\s*\|\|\s*reauthInProgress\s*\|\|\s*resetInProgress\)\s*return;/g,
+      ) ?? [];
+    expect(guards).toHaveLength(3);
+  });
+});
+
+// Source contract for the "Reset authorization" action: a secondary button
+// next to Re-authenticate that calls the reset flow (upstream revoke + forced
+// consent) via resetAuthorization() with the resetOAuth API dependency.
+describe('AuthTab reset-authorization wiring (source contract)', () => {
+  let source = '';
+
+  beforeAll(async () => {
+    // @ts-expect-error node builtin types not installed
+    const { readFileSync } = await import('node:fs');
+    // @ts-expect-error node builtin types not installed
+    const { fileURLToPath } = await import('node:url');
+    source = readFileSync(fileURLToPath(new URL('./AuthTab.svelte', import.meta.url)), 'utf8') as string;
+  });
+
+  it('renders a secondary Reset authorization button', () => {
+    expect(source).toMatch(
+      /class="btn-sec"[\s\S]*?onclick=\{handleReset\}[\s\S]*?aria-label="Reset authorization"/,
+    );
+  });
+
+  it('wires handleReset to resetAuthorization with the resetOAuth dependency', () => {
+    expect(source).toMatch(/await resetAuthorization\(name,\s*\{\s*resetOAuth,/);
+  });
+
+  it('gates the button on the same canReauth derivation as Re-authenticate', () => {
+    const gates = source.match(/\{#if canReauth\}/g) ?? [];
+    expect(gates).toHaveLength(2);
   });
 });
 
