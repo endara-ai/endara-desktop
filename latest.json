@@ -1,35 +1,35 @@
 {
-  "version": "0.1.13-rc.2",
+  "version": "0.1.13-rc.4",
   "notes": "",
-  "pub_date": "2026-08-21T05:59:57.751Z",
+  "pub_date": "2026-08-24T08:38:16.066Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUJIZGNTWGxNNitaOVZzM2QvMTNJV090ZDJvODZtUkthdmJJNWYvVElLQnhzUk9WQXl2OFJyL01zTEFVRmxHajQ4VkNZSzNPQWFCaXZhVzNDRTVtMmdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjkxNjg5CWZpbGU6RW5kYXJhIERlc2t0b3AuYXBwLnRhci5negpSWnFCQlltR09KNmFPdnRkSzNIdTVEcFpuWnQxOUZocFZqcTQ3SUhVYWtsVzZjNlpDVldTNWZLQmhTa2MvZHNucHBvWGVKNnh6MVpVbVlUWFFQWGZEZz09Cg==",
-      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.2/Endara.Desktop_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUlibTB1dnpVdHZ5WkhUNEVVZFpjQ0hRZkJkam0xRWY4b0lLME0vSi9ZMlgrWW05M2VmdzZudWJNUjI0L25ZNTdXaVVnSGZRbkxWZ0s0ZWlCZk5SaVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTYwMzQ5CWZpbGU6RW5kYXJhIERlc2t0b3AuYXBwLnRhci5nego2L21OYUVUSzZzUHRWTzg3dEJQTDk5em16RTZYeDJTdFUzLzhEZ1ZRZEl6UnpWMUlPMlVubmlhWnh2SS90bHNEaWZsUjFiUkFDeGlWZkRSTHovR2VEQT09Cg==",
+      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.4/Endara.Desktop_aarch64.app.tar.gz"
     },
     "darwin-aarch64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUJIZGNTWGxNNitaOVZzM2QvMTNJV090ZDJvODZtUkthdmJJNWYvVElLQnhzUk9WQXl2OFJyL01zTEFVRmxHajQ4VkNZSzNPQWFCaXZhVzNDRTVtMmdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjkxNjg5CWZpbGU6RW5kYXJhIERlc2t0b3AuYXBwLnRhci5negpSWnFCQlltR09KNmFPdnRkSzNIdTVEcFpuWnQxOUZocFZqcTQ3SUhVYWtsVzZjNlpDVldTNWZLQmhTa2MvZHNucHBvWGVKNnh6MVpVbVlUWFFQWGZEZz09Cg==",
-      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.2/Endara.Desktop_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUlibTB1dnpVdHZ5WkhUNEVVZFpjQ0hRZkJkam0xRWY4b0lLME0vSi9ZMlgrWW05M2VmdzZudWJNUjI0L25ZNTdXaVVnSGZRbkxWZ0s0ZWlCZk5SaVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTYwMzQ5CWZpbGU6RW5kYXJhIERlc2t0b3AuYXBwLnRhci5nego2L21OYUVUSzZzUHRWTzg3dEJQTDk5em16RTZYeDJTdFUzLzhEZ1ZRZEl6UnpWMUlPMlVubmlhWnh2SS90bHNEaWZsUjFiUkFDeGlWZkRSTHovR2VEQT09Cg==",
+      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.4/Endara.Desktop_aarch64.app.tar.gz"
     },
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaU0ycE1uY0Q4VVpUNmhoZ0k3TVNEREJzZnVUTEpFaDliMGVjdzE5ZnFIMnVVUmVmMlZvU3d1YlJFYVpEZ1M2NFN3RUhkTkI0a05UbjhURzBtOEhsYkE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjkxOTM3CWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjJfYW1kNjQuQXBwSW1hZ2UKemdhS1lITDhORWtLY0ZqT2pKTTJ1UmFyWDlOaGcyLzdqYzJMUkR3ZDBpeVNtOWZKOUxEMWxPMTZ4dEJiRXFlZWNLTHdmZS9xZEc3V1JuOVI5WHV3REE9PQo=",
-      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.2/Endara.Desktop_0.1.13-rc.2_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUVjTjFDZEd5Z3Q2WU83QmszcEZpUFBmQTM2VVFDNjFFaG9yTHFEN2ZUM2d5ejFWZS9sallUaTd2cHZ1YmpqbjBlYjFxVnZsTjBSdC8rNVB0NlZTcmc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTYwNTY5CWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjRfYW1kNjQuQXBwSW1hZ2UKbXpaS3lNbC9sNE1xQTNiU2lRU2w5WUZQZGdEY2RFN1UwcldocnhJK3J5RFl3ams4bmZYVVUrUC9obmV2czNyZU9Fc3pzdk5ZNFdueVQ1Y2x0VGRERFE9PQo=",
+      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.4/Endara.Desktop_0.1.13-rc.4_amd64.AppImage"
     },
     "linux-x86_64-appimage": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaU0ycE1uY0Q4VVpUNmhoZ0k3TVNEREJzZnVUTEpFaDliMGVjdzE5ZnFIMnVVUmVmMlZvU3d1YlJFYVpEZ1M2NFN3RUhkTkI0a05UbjhURzBtOEhsYkE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjkxOTM3CWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjJfYW1kNjQuQXBwSW1hZ2UKemdhS1lITDhORWtLY0ZqT2pKTTJ1UmFyWDlOaGcyLzdqYzJMUkR3ZDBpeVNtOWZKOUxEMWxPMTZ4dEJiRXFlZWNLTHdmZS9xZEc3V1JuOVI5WHV3REE9PQo=",
-      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.2/Endara.Desktop_0.1.13-rc.2_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUVjTjFDZEd5Z3Q2WU83QmszcEZpUFBmQTM2VVFDNjFFaG9yTHFEN2ZUM2d5ejFWZS9sallUaTd2cHZ1YmpqbjBlYjFxVnZsTjBSdC8rNVB0NlZTcmc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTYwNTY5CWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjRfYW1kNjQuQXBwSW1hZ2UKbXpaS3lNbC9sNE1xQTNiU2lRU2w5WUZQZGdEY2RFN1UwcldocnhJK3J5RFl3ams4bmZYVVUrUC9obmV2czNyZU9Fc3pzdk5ZNFdueVQ1Y2x0VGRERFE9PQo=",
+      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.4/Endara.Desktop_0.1.13-rc.4_amd64.AppImage"
     },
     "linux-x86_64-deb": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUdjUE1jVUhXcmZSays4RmVHMVE5M0dwVzhCSE1JUnV0OWdOeU1MODB0TGwyMnhrWHpKZ205ckVOWU4vMzZ2aGZneGRlOERvQzh3cUhwTnp4Vm85R1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjkxOTM3CWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjJfYW1kNjQuZGViCkh2aTdzN2J1ZENBeGhPbVNzZnV0S0lYOTVLc0pCRk5GWThYRDlPMUNqbUlCbzhwdFNJcmZNNzhxMzRSbjd6TDZITzlwaVpkKy9aNUVRdElWbEE0ZENnPT0K",
-      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.2/Endara.Desktop_0.1.13-rc.2_amd64.deb"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUxLZGdZOVdpb0gyVDBTcGgxNTVaNE8zMGR3T2FDbW5xYkR6MXgwU3gzWU1qdmpkOC9xMjdNaVRQaFg2SjVnVk41eUl2VlZnQzFJSm1tQm0wMXBmWVFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTYwNTY5CWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjRfYW1kNjQuZGViCklJa1RXbzBRazVSd2dQMzVWZzJhQmVPYUthTmhOVDVHayt0d1J6b2xLZmNZU3J1Q2l6dnZpdWxNc09haEdiK0lCS2toT2Zmd08rem9JclFpSzllUEJ3PT0K",
+      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.4/Endara.Desktop_0.1.13-rc.4_amd64.deb"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUlJMjJmdGE2OEk4dTFQaVNpUCtPMWFVT2Naa3ppUlZvVDVjZWpLUnpoeEYyOGhZMVU1YUY1YlNJTytnWWl6d2owUlJLK0IvdnkzaTExb2I2TmdWMndRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjkxOTk1CWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjJfeDY0LXNldHVwLmV4ZQo2a3RiK0Y2WWsrTzBoOEtRU2NWazllOUhhN2IzQjdLOGdPMGtFVzl5Yy8rSHA3aU9nanRaekJrNDRQV2NrQ0cvMnhOQUR5L1VueFhGaWF2bVlYNUhEUT09Cg==",
-      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.2/Endara.Desktop_0.1.13-rc.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUR6ZFRhbnc2dDVIVjIvamYxdnVhRWZ5cEJxa3hhZ3JxTzRkOHY2WEx4RjFsQUxwTU5HR2hrL2pSR2FkZHlTaTZuQWNyRWxHb0ViMVNrOWxpNW5SbXdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTYwNjkzCWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjRfeDY0LXNldHVwLmV4ZQpHb2lIQzkyczFTdHRqT2NYMnNENldrcjZjWk05NzFCUXpRMHk4SEs2YncxbS9abHBaYlRjblF4blZYeW9NZ1pWK2dVLzJkMmpJbVNLWmdOZm05VVJEUT09Cg==",
+      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.4/Endara.Desktop_0.1.13-rc.4_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUlJMjJmdGE2OEk4dTFQaVNpUCtPMWFVT2Naa3ppUlZvVDVjZWpLUnpoeEYyOGhZMVU1YUY1YlNJTytnWWl6d2owUlJLK0IvdnkzaTExb2I2TmdWMndRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjkxOTk1CWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjJfeDY0LXNldHVwLmV4ZQo2a3RiK0Y2WWsrTzBoOEtRU2NWazllOUhhN2IzQjdLOGdPMGtFVzl5Yy8rSHA3aU9nanRaekJrNDRQV2NrQ0cvMnhOQUR5L1VueFhGaWF2bVlYNUhEUT09Cg==",
-      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.2/Endara.Desktop_0.1.13-rc.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUVFQyM1pTLzJkaUR6ZFRhbnc2dDVIVjIvamYxdnVhRWZ5cEJxa3hhZ3JxTzRkOHY2WEx4RjFsQUxwTU5HR2hrL2pSR2FkZHlTaTZuQWNyRWxHb0ViMVNrOWxpNW5SbXdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTYwNjkzCWZpbGU6RW5kYXJhIERlc2t0b3BfMC4xLjEzLXJjLjRfeDY0LXNldHVwLmV4ZQpHb2lIQzkyczFTdHRqT2NYMnNENldrcjZjWk05NzFCUXpRMHk4SEs2YncxbS9abHBaYlRjblF4blZYeW9NZ1pWK2dVLzJkMmpJbVNLWmdOZm05VVJEUT09Cg==",
+      "url": "https://github.com/endara-ai/endara-desktop/releases/download/v0.1.13-rc.4/Endara.Desktop_0.1.13-rc.4_x64-setup.exe"
     }
   }
 }
