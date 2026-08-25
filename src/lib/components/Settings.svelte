@@ -15,7 +15,7 @@
   import type { UnlistenFn } from '@tauri-apps/api/event';
   import type { Theme, RelayStatus, ObservabilityConfig } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
-  import { getStatus, getObservabilityConfig, putObservabilityConfig } from '$lib/api';
+  import { getStatus, getObservabilityConfig, putObservabilityConfig, getNetworkInterfaces } from '$lib/api';
   import {
     DEFAULT_OBSERVABILITY_CONFIG,
     OBSERVABILITY_NUMERIC_FIELDS,
@@ -25,6 +25,11 @@
     validateObservabilityConfig,
   } from '$lib/components/observability-settings-helpers';
   import { canRetryRelay, getSettingsStatusLabel, restartRelay } from '$lib/relaySidecarUi';
+  import {
+    buildNetworkExposureRows,
+    toggleListenIp,
+    type NetworkExposureRow,
+  } from '$lib/components/network-exposure-helpers';
   import { fetchJsExecutionMode, toggleJsExecutionMode } from '$lib/jsExecutionModeUi';
   import { fetchToonOutput, toggleToonOutput } from '$lib/toonOutputUi';
   import { fetchWriteDirs, addWriteDir, removeWriteDir } from '$lib/writeDirsUi';
@@ -170,6 +175,7 @@
       .catch((e) => console.error('[overlay] subscribe failed:', e));
     fetchUpdateChannel();
     loadObservabilityConfig();
+    loadNetworkExposure();
     invoke('get_config_path_display').then((p: unknown) => {
       if (typeof p === 'string') configFilePath = p;
     }).catch(() => {});
@@ -250,6 +256,52 @@
       console.error('Failed to load observability config:', e);
     } finally {
       obsLoading = false;
+    }
+  }
+
+  // Network exposure — detected interfaces merged with `[relay] listen_ips`.
+  // The relay only reports eligible (private/CGNAT/ULA) addresses and the
+  // merge helper filters configured entries the same way, so no loopback,
+  // unspecified, or public address can ever be rendered here.
+  let netRows = $state<NetworkExposureRow[]>([]);
+  let netListenIps = $state<string[]>([]);
+  let netLoading = $state(true);
+  let netUnavailable = $state(false);
+  let netBusyIp = $state<string | null>(null);
+  let netError = $state<string | null>(null);
+
+  async function loadNetworkExposure() {
+    netLoading = true;
+    netUnavailable = false;
+    try {
+      const res = await getNetworkInterfaces();
+      netListenIps = res.listen_ips;
+      netRows = buildNetworkExposureRows(res.interfaces, res.listen_ips);
+    } catch (e) {
+      netUnavailable = true;
+      console.error('Failed to load network interfaces:', e);
+    } finally {
+      netLoading = false;
+    }
+  }
+
+  // Flip one interface toggle: persist the new full list through the Tauri
+  // backend, then restart the relay (listeners are only bound at startup) so
+  // the change takes effect, then re-read state from the relay.
+  async function handleToggleListenIp(row: NetworkExposureRow) {
+    if (netBusyIp !== null) return;
+    netBusyIp = row.ip;
+    netError = null;
+    const next = toggleListenIp(netListenIps, row.ip, !row.enabled);
+    try {
+      await invoke('set_listen_ips', { ips: next });
+      await restartRelay(invoke);
+      await loadNetworkExposure();
+    } catch (e) {
+      netError = e instanceof Error ? e.message : String(e);
+      console.error('Failed to update listen IPs:', e);
+    } finally {
+      netBusyIp = null;
     }
   }
 
@@ -696,6 +748,73 @@
           </div>
         {/each}
       </div>
+    </div>
+
+    <!-- Network Exposure -->
+    <div class="pt-4 mt-4 border-t border-(--border)">
+      <div class="text-xs font-medium text-(--fg2) uppercase tracking-wide mb-2">Network Exposure</div>
+      <p class="text-xs text-(--fg2) mb-2">Choose which network interfaces the relay's MCP endpoint listens on.</p>
+
+      <div class="p-2 rounded bg-yellow-500/10 border border-yellow-500/20 mb-3">
+        <p class="text-xs text-yellow-600 dark:text-yellow-400 font-medium">Warning: enabling a non-loopback address exposes the MCP endpoint to other devices and users on that network, including potential attackers. Anyone who can reach it can invoke your configured tools.</p>
+      </div>
+
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface)">
+          <div class="min-w-0">
+            <span class="text-xs font-medium">Localhost</span>
+            <span class="text-xs font-mono ml-2 text-(--fg2)">127.0.0.1</span>
+            <span class="text-[0.65rem] text-(--fg2)/70 ml-2">always on</span>
+          </div>
+          <button
+            class="shrink-0 relative w-10 h-5 rounded-full bg-green-500 opacity-60 cursor-not-allowed"
+            disabled
+            role="switch"
+            aria-checked="true"
+            aria-label="Localhost listening (always on)"
+          >
+            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow translate-x-5"></span>
+          </button>
+        </div>
+
+        {#if netLoading}
+          <p class="text-xs text-(--fg2)">Detecting network interfaces…</p>
+        {:else if netUnavailable}
+          <p class="text-xs text-(--fg2)/70">Could not reach the relay to list network interfaces.</p>
+        {:else}
+          {#each netRows as row (row.ip)}
+            <div class="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface)">
+              <div class="min-w-0">
+                <span class="text-xs font-medium">{row.name ?? 'Unknown interface'}</span>
+                <span class="text-xs font-mono ml-2 text-(--fg2)">{row.ip}</span>
+                {#if !row.detected}
+                  <span class="text-[0.65rem] px-1.5 py-0.5 rounded-full ml-2 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">not detected</span>
+                {/if}
+              </div>
+              <button
+                class="shrink-0 relative w-10 h-5 rounded-full transition-colors {row.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'} disabled:cursor-not-allowed disabled:opacity-60"
+                onclick={() => handleToggleListenIp(row)}
+                disabled={netBusyIp !== null}
+                role="switch"
+                aria-checked={row.enabled}
+                aria-label="Toggle listening on {row.ip}"
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {row.enabled ? 'translate-x-5' : ''}"></span>
+              </button>
+            </div>
+          {:else}
+            <p class="text-xs text-(--fg2)/70">No eligible network interfaces detected.</p>
+          {/each}
+        {/if}
+      </div>
+
+      {#if netBusyIp !== null}
+        <p class="text-xs text-(--fg2) mt-2">Applying change and restarting the relay…</p>
+      {:else if netError}
+        <p class="text-xs text-red-600 dark:text-red-400 mt-2">Failed to apply change: {netError}</p>
+      {:else}
+        <p class="text-xs text-(--fg2)/70 mt-2">The relay restarts automatically when you change these toggles.</p>
+      {/if}
     </div>
 
     {#if buildInfo}

@@ -85,6 +85,27 @@ export async function getConfig(): Promise<Record<string, unknown>> {
   return fetchJson<Record<string, unknown>>('/config');
 }
 
+/** One detected interface address eligible for `[relay] listen_ips`. */
+export interface NetworkInterfaceInfo {
+  /** OS interface name (e.g. `eth0`, `tailscale0`). */
+  name: string;
+  /** The address as an IP literal. */
+  ip: string;
+  family: 'v4' | 'v6';
+  /** "private" (RFC 1918), "cgnat" (100.64.0.0/10), or "ula" (fc00::/7). */
+  kind: 'private' | 'cgnat' | 'ula';
+}
+
+export interface NetworkInterfacesResponse {
+  interfaces: NetworkInterfaceInfo[];
+  /** Echo of `[relay] listen_ips` so the UI can render toggle state. */
+  listen_ips: string[];
+}
+
+export async function getNetworkInterfaces(): Promise<NetworkInterfacesResponse> {
+  return fetchJson<NetworkInterfacesResponse>('/network-interfaces');
+}
+
 export async function reloadConfig(): Promise<void> {
   await fetchJson('/config/reload', { method: 'POST' });
 }

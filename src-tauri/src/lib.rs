@@ -484,6 +484,31 @@ fn read_write_dirs() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Read `relay.listen_ips` from `~/.endara/config.toml`.
+/// Returns an empty list on any error, missing section, or missing key —
+/// matches the relay's own default (loopback-only).
+fn read_listen_ips() -> Vec<String> {
+    let Ok(parsed) = read_config() else {
+        return Vec::new();
+    };
+    // De-duplicate while preserving first-seen order: a hand-edited config
+    // with duplicate entries would otherwise produce duplicate keys in the
+    // UI's keyed `{#each}` list.
+    let mut seen = std::collections::HashSet::new();
+    parsed
+        .get("relay")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("listen_ips"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .filter(|s| seen.insert(s.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Holds the relay sidecar child process handle.
 pub struct RelayState {
     child: Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>,
@@ -1883,6 +1908,55 @@ async fn set_write_dirs(dirs: Vec<String>) -> Result<(), String> {
     write_config(&table)
 }
 
+/// Get the list of extra IPs the relay listens on.
+/// Returns an empty list (the relay's own default, loopback-only) if the
+/// config is missing, malformed, has no `[relay]` section, or has no
+/// `listen_ips` field.
+#[tauri::command]
+async fn get_listen_ips() -> Result<Vec<String>, String> {
+    Ok(read_listen_ips())
+}
+
+#[tauri::command]
+async fn set_listen_ips(ips: Vec<String>) -> Result<(), String> {
+    let mut table = read_config().unwrap_or_else(|_| toml::Table::new());
+
+    // Ensure [relay] section exists. The relay's `RelayConfig` requires
+    // `machine_name`, so populate it from the system hostname when creating
+    // the section from scratch — otherwise the relay's next config reload
+    // would fail to deserialize.
+    let relay = table
+        .entry("relay")
+        .or_insert_with(|| {
+            let mut t = toml::Table::new();
+            let machine_name = hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_else(|| "unknown".to_string());
+            t.insert(
+                "machine_name".to_string(),
+                toml::Value::String(machine_name),
+            );
+            toml::Value::Table(t)
+        })
+        .as_table_mut()
+        .ok_or("Invalid [relay] section in config")?;
+
+    // De-duplicate while preserving first-seen order so repeated UI
+    // selections never produce duplicate entries on disk. An empty list is
+    // written as `[]`, which the relay treats as loopback-only.
+    let mut seen = std::collections::HashSet::new();
+    let deduped: Vec<toml::Value> = ips
+        .into_iter()
+        .filter(|ip| seen.insert(ip.clone()))
+        .map(toml::Value::String)
+        .collect();
+
+    relay.insert("listen_ips".to_string(), toml::Value::Array(deduped));
+
+    write_config(&table)
+}
+
 /// Get the current update channel ("stable" or "beta").
 #[tauri::command]
 async fn get_update_channel() -> Result<String, String> {
@@ -2601,6 +2675,8 @@ pub fn run() {
             set_toon_output,
             get_write_dirs,
             set_write_dirs,
+            get_listen_ips,
+            set_listen_ips,
             get_config_path_display,
             get_buffered_relay_logs,
             get_update_channel,
@@ -3898,10 +3974,11 @@ mod toon_output_tests {
 
 #[cfg(test)]
 mod write_dirs_tests {
-    //! Round-trip coverage for `read_write_dirs` and `set_write_dirs`.
+    //! Round-trip coverage for `read_write_dirs` / `set_write_dirs` and the
+    //! structurally identical `read_listen_ips` / `set_listen_ips`.
     //! Mirrors `toon_output_tests` but pins the default to an empty list —
     //! a missing field, missing section, missing file, or malformed file all
-    //! resolve to no writable directories.
+    //! resolve to no writable directories (or no extra listen IPs).
     use super::*;
     use serial_test::serial;
     use tempfile::TempDir;
@@ -4176,6 +4253,150 @@ mod write_dirs_tests {
             .expect("args preserved");
         assert_eq!(args.len(), 1);
         assert_eq!(args[0].as_str(), Some("hi"));
+    }
+
+    #[test]
+    #[serial]
+    fn get_listen_ips_returns_entries_when_set() {
+        let _home = HomeGuard::new();
+        write_config_str(
+            "[relay]\nmachine_name = \"x\"\nlisten_ips = [\"192.168.1.5\", \"10.0.0.2\"]\n",
+        );
+        assert_eq!(read_listen_ips(), vec!["192.168.1.5", "10.0.0.2"]);
+    }
+
+    #[test]
+    #[serial]
+    fn get_listen_ips_returns_empty_when_field_missing() {
+        let _home = HomeGuard::new();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+        assert!(read_listen_ips().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_listen_ips_returns_empty_when_no_relay_section() {
+        let _home = HomeGuard::new();
+        write_config_str("[desktop]\nupdate_channel = \"stable\"\n");
+        assert!(read_listen_ips().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_listen_ips_returns_empty_when_file_missing() {
+        let _home = HomeGuard::new();
+        // No config.toml written.
+        assert!(read_listen_ips().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_listen_ips_returns_empty_when_file_malformed() {
+        let _home = HomeGuard::new();
+        write_config_str("not valid toml ====\n");
+        assert!(read_listen_ips().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_listen_ips_deduplicates_preserving_order() {
+        let _home = HomeGuard::new();
+        write_config_str(
+            "[relay]\nmachine_name = \"x\"\nlisten_ips = [\"10.0.0.1\", \"10.0.0.2\", \"10.0.0.1\"]\n",
+        );
+        assert_eq!(read_listen_ips(), vec!["10.0.0.1", "10.0.0.2"]);
+    }
+
+    #[test]
+    #[serial]
+    fn set_listen_ips_roundtrips() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+
+        rt.block_on(set_listen_ips(vec![
+            "192.168.1.5".to_string(),
+            "10.0.0.2".to_string(),
+        ]))
+        .expect("set listen_ips");
+        assert_eq!(read_listen_ips(), vec!["192.168.1.5", "10.0.0.2"]);
+
+        rt.block_on(set_listen_ips(vec![]))
+            .expect("clear listen_ips");
+        assert!(read_listen_ips().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn set_listen_ips_deduplicates_preserving_order() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+
+        rt.block_on(set_listen_ips(vec![
+            "10.0.0.1".to_string(),
+            "10.0.0.2".to_string(),
+            "10.0.0.1".to_string(),
+        ]))
+        .expect("set listen_ips");
+
+        assert_eq!(read_listen_ips(), vec!["10.0.0.1", "10.0.0.2"]);
+    }
+
+    #[test]
+    #[serial]
+    fn set_listen_ips_creates_missing_relay_section() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[desktop]\nupdate_channel = \"stable\"\n");
+
+        rt.block_on(set_listen_ips(vec!["192.168.1.5".to_string()]))
+            .expect("set_listen_ips should succeed");
+
+        let toml_str = read_config_str();
+        let parsed: toml::Table =
+            toml::from_str(&toml_str).expect("re-parse config.toml as toml::Table");
+
+        let relay = parsed
+            .get("relay")
+            .and_then(|v| v.as_table())
+            .expect("[relay] section should exist");
+        let ips = relay
+            .get("listen_ips")
+            .and_then(|v| v.as_array())
+            .expect("listen_ips should be set");
+        assert_eq!(ips.len(), 1);
+        assert_eq!(ips[0].as_str(), Some("192.168.1.5"));
+        let machine_name = relay
+            .get("machine_name")
+            .and_then(|v| v.as_str())
+            .expect("machine_name should be set");
+        assert!(
+            !machine_name.is_empty(),
+            "machine_name should be non-empty, got {machine_name:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_listen_ips_empty_list_writes_empty_array() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\nlisten_ips = [\"10.0.0.1\"]\n");
+
+        rt.block_on(set_listen_ips(vec![]))
+            .expect("clear listen_ips");
+
+        let toml_str = read_config_str();
+        let parsed: toml::Table =
+            toml::from_str(&toml_str).expect("re-parse config.toml as toml::Table");
+        let ips = parsed
+            .get("relay")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("listen_ips"))
+            .and_then(|v| v.as_array())
+            .expect("listen_ips should be an empty array");
+        assert!(ips.is_empty(), "empty list should persist as []");
     }
 }
 
