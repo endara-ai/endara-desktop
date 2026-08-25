@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildNetworkExposureRows,
   isRenderableListenIp,
+  normalizeListenIp,
   toggleListenIp,
 } from './network-exposure-helpers';
 import type { NetworkInterfaceInfo } from '$lib/api';
@@ -36,10 +37,48 @@ describe('isRenderableListenIp', () => {
     expect(isRenderableListenIp('')).toBe(false);
   });
 
+  it('rejects malformed IPv6 literals even when the first hextet looks ULA', () => {
+    expect(isRenderableListenIp('fd00:junk')).toBe(false);
+    expect(isRenderableListenIp('fc00:')).toBe(false);
+    expect(isRenderableListenIp('fd00::1::2')).toBe(false);
+    expect(isRenderableListenIp('fd00:1:2:3:4:5:6:7:8')).toBe(false);
+    expect(isRenderableListenIp('fd00:1:2:3:4:5:6')).toBe(false);
+    expect(isRenderableListenIp('fd00:12345::1')).toBe(false);
+  });
+
+  it('accepts valid ULA forms regardless of spelling', () => {
+    expect(isRenderableListenIp('fd00::1')).toBe(true);
+    expect(isRenderableListenIp('FD00::1')).toBe(true);
+    expect(isRenderableListenIp('fd00:0:0:0:0:0:0:1')).toBe(true);
+  });
+
   it('classifies IPv4-mapped IPv6 by the embedded IPv4 address', () => {
     expect(isRenderableListenIp('::ffff:192.168.1.10')).toBe(true);
     expect(isRenderableListenIp('::ffff:8.8.8.8')).toBe(false);
     expect(isRenderableListenIp('::ffff:127.0.0.1')).toBe(false);
+  });
+});
+
+describe('normalizeListenIp', () => {
+  it('canonicalizes equivalent IPv6 spellings to one RFC 5952 form', () => {
+    expect(normalizeListenIp('fd00::1')).toBe('fd00::1');
+    expect(normalizeListenIp('fd00:0::1')).toBe('fd00::1');
+    expect(normalizeListenIp('fd00:0:0:0:0:0:0:1')).toBe('fd00::1');
+    expect(normalizeListenIp('FD00:0000:0000:0000:0000:0000:0000:0001')).toBe('fd00::1');
+    expect(normalizeListenIp('fd12:3456:789a:1:2:3:4:5')).toBe('fd12:3456:789a:1:2:3:4:5');
+  });
+
+  it('trims whitespace and normalizes IPv4 octets', () => {
+    expect(normalizeListenIp(' 10.0.0.7 ')).toBe('10.0.0.7');
+    expect(normalizeListenIp('010.000.000.007')).toBe('10.0.0.7');
+    expect(normalizeListenIp(' ::ffff:192.168.1.10 ')).toBe('::ffff:192.168.1.10');
+  });
+
+  it('returns null for unparseable input', () => {
+    expect(normalizeListenIp('fd00:junk')).toBeNull();
+    expect(normalizeListenIp('fc00:')).toBeNull();
+    expect(normalizeListenIp('not-an-ip')).toBeNull();
+    expect(normalizeListenIp('')).toBeNull();
   });
 });
 
@@ -103,6 +142,14 @@ describe('buildNetworkExposureRows', () => {
     ]);
   });
 
+  it('matches non-canonical configured IPv6 against the detected canonical form', () => {
+    const ula: NetworkInterfaceInfo = { name: 'tailscale0', ip: 'fd00::1', family: 'v6', kind: 'ula' };
+    const rows = buildNetworkExposureRows([ula], ['fd00:0:0:0:0:0:0:1']);
+    expect(rows).toEqual([
+      { ip: 'fd00::1', name: 'tailscale0', kind: 'ula', detected: true, enabled: true },
+    ]);
+  });
+
   it('returns an empty list when nothing is detected or configured', () => {
     expect(buildNetworkExposureRows([], [])).toEqual([]);
   });
@@ -128,6 +175,16 @@ describe('toggleListenIp', () => {
 
   it('disabling an absent IP leaves the list unchanged', () => {
     expect(toggleListenIp(['10.0.0.7'], '192.168.1.5', false)).toEqual(['10.0.0.7']);
+  });
+
+  it('disabling removes non-canonical spellings of the same IPv6 address', () => {
+    expect(
+      toggleListenIp(['fd00:0:0:0:0:0:0:1', 'FD00:0::1', '10.0.0.7'], 'fd00::1', false),
+    ).toEqual(['10.0.0.7']);
+  });
+
+  it('enabling appends the canonical form and dedupes non-canonical spellings', () => {
+    expect(toggleListenIp(['fd00:0::1'], 'FD00::1', true)).toEqual(['fd00::1']);
   });
 
   it('does not mutate the input list', () => {

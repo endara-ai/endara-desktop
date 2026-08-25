@@ -15,7 +15,7 @@
   import type { UnlistenFn } from '@tauri-apps/api/event';
   import type { Theme, RelayStatus, ObservabilityConfig } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
-  import { getStatus, getObservabilityConfig, putObservabilityConfig, getNetworkInterfaces } from '$lib/api';
+  import { getStatus, getObservabilityConfig, putObservabilityConfig, getNetworkInterfaces, type NetworkInterfaceInfo } from '$lib/api';
   import {
     DEFAULT_OBSERVABILITY_CONFIG,
     OBSERVABILITY_NUMERIC_FIELDS,
@@ -265,21 +265,49 @@
   // unspecified, or public address can ever be rendered here.
   let netRows = $state<NetworkExposureRow[]>([]);
   let netListenIps = $state<string[]>([]);
+  let netInterfaces = $state<NetworkInterfaceInfo[]>([]);
   let netLoading = $state(true);
   let netUnavailable = $state(false);
   let netBusyIp = $state<string | null>(null);
   let netError = $state<string | null>(null);
 
-  async function loadNetworkExposure() {
-    netLoading = true;
-    netUnavailable = false;
+  // Fetch the interface list, retrying beyond fetchJson's built-in ~2s
+  // window when asked — after a relay restart the management socket may take
+  // several seconds to accept connections again.
+  async function fetchNetworkInterfacesRetrying(extraAttempts: number) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await getNetworkInterfaces();
+      } catch (e) {
+        if (attempt >= extraAttempts) throw e;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+  }
+
+  async function loadNetworkExposure(extraAttempts = 0) {
+    // Only blank the list with the loading placeholder on the first load;
+    // refetches keep the last-known rows visible until fresh data arrives.
+    if (netRows.length === 0) netLoading = true;
     try {
-      const res = await getNetworkInterfaces();
+      const res = await fetchNetworkInterfacesRetrying(extraAttempts);
+      netInterfaces = res.interfaces;
       netListenIps = res.listen_ips;
       netRows = buildNetworkExposureRows(res.interfaces, res.listen_ips);
+      netUnavailable = false;
     } catch (e) {
       netUnavailable = true;
       console.error('Failed to load network interfaces:', e);
+      // Fallback: read the configured list straight from config.toml so the
+      // user can still disable entries while the relay is unreachable. The
+      // last-known detected interfaces (possibly empty) keep their labels.
+      try {
+        const ips = await invoke<string[]>('get_listen_ips');
+        netListenIps = ips;
+        netRows = buildNetworkExposureRows(netInterfaces, ips);
+      } catch (fallbackErr) {
+        console.error('Failed to read listen_ips from config:', fallbackErr);
+      }
     } finally {
       netLoading = false;
     }
@@ -293,14 +321,23 @@
     netBusyIp = row.ip;
     netError = null;
     const next = toggleListenIp(netListenIps, row.ip, !row.enabled);
+    let persisted = false;
     try {
       await invoke('set_listen_ips', { ips: next });
+      persisted = true;
+      // Optimistically reflect the just-persisted list so the rows never
+      // blank out or show stale toggle state while the relay restarts.
+      netListenIps = next;
+      netRows = buildNetworkExposureRows(netInterfaces, next);
       await restartRelay(invoke);
-      await loadNetworkExposure();
     } catch (e) {
       netError = e instanceof Error ? e.message : String(e);
       console.error('Failed to update listen IPs:', e);
     } finally {
+      // Refetch config-derived state even when the restart failed, so the
+      // UI stays consistent with what was persisted to disk; use an
+      // extended retry window to ride out a slow relay start.
+      if (persisted) await loadNetworkExposure(4);
       netBusyIp = null;
     }
   }
@@ -779,9 +816,10 @@
 
         {#if netLoading}
           <p class="text-xs text-(--fg2)">Detecting network interfaces…</p>
-        {:else if netUnavailable}
-          <p class="text-xs text-(--fg2)/70">Could not reach the relay to list network interfaces.</p>
         {:else}
+          {#if netUnavailable}
+            <p class="text-xs text-(--fg2)/70">Could not reach the relay to list network interfaces. Showing addresses from the saved configuration; you can still turn them off.</p>
+          {/if}
           {#each netRows as row (row.ip)}
             <div class="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-(--border) bg-(--surface)">
               <div class="min-w-0">
@@ -803,7 +841,9 @@
               </button>
             </div>
           {:else}
-            <p class="text-xs text-(--fg2)/70">No eligible network interfaces detected.</p>
+            {#if !netUnavailable}
+              <p class="text-xs text-(--fg2)/70">No eligible network interfaces detected.</p>
+            {/if}
           {/each}
         {/if}
       </div>

@@ -1917,37 +1917,78 @@ async fn get_listen_ips() -> Result<Vec<String>, String> {
     Ok(read_listen_ips())
 }
 
+/// Mirror of the relay's `listen_ips` eligibility rules
+/// (`endara_relay::listen_ips::classify_listen_ip`): only RFC 1918 private,
+/// CGNAT (100.64.0.0/10), and IPv6 ULA (fc00::/7) addresses are eligible;
+/// an IPv4-mapped IPv6 address classifies as its embedded IPv4. Loopback,
+/// unspecified, link-local, public, and unparseable entries are all
+/// ineligible. The relay's bind-time filter and the UI's render filter
+/// enforce the same invariant; re-checking here keeps the on-disk config
+/// clean even if a future caller bypasses the UI helpers.
+fn eligible_listen_ip(s: &str) -> Option<std::net::IpAddr> {
+    use std::net::IpAddr;
+    fn eligible_v4(ip: std::net::Ipv4Addr) -> bool {
+        let octets = ip.octets();
+        // RFC 1918 or CGNAT 100.64.0.0/10 (RFC 6598).
+        ip.is_private() || (octets[0] == 100 && (octets[1] & 0b1100_0000) == 64)
+    }
+    let ip: IpAddr = s.trim().parse().ok()?;
+    let ok = match ip {
+        IpAddr::V4(v4) => eligible_v4(v4),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(mapped) => eligible_v4(mapped),
+            // Unique-local fc00::/7.
+            None => (v6.segments()[0] & 0xfe00) == 0xfc00,
+        },
+    };
+    ok.then_some(ip)
+}
+
 #[tauri::command]
 async fn set_listen_ips(ips: Vec<String>) -> Result<(), String> {
     let mut table = read_config().unwrap_or_else(|_| toml::Table::new());
 
-    // Ensure [relay] section exists. The relay's `RelayConfig` requires
-    // `machine_name`, so populate it from the system hostname when creating
-    // the section from scratch — otherwise the relay's next config reload
-    // would fail to deserialize.
     let relay = table
         .entry("relay")
-        .or_insert_with(|| {
-            let mut t = toml::Table::new();
-            let machine_name = hostname::get()
-                .ok()
-                .and_then(|h| h.into_string().ok())
-                .unwrap_or_else(|| "unknown".to_string());
-            t.insert(
-                "machine_name".to_string(),
-                toml::Value::String(machine_name),
-            );
-            toml::Value::Table(t)
-        })
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
         .as_table_mut()
         .ok_or("Invalid [relay] section in config")?;
 
-    // De-duplicate while preserving first-seen order so repeated UI
-    // selections never produce duplicate entries on disk. An empty list is
-    // written as `[]`, which the relay treats as loopback-only.
+    // The relay's `RelayConfig` requires `machine_name`, so ensure it is
+    // present and non-empty — whether the [relay] section was just created
+    // or already existed without one — otherwise the relay's next config
+    // reload would fail to deserialize.
+    let has_machine_name = relay
+        .get("machine_name")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    if !has_machine_name {
+        let machine_name = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "unknown".to_string());
+        relay.insert(
+            "machine_name".to_string(),
+            toml::Value::String(machine_name),
+        );
+    }
+
+    // Persist only eligible entries in their canonical textual form
+    // (`IpAddr`'s Display), dropping ineligible or unparseable strings with
+    // a log — defense in depth alongside the relay's bind-time filter. Then
+    // de-duplicate preserving first-seen order so repeated UI selections
+    // never produce duplicate entries on disk. An empty list is written as
+    // `[]`, which the relay treats as loopback-only.
     let mut seen = std::collections::HashSet::new();
     let deduped: Vec<toml::Value> = ips
         .into_iter()
+        .filter_map(|raw| match eligible_listen_ip(&raw) {
+            Some(ip) => Some(ip.to_string()),
+            None => {
+                log::warn!("set_listen_ips: dropping ineligible entry {raw:?}");
+                None
+            }
+        })
         .filter(|ip| seen.insert(ip.clone()))
         .map(toml::Value::String)
         .collect();
@@ -4397,6 +4438,103 @@ mod write_dirs_tests {
             .and_then(|v| v.as_array())
             .expect("listen_ips should be an empty array");
         assert!(ips.is_empty(), "empty list should persist as []");
+    }
+
+    #[test]
+    #[serial]
+    fn set_listen_ips_drops_ineligible_entries() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+
+        rt.block_on(set_listen_ips(vec![
+            "192.168.1.5".to_string(),
+            "0.0.0.0".to_string(),
+            "127.0.0.1".to_string(),
+            "8.8.8.8".to_string(),
+            "::".to_string(),
+            "fe80::1".to_string(),
+            "2001:db8::1".to_string(),
+            "not-an-ip".to_string(),
+            "fd00::1".to_string(),
+            "100.101.102.103".to_string(),
+        ]))
+        .expect("set listen_ips");
+
+        assert_eq!(
+            read_listen_ips(),
+            vec!["192.168.1.5", "fd00::1", "100.101.102.103"],
+            "only RFC 1918 / CGNAT / ULA entries should be persisted"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_listen_ips_canonicalizes_entries() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"x\"\n");
+
+        rt.block_on(set_listen_ips(vec![
+            " 10.0.0.7 ".to_string(),
+            "fd00:0:0:0:0:0:0:1".to_string(),
+            "FD00:0::1".to_string(),
+            "fd00::1".to_string(),
+        ]))
+        .expect("set listen_ips");
+
+        assert_eq!(
+            read_listen_ips(),
+            vec!["10.0.0.7", "fd00::1"],
+            "entries should be trimmed, canonicalized, and deduped by address"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_listen_ips_ensures_machine_name_in_existing_relay_section() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nlisten_ips = []\n");
+
+        rt.block_on(set_listen_ips(vec!["192.168.1.5".to_string()]))
+            .expect("set listen_ips");
+
+        let parsed: toml::Table =
+            toml::from_str(&read_config_str()).expect("re-parse config.toml as toml::Table");
+        let machine_name = parsed
+            .get("relay")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("machine_name"))
+            .and_then(|v| v.as_str())
+            .expect("machine_name should be inserted into the existing [relay] section");
+        assert!(
+            !machine_name.trim().is_empty(),
+            "machine_name should be non-empty, got {machine_name:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_listen_ips_preserves_existing_machine_name() {
+        let _home = HomeGuard::new();
+        let rt = rt();
+        write_config_str("[relay]\nmachine_name = \"my-box\"\n");
+
+        rt.block_on(set_listen_ips(vec!["192.168.1.5".to_string()]))
+            .expect("set listen_ips");
+
+        let parsed: toml::Table =
+            toml::from_str(&read_config_str()).expect("re-parse config.toml as toml::Table");
+        assert_eq!(
+            parsed
+                .get("relay")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("machine_name"))
+                .and_then(|v| v.as_str()),
+            Some("my-box"),
+            "an existing machine_name must not be overwritten"
+        );
     }
 }
 
