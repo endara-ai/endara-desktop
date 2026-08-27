@@ -138,7 +138,7 @@ describe('OverlayCard — hint pills', () => {
       open_world: true,
       read_only: true,
     });
-    expect(hints.map((h) => h.label)).toEqual(['read-only', 'open-world', 'destructive']);
+    expect(hints.map((h) => h.label)).toEqual(['read-only', 'open-world', 'makes changes']);
   });
 
   it('renders zero pills when annotations is undefined', () => {

@@ -11,6 +11,7 @@
   --tf-muted-fg: var(--fg3);
   --tf-warn-bg: rgba(250, 176, 5, 0.14);
   --tf-warn-fg: #8a5d00;
+  --tf-warn-border: rgba(250, 176, 5, 0.35);
   --tf-danger-bg: rgba(250, 82, 82, 0.14);
   --tf-danger-fg: #b42a2a;
   --tf-chip-bg: rgba(0, 0, 0, 0.04);
@@ -27,6 +28,7 @@
   --tf-muted-fg: var(--slate-700);
   --tf-warn-bg: rgba(252, 196, 25, 0.16);
   --tf-warn-fg: #fcd34d;
+  --tf-warn-border: rgba(252, 196, 25, 0.35);
   --tf-danger-bg: rgba(255, 107, 107, 0.18);
   --tf-danger-fg: #ff9b9b;
   --tf-chip-bg: rgba(255, 255, 255, 0.05);
@@ -130,7 +132,7 @@
 .tf-card-front[data-clickable='false'] { cursor: default; }
 .tf-card-front:hover { transform: translateY(-1px); }
 .tf-card-front:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tf-card-front[data-destructive='true'] { border-color: rgba(250, 82, 82, 0.35); }
+.tf-card-front[data-destructive='true'] { border-color: var(--tf-warn-border); }
 
 .tf-accent-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
 .tf-card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }

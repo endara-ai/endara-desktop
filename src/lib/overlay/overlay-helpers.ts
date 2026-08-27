@@ -33,7 +33,7 @@ const HINT_TABLE: Record<HintKind, HintMeta> = {
   readonly: { kind: 'readonly', label: 'read-only', tone: 'muted' },
   idempotent: { kind: 'idempotent', label: 'idempotent', tone: 'muted' },
   openworld: { kind: 'openworld', label: 'open-world', tone: 'warn' },
-  destructive: { kind: 'destructive', label: 'destructive', tone: 'danger' },
+  destructive: { kind: 'destructive', label: 'makes changes', tone: 'warn' },
 };
 
 /** Resolve hint pill metadata for an annotations payload. Returns ordered list. */

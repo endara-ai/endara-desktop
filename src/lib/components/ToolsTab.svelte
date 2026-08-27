@@ -82,7 +82,7 @@
             <span class="hint-pill hint-read">Read-only</span>
           {/if}
           {#if tool.annotations?.destructiveHint === true}
-            <span class="hint-pill hint-dest">Destructive</span>
+            <span class="hint-pill hint-warn">Makes changes</span>
           {/if}
           {#if tool.annotations?.idempotentHint === true}
             <span class="hint-pill hint-read">Idempotent</span>
@@ -222,6 +222,10 @@
   .hint-dest {
     background: var(--hint-dest-bg);
     color: var(--hint-dest-fg);
+  }
+  .hint-warn {
+    background: var(--hint-warn-bg);
+    color: var(--hint-warn-fg);
   }
 
   /* Toggle (shared base + compact tool variant) */

@@ -83,7 +83,7 @@ describe('hintsForAnnotations', () => {
       'openworld',
       'destructive',
     ]);
-    expect(hints.find((h) => h.kind === 'destructive')?.tone).toBe('danger');
+    expect(hints.find((h) => h.kind === 'destructive')?.tone).toBe('warn');
     expect(hints.find((h) => h.kind === 'openworld')?.tone).toBe('warn');
     expect(hints.find((h) => h.kind === 'readonly')?.tone).toBe('muted');
   });
