@@ -48,6 +48,11 @@
   type LoadState = 'loading' | 'ready' | 'unavailable';
 
   const PAGE_SIZE = 100;
+  // Ceiling on rows accumulated by the live-refresh merge, so `calls` doesn't
+  // grow without bound over a long session. Explicit "Load more" pages are
+  // never truncated: the effective cap is max(this, current list length), so
+  // live merges only ever trim back down to what the user deliberately loaded.
+  const LIVE_MAX_ROWS = 1000;
 
   let loadState = $state<LoadState>('loading');
   let errorMessage = $state<string | null>(null);
@@ -293,8 +298,11 @@
         buckets = aggRes.buckets;
         // Live merge: incoming first-page rows win for any UID we already
         // have, but the cursor for "Load more" is anchored to the original
-        // first-page tail — fresh terminal events don't reset it.
-        calls = mergeCalls(calls, callsRes.calls);
+        // first-page tail — fresh terminal events don't reset it. Capped at
+        // max(LIVE_MAX_ROWS, current length) so live events can't grow the
+        // list unboundedly, while rows the user explicitly paged in via
+        // "Load more" are never silently dropped.
+        calls = mergeCalls(calls, callsRes.calls, Math.max(LIVE_MAX_ROWS, calls.length));
       } catch {
         // Transient relay hiccup — keep the current view, next event retries.
       }

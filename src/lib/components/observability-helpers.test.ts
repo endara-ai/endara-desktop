@@ -237,6 +237,54 @@ describe('live event merging', () => {
     expect(merged[1].tool).toBe('new');
   });
 
+  it('mergeCalls without a cap keeps all rows', () => {
+    const existing = [call({ requestUid: 'a', tsStart: 1000 })];
+    const incoming = [call({ requestUid: 'b', tsStart: 2000 })];
+    expect(mergeCalls(existing, incoming)).toHaveLength(2);
+  });
+
+  it('mergeCalls caps to the newest maxRows rows', () => {
+    const existing = [
+      call({ requestUid: 'a', tsStart: 1000 }),
+      call({ requestUid: 'b', tsStart: 2000 }),
+    ];
+    const incoming = [
+      call({ requestUid: 'c', tsStart: 4000 }),
+      call({ requestUid: 'd', tsStart: 3000 }),
+    ];
+    const merged = mergeCalls(existing, incoming, 3);
+    expect(merged.map((c) => c.requestUid)).toEqual(['c', 'd', 'b']);
+  });
+
+  it('mergeCalls cap still lets incoming rows refresh surviving UIDs', () => {
+    const existing = [
+      call({ requestUid: 'a', tsStart: 1000 }),
+      call({ requestUid: 'b', tsStart: 2000, tool: 'old' }),
+    ];
+    const incoming = [
+      call({ requestUid: 'b', tsStart: 2000, tool: 'new' }),
+      call({ requestUid: 'c', tsStart: 3000 }),
+    ];
+    const merged = mergeCalls(existing, incoming, 2);
+    expect(merged.map((c) => c.requestUid)).toEqual(['c', 'b']);
+    expect(merged[1].tool).toBe('new');
+  });
+
+  it('mergeCalls ignores non-positive or non-finite caps', () => {
+    const existing = [call({ requestUid: 'a', tsStart: 1000 })];
+    const incoming = [call({ requestUid: 'b', tsStart: 2000 })];
+    expect(mergeCalls(existing, incoming, 0)).toHaveLength(2);
+    expect(mergeCalls(existing, incoming, -5)).toHaveLength(2);
+    expect(mergeCalls(existing, incoming, NaN)).toHaveLength(2);
+    expect(mergeCalls(existing, incoming, Infinity)).toHaveLength(2);
+  });
+
+  it('mergeCalls cap at exactly the merged length keeps everything', () => {
+    const existing = [call({ requestUid: 'a', tsStart: 1000 })];
+    const incoming = [call({ requestUid: 'b', tsStart: 2000 })];
+    expect(mergeCalls(existing, incoming, 2)).toHaveLength(2);
+  });
+
   it('distinctValues returns sorted unique field values', () => {
     const calls = [call({ serverName: 'b' }), call({ serverName: 'a' }), call({ serverName: 'a' })];
     expect(distinctValues(calls, 'serverName')).toEqual(['a', 'b']);
