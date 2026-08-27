@@ -23,6 +23,8 @@ import {
   distinctValues,
   prettyJson,
   parseJsonTree,
+  expandToDepth,
+  INLINE_PAYLOAD_MAX_CHARS,
   type CallsFilterUi,
 } from './observability-helpers';
 
@@ -242,6 +244,54 @@ describe('live event merging', () => {
     expect(merged[1].tool).toBe('new');
   });
 
+  it('mergeCalls without a cap keeps all rows', () => {
+    const existing = [call({ requestUid: 'a', tsStart: 1000 })];
+    const incoming = [call({ requestUid: 'b', tsStart: 2000 })];
+    expect(mergeCalls(existing, incoming)).toHaveLength(2);
+  });
+
+  it('mergeCalls caps to the newest maxRows rows', () => {
+    const existing = [
+      call({ requestUid: 'a', tsStart: 1000 }),
+      call({ requestUid: 'b', tsStart: 2000 }),
+    ];
+    const incoming = [
+      call({ requestUid: 'c', tsStart: 4000 }),
+      call({ requestUid: 'd', tsStart: 3000 }),
+    ];
+    const merged = mergeCalls(existing, incoming, 3);
+    expect(merged.map((c) => c.requestUid)).toEqual(['c', 'd', 'b']);
+  });
+
+  it('mergeCalls cap still lets incoming rows refresh surviving UIDs', () => {
+    const existing = [
+      call({ requestUid: 'a', tsStart: 1000 }),
+      call({ requestUid: 'b', tsStart: 2000, tool: 'old' }),
+    ];
+    const incoming = [
+      call({ requestUid: 'b', tsStart: 2000, tool: 'new' }),
+      call({ requestUid: 'c', tsStart: 3000 }),
+    ];
+    const merged = mergeCalls(existing, incoming, 2);
+    expect(merged.map((c) => c.requestUid)).toEqual(['c', 'b']);
+    expect(merged[1].tool).toBe('new');
+  });
+
+  it('mergeCalls ignores non-positive or non-finite caps', () => {
+    const existing = [call({ requestUid: 'a', tsStart: 1000 })];
+    const incoming = [call({ requestUid: 'b', tsStart: 2000 })];
+    expect(mergeCalls(existing, incoming, 0)).toHaveLength(2);
+    expect(mergeCalls(existing, incoming, -5)).toHaveLength(2);
+    expect(mergeCalls(existing, incoming, NaN)).toHaveLength(2);
+    expect(mergeCalls(existing, incoming, Infinity)).toHaveLength(2);
+  });
+
+  it('mergeCalls cap at exactly the merged length keeps everything', () => {
+    const existing = [call({ requestUid: 'a', tsStart: 1000 })];
+    const incoming = [call({ requestUid: 'b', tsStart: 2000 })];
+    expect(mergeCalls(existing, incoming, 2)).toHaveLength(2);
+  });
+
   it('distinctValues returns sorted unique field values', () => {
     const calls = [call({ serverName: 'b' }), call({ serverName: 'a' }), call({ serverName: 'a' })];
     expect(distinctValues(calls, 'serverName')).toEqual(['a', 'b']);
@@ -330,5 +380,43 @@ describe('virtualized call list window (large "Load more" backlog)', () => {
   it('mounts nothing while the tab is hidden (zero-height viewport)', () => {
     const range = computeMountedRange({ ...base, count, scrollOffset: 0, viewportHeight: 0 });
     expect(range).toBeNull();
+  });
+});
+
+describe('inline payload budget', () => {
+  it('is far below the default 200k caps', () => {
+    expect(INLINE_PAYLOAD_MAX_CHARS).toBe(20_000);
+    expect(INLINE_PAYLOAD_MAX_CHARS).toBeLessThan(200_000);
+  });
+
+  it('parseJsonTree rejects payloads over the inline budget but accepts them at the default cap', () => {
+    const mid = JSON.stringify({ a: 'x'.repeat(INLINE_PAYLOAD_MAX_CHARS) });
+    expect(parseJsonTree(mid, INLINE_PAYLOAD_MAX_CHARS)).toEqual({ ok: false });
+    expect(parseJsonTree(mid).ok).toBe(true);
+  });
+
+  it('prettyJson truncates the inline view to the inline budget', () => {
+    const mid = JSON.stringify({ a: 'x'.repeat(INLINE_PAYLOAD_MAX_CHARS) });
+    const out = prettyJson(mid, INLINE_PAYLOAD_MAX_CHARS);
+    expect(out.truncated).toBe(true);
+    expect(out.text.length).toBeLessThanOrEqual(INLINE_PAYLOAD_MAX_CHARS);
+    expect(prettyJson(mid).truncated).toBe(false);
+  });
+});
+
+describe('expandToDepth', () => {
+  it('expands only levels below the given depth (root = level 0)', () => {
+    const depth2 = expandToDepth(2);
+    expect(depth2(0)).toBe(true);
+    expect(depth2(1)).toBe(true);
+    expect(depth2(2)).toBe(false);
+    expect(depth2(3)).toBe(false);
+  });
+
+  it('depth 0 collapses everything; depth 1 matches collapseAllNested semantics', () => {
+    expect(expandToDepth(0)(0)).toBe(false);
+    const depth1 = expandToDepth(1);
+    expect(depth1(0)).toBe(true);
+    expect(depth1(1)).toBe(false);
   });
 });

@@ -185,16 +185,24 @@ export function isTerminalEvent(event: ToolCallEvent | unknown): boolean {
 
 /**
  * Merge two call lists, dedupe by `requestUid` (incoming wins so a refetch
- * refreshes existing rows), and sort newest-first by `tsStart`.
+ * refreshes existing rows), and sort newest-first by `tsStart`. An optional
+ * `maxRows` cap bounds the result: when the merged list exceeds it, only the
+ * newest `maxRows` rows are kept (the tail — the oldest rows — is dropped).
+ * Non-positive/non-finite caps are ignored.
  */
 export function mergeCalls(
   existing: readonly CallSummaryDto[],
   incoming: readonly CallSummaryDto[],
+  maxRows?: number,
 ): CallSummaryDto[] {
   const byUid = new Map<string, CallSummaryDto>();
   for (const c of existing) byUid.set(c.requestUid, c);
   for (const c of incoming) byUid.set(c.requestUid, c);
-  return [...byUid.values()].sort((a, b) => b.tsStart - a.tsStart);
+  const merged = [...byUid.values()].sort((a, b) => b.tsStart - a.tsStart);
+  if (maxRows !== undefined && Number.isFinite(maxRows) && maxRows > 0 && merged.length > maxRows) {
+    return merged.slice(0, maxRows);
+  }
+  return merged;
 }
 
 /** Distinct, sorted values of one field across a call list (for filter menus). */
@@ -231,6 +239,26 @@ export function parseJsonTree(
   } catch {
     return { ok: false };
   }
+}
+
+/**
+ * Character budget for the INLINE (side-panel) payload views. Deliberately far
+ * below the 200k default caps used by the pop-out modal: the drill-through
+ * panel stays mounted (display:none) in the keep-alive tab, so every tab
+ * switch pays style/layout for whatever DOM it holds. 20k keeps that cost
+ * negligible; the expand pop-out (unmounted when closed) renders up to the
+ * full default caps on demand.
+ */
+export const INLINE_PAYLOAD_MAX_CHARS = 20_000;
+
+/**
+ * `shouldExpandNode` strategy for the payload JSON trees: auto-expand only the
+ * first `maxDepth` levels (root = level 0). Bounds the initially-rendered DOM
+ * so a large payload doesn't mount tens of thousands of nodes up front —
+ * deeper levels still expand on click.
+ */
+export function expandToDepth(maxDepth: number): (level: number) => boolean {
+  return (level: number) => level < maxDepth;
 }
 
 /**
