@@ -18,6 +18,8 @@ import {
   distinctValues,
   prettyJson,
   parseJsonTree,
+  expandToDepth,
+  INLINE_PAYLOAD_MAX_CHARS,
   type CallsFilterUi,
 } from './observability-helpers';
 
@@ -334,5 +336,43 @@ describe('parseJsonTree', () => {
     expect(parseJsonTree('42')).toEqual({ ok: false });
     expect(parseJsonTree('"a string"')).toEqual({ ok: false });
     expect(parseJsonTree('{"a":1}', 3)).toEqual({ ok: false });
+  });
+});
+
+describe('inline payload budget', () => {
+  it('is far below the default 200k caps', () => {
+    expect(INLINE_PAYLOAD_MAX_CHARS).toBe(20_000);
+    expect(INLINE_PAYLOAD_MAX_CHARS).toBeLessThan(200_000);
+  });
+
+  it('parseJsonTree rejects payloads over the inline budget but accepts them at the default cap', () => {
+    const mid = JSON.stringify({ a: 'x'.repeat(INLINE_PAYLOAD_MAX_CHARS) });
+    expect(parseJsonTree(mid, INLINE_PAYLOAD_MAX_CHARS)).toEqual({ ok: false });
+    expect(parseJsonTree(mid).ok).toBe(true);
+  });
+
+  it('prettyJson truncates the inline view to the inline budget', () => {
+    const mid = JSON.stringify({ a: 'x'.repeat(INLINE_PAYLOAD_MAX_CHARS) });
+    const out = prettyJson(mid, INLINE_PAYLOAD_MAX_CHARS);
+    expect(out.truncated).toBe(true);
+    expect(out.text.length).toBeLessThanOrEqual(INLINE_PAYLOAD_MAX_CHARS);
+    expect(prettyJson(mid).truncated).toBe(false);
+  });
+});
+
+describe('expandToDepth', () => {
+  it('expands only levels below the given depth (root = level 0)', () => {
+    const depth2 = expandToDepth(2);
+    expect(depth2(0)).toBe(true);
+    expect(depth2(1)).toBe(true);
+    expect(depth2(2)).toBe(false);
+    expect(depth2(3)).toBe(false);
+  });
+
+  it('depth 0 collapses everything; depth 1 matches collapseAllNested semantics', () => {
+    expect(expandToDepth(0)(0)).toBe(false);
+    const depth1 = expandToDepth(1);
+    expect(depth1(0)).toBe(true);
+    expect(depth1(1)).toBe(false);
   });
 });

@@ -242,6 +242,26 @@ export function parseJsonTree(
 }
 
 /**
+ * Character budget for the INLINE (side-panel) payload views. Deliberately far
+ * below the 200k default caps used by the pop-out modal: the drill-through
+ * panel stays mounted (display:none) in the keep-alive tab, so every tab
+ * switch pays style/layout for whatever DOM it holds. 20k keeps that cost
+ * negligible; the expand pop-out (unmounted when closed) renders up to the
+ * full default caps on demand.
+ */
+export const INLINE_PAYLOAD_MAX_CHARS = 20_000;
+
+/**
+ * `shouldExpandNode` strategy for the payload JSON trees: auto-expand only the
+ * first `maxDepth` levels (root = level 0). Bounds the initially-rendered DOM
+ * so a large payload doesn't mount tens of thousands of nodes up front —
+ * deeper levels still expand on click.
+ */
+export function expandToDepth(maxDepth: number): (level: number) => boolean {
+  return (level: number) => level < maxDepth;
+}
+
+/**
  * Absolute ceiling on the input size we are willing to `JSON.parse` +
  * re-stringify. Past this, even an effectively-unlimited `maxChars` (the copy
  * path passes `Number.MAX_SAFE_INTEGER`) must not parse, or the multi-megabyte

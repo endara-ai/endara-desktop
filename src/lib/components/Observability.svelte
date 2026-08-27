@@ -33,6 +33,8 @@
     distinctValues,
     prettyJson,
     parseJsonTree,
+    expandToDepth,
+    INLINE_PAYLOAD_MAX_CHARS,
     type CallsFilterUi,
     type StatusFilter,
   } from './observability-helpers';
@@ -360,31 +362,58 @@
     invoke('unsubscribe_tool_call_events').catch(() => {});
   });
 
-  const reqPretty = $derived(detail?.payloads ? prettyJson(detail.payloads.request) : null);
-  const respPretty = $derived(detail?.payloads ? prettyJson(detail.payloads.response) : null);
+  // Inline (side panel) payload views use the small INLINE_PAYLOAD_MAX_CHARS
+  // budget: the panel stays mounted (display:none) in the keep-alive tab, so
+  // an oversized tree or <pre> would pay full style/layout on every tab
+  // switch. Full-size viewing goes through the pop-out modal below, which is
+  // unmounted when closed.
+  const reqPretty = $derived(
+    detail?.payloads ? prettyJson(detail.payloads.request, INLINE_PAYLOAD_MAX_CHARS) : null,
+  );
+  const respPretty = $derived(
+    detail?.payloads ? prettyJson(detail.payloads.response, INLINE_PAYLOAD_MAX_CHARS) : null,
+  );
   // Prefer the collapsible JSON tree when the payload parses as a JSON
   // object/array within the size guard; otherwise fall back to the raw <pre>.
-  const reqTree = $derived(detail?.payloads ? parseJsonTree(detail.payloads.request) : { ok: false } as const);
-  const respTree = $derived(detail?.payloads ? parseJsonTree(detail.payloads.response) : { ok: false } as const);
+  const reqTree = $derived(
+    detail?.payloads
+      ? parseJsonTree(detail.payloads.request, INLINE_PAYLOAD_MAX_CHARS)
+      : { ok: false } as const,
+  );
+  const respTree = $derived(
+    detail?.payloads
+      ? parseJsonTree(detail.payloads.response, INLINE_PAYLOAD_MAX_CHARS)
+      : { ok: false } as const,
+  );
+
+  // Bound the JSON trees' initial expansion to root + one level (deeper nodes
+  // expand on click). The library defaults to `allExpanded`, which mounts tens
+  // of thousands of DOM nodes for a large payload — the direct cause of the
+  // multi-second tab-switch stalls this budget exists to prevent.
+  const payloadExpandDepth = expandToDepth(2);
 
   // Parameterize the single pop-out modal by which side is open. Falls back to
   // the response values when nothing is expanded (the modal block is guarded so
   // these are never read in that case).
   const expandedLabel = $derived(expandedPayload === 'request' ? 'Request' : 'Response');
-  const expandedTree = $derived(expandedPayload === 'request' ? reqTree : respTree);
-  const expandedPretty = $derived(expandedPayload === 'request' ? reqPretty : respPretty);
   const expandedTruncated = $derived(
     expandedPayload === 'request'
       ? detail?.payloads?.request_truncated
       : detail?.payloads?.response_truncated,
   );
-  // Raw source for whichever payload the modal currently shows, used by the
-  // modal's copy button so the clipboard receives the complete JSON.
+  // Raw source for whichever payload the modal currently shows: feeds the
+  // modal's own full-size parse below and its copy button (so the clipboard
+  // receives the complete JSON).
   const expandedRaw = $derived(
     expandedPayload === 'request'
       ? (detail?.payloads?.request ?? '')
       : (detail?.payloads?.response ?? ''),
   );
+  // The modal parses at the full default (200k) caps, independent of the small
+  // inline budget. It is unmounted when closed, so this cost is only paid
+  // while the pop-out is open.
+  const expandedTree = $derived(expandedPayload ? parseJsonTree(expandedRaw) : { ok: false } as const);
+  const expandedPretty = $derived(expandedPayload ? prettyJson(expandedRaw) : null);
 
   // Expiry notice text: reflect the configured payload window when known,
   // otherwise a neutral wording that doesn't assert a specific number.
@@ -769,10 +798,10 @@
                   </div>
                   {#if reqTree.ok}
                     <div class="json-tree max-h-64 overflow-auto rounded border border-(--border) bg-(--surface-sunken) p-2 text-[11px]">
-                      <JsonView data={reqTree.value} style={defaultStyles} />
+                      <JsonView data={reqTree.value} style={defaultStyles} shouldExpandNode={payloadExpandDepth} />
                     </div>
                   {:else}
-                    <pre class="max-h-64 overflow-auto rounded border border-(--border) bg-(--surface-sunken) p-2 font-mono text-[11px] whitespace-pre-wrap break-words text-(--fg1)">{reqPretty?.text}{reqPretty?.truncated ? '\n… (display truncated)' : ''}</pre>
+                    <pre class="max-h-64 overflow-auto rounded border border-(--border) bg-(--surface-sunken) p-2 font-mono text-[11px] whitespace-pre-wrap break-words text-(--fg1)">{reqPretty?.text}{reqPretty?.truncated ? '\n… (display truncated — expand for the full payload)' : ''}</pre>
                   {/if}
                 </div>
                 <div>
@@ -852,10 +881,10 @@
                   </div>
                   {#if respTree.ok}
                     <div class="json-tree max-h-64 overflow-auto rounded border border-(--border) bg-(--surface-sunken) p-2 text-[11px]">
-                      <JsonView data={respTree.value} style={defaultStyles} />
+                      <JsonView data={respTree.value} style={defaultStyles} shouldExpandNode={payloadExpandDepth} />
                     </div>
                   {:else}
-                    <pre class="max-h-64 overflow-auto rounded border border-(--border) bg-(--surface-sunken) p-2 font-mono text-[11px] whitespace-pre-wrap break-words text-(--fg1)">{respPretty?.text}{respPretty?.truncated ? '\n… (display truncated)' : ''}</pre>
+                    <pre class="max-h-64 overflow-auto rounded border border-(--border) bg-(--surface-sunken) p-2 font-mono text-[11px] whitespace-pre-wrap break-words text-(--fg1)">{respPretty?.text}{respPretty?.truncated ? '\n… (display truncated — expand for the full payload)' : ''}</pre>
                   {/if}
                 </div>
               {/if}
@@ -960,7 +989,7 @@
       <div class="min-h-0 flex-1 overflow-auto p-4">
         {#if expandedTree.ok}
           <div class="json-tree text-[12px]">
-            <JsonView data={expandedTree.value} style={defaultStyles} />
+            <JsonView data={expandedTree.value} style={defaultStyles} shouldExpandNode={payloadExpandDepth} />
           </div>
         {:else}
           <pre class="font-mono text-[12px] whitespace-pre-wrap break-words text-(--fg1)">{expandedPretty?.text}{expandedPretty?.truncated ? '\n… (display truncated)' : ''}</pre>
