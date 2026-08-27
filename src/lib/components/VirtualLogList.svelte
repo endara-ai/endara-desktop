@@ -85,12 +85,11 @@
   // notifies on flips.
   let reportedInitialPinned = false;
   $effect(() => {
+    // followTail is read tracked (like scrollEl) so toggling the prop after
+    // mount re-evaluates the effect; pinned stays untracked.
+    const follow = followTail;
     if (
-      !shouldReportInitialPinned(
-        scrollEl !== undefined,
-        reportedInitialPinned,
-        untrack(() => followTail),
-      )
+      !shouldReportInitialPinned(scrollEl !== undefined, reportedInitialPinned, follow)
     )
       return;
     reportedInitialPinned = true;
@@ -104,12 +103,15 @@
   $effect(() => {
     const count = items.length;
     const store = virtualizer;
+    // followTail is read tracked so flipping the prop re-runs tail-follow;
+    // pinned stays untracked (scroll flips must not retrigger this effect).
+    const follow = followTail;
     if (
       !shouldStickToBottom(
         untrack(() => pinned),
         count,
         scrollEl?.clientHeight ?? 0,
-        untrack(() => followTail),
+        follow,
       )
     )
       return;

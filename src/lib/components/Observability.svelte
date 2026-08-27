@@ -647,11 +647,15 @@
               followTail={false}
               class="min-h-0 flex-1"
             >
-              {#snippet row(c, _index)}
+              {#snippet row(c, index)}
                 {@const st = callStatus(c)}
+                <!-- aria-rowindex is 1-based over the whole table: the header
+                     row is rowindex 1, so data row i is i + 2 (matches the
+                     aria-rowcount of calls.length + 1 above). -->
                 <div
                   role="row"
                   tabindex="0"
+                  aria-rowindex={index + 2}
                   data-request-uid={c.requestUid}
                   class="{callListGrid} cursor-pointer border-t border-(--border) hover:bg-(--surface-hover) {selectedUid === c.requestUid ? 'bg-(--accent-tint)' : ''}"
                   onclick={() => openDetail(c.requestUid)}
