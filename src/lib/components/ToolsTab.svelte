@@ -88,7 +88,7 @@
             <span class="hint-pill hint-read">Idempotent</span>
           {/if}
           {#if tool.annotations?.openWorldHint === true}
-            <span class="hint-pill hint-dest">Open-world</span>
+            <span class="hint-pill hint-warn">Open-world</span>
           {/if}
           <button
             class="tgl tool-tgl {tool.disabled ? 'tgl-off' : ''} {togglingTool === tool.name ? 'opacity-50' : ''}"
@@ -218,10 +218,6 @@
   .hint-read {
     background: var(--hint-read-bg);
     color: var(--hint-read-fg);
-  }
-  .hint-dest {
-    background: var(--hint-dest-bg);
-    color: var(--hint-dest-fg);
   }
   .hint-warn {
     background: var(--hint-warn-bg);

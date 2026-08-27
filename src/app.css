@@ -188,7 +188,6 @@
 
   /* Desktop kit — hint pills (light) */
   --hint-read-bg: #D3F9D8; --hint-read-fg: #2B8A3E;
-  --hint-dest-bg: #FFE3E3; --hint-dest-fg: #C92A2A;
   --hint-warn-bg: #FFF3BF; --hint-warn-fg: #8A5D00;
 }
 
@@ -256,7 +255,6 @@
 
   /* Desktop kit — hint pills (dark) */
   --hint-read-bg: rgba(81, 207, 102, 0.15); --hint-read-fg: #69DB7C;
-  --hint-dest-bg: rgba(250, 82, 82, 0.18);  --hint-dest-fg: #FF8787;
   --hint-warn-bg: rgba(252, 196, 25, 0.16); --hint-warn-fg: #FCD34D;
 }
 
