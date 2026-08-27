@@ -9,6 +9,7 @@
     becameVisible,
     isPinnedToBottom,
     itemKeyAt,
+    shouldRepinOnUnhide,
     shouldReportInitialPinned,
     shouldStickToBottom,
   } from './virtual-log-list-helpers';
@@ -29,6 +30,12 @@
     row: Snippet<[T, number]>;
     /** Called when the pinned-to-bottom state flips (isAtBottom semantics). */
     onscrollstate?: (pinned: boolean) => void;
+    /**
+     * Tail-pinned log semantics (default). When false the list is a plain
+     * top-anchored virtualized list: no tail-follow on item changes, no
+     * re-pin on unhide, no initial pinned report.
+     */
+    followTail?: boolean;
     /** Extra classes for the scroll container (sizing, colors, ...). */
     class?: string;
   };
@@ -39,6 +46,7 @@
     overscan = DEFAULT_OVERSCAN,
     row,
     onscrollstate,
+    followTail = true,
     class: className = '',
   }: Props = $props();
 
@@ -77,7 +85,14 @@
   // notifies on flips.
   let reportedInitialPinned = false;
   $effect(() => {
-    if (!shouldReportInitialPinned(scrollEl !== undefined, reportedInitialPinned)) return;
+    if (
+      !shouldReportInitialPinned(
+        scrollEl !== undefined,
+        reportedInitialPinned,
+        untrack(() => followTail),
+      )
+    )
+      return;
     reportedInitialPinned = true;
     onscrollstate?.(untrack(() => pinned));
   });
@@ -89,7 +104,15 @@
   $effect(() => {
     const count = items.length;
     const store = virtualizer;
-    if (!shouldStickToBottom(untrack(() => pinned), count, scrollEl?.clientHeight ?? 0)) return;
+    if (
+      !shouldStickToBottom(
+        untrack(() => pinned),
+        count,
+        scrollEl?.clientHeight ?? 0,
+        untrack(() => followTail),
+      )
+    )
+      return;
     tick().then(() => {
       if (!pinned) return;
       const inst = get(store);
@@ -129,7 +152,7 @@
       prevHeight = nextHeight;
       if (!shown) return;
       get(store).measure();
-      if (pinned) {
+      if (shouldRepinOnUnhide(pinned, followTail)) {
         tick().then(() => {
           const inst = get(store);
           inst.scrollToOffset(inst.getTotalSize(), { align: 'end' });

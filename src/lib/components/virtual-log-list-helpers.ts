@@ -50,18 +50,19 @@ export function isPinnedToBottom(
 
 /**
  * Whether the list should follow the tail after `items` changed (append,
- * wholesale replace). Only when the user is pinned and there is something to
- * scroll to — a Clear (count 0) has nothing to follow — and the viewport has
- * a real height: under a `display:none` ancestor `clientHeight` is 0 and any
- * scroll work is a dead no-op (the visibility ResizeObserver re-pins on
- * unhide instead).
+ * wholesale replace). Only in tail-follow mode (`followTail`), when the user
+ * is pinned and there is something to scroll to — a Clear (count 0) has
+ * nothing to follow — and the viewport has a real height: under a
+ * `display:none` ancestor `clientHeight` is 0 and any scroll work is a dead
+ * no-op (the visibility ResizeObserver re-pins on unhide instead).
  */
 export function shouldStickToBottom(
   pinned: boolean,
   count: number,
   viewportHeight: number,
+  followTail = true,
 ): boolean {
-  return pinned && count > 0 && viewportHeight > 0;
+  return followTail && pinned && count > 0 && viewportHeight > 0;
 }
 
 /**
@@ -69,13 +70,24 @@ export function shouldStickToBottom(
  * parent. `handleScroll` only notifies on flips, so after an `{#if}` remount
  * a fresh list (pinned = true) would leave a parent holding a stale value
  * (e.g. a stuck "Go to end" button). Report once, as soon as the scroll
- * element is bound.
+ * element is bound. Top-anchored mode (`followTail = false`) has no
+ * tail-pinned contract to resync, so it never reports.
  */
 export function shouldReportInitialPinned(
   hasScrollEl: boolean,
   alreadyReported: boolean,
+  followTail = true,
 ): boolean {
-  return hasScrollEl && !alreadyReported;
+  return followTail && hasScrollEl && !alreadyReported;
+}
+
+/**
+ * Whether the visibility ResizeObserver should re-pin to the bottom after
+ * the list becomes visible again (0 → non-zero viewport height). Only in
+ * tail-follow mode and while the user is still pinned.
+ */
+export function shouldRepinOnUnhide(pinned: boolean, followTail = true): boolean {
+  return followTail && pinned;
 }
 
 /**

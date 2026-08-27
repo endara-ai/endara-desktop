@@ -6,6 +6,7 @@ import {
   computeMountedRange,
   isPinnedToBottom,
   itemKeyAt,
+  shouldRepinOnUnhide,
   shouldReportInitialPinned,
   shouldStickToBottom,
 } from './virtual-log-list-helpers';
@@ -74,6 +75,15 @@ describe('shouldStickToBottom (bottom-pinned behavior)', () => {
   it('skips the dead scroll work while hidden (0-height viewport)', () => {
     expect(shouldStickToBottom(true, 10, 0)).toBe(false);
   });
+
+  it('defaults to tail-follow mode when followTail is omitted', () => {
+    expect(shouldStickToBottom(true, 10, 400)).toBe(shouldStickToBottom(true, 10, 400, true));
+  });
+
+  it('never follows the tail in top-anchored mode (followTail = false)', () => {
+    expect(shouldStickToBottom(true, 10, 400, false)).toBe(false);
+    expect(shouldStickToBottom(false, 10, 400, false)).toBe(false);
+  });
 });
 
 describe('shouldReportInitialPinned (parent resync after {#if} remounts)', () => {
@@ -87,6 +97,31 @@ describe('shouldReportInitialPinned (parent resync after {#if} remounts)', () =>
 
   it('reports only once per instance', () => {
     expect(shouldReportInitialPinned(true, true)).toBe(false);
+  });
+
+  it('defaults to tail-follow mode when followTail is omitted', () => {
+    expect(shouldReportInitialPinned(true, false)).toBe(shouldReportInitialPinned(true, false, true));
+  });
+
+  it('never reports in top-anchored mode (followTail = false)', () => {
+    expect(shouldReportInitialPinned(true, false, false)).toBe(false);
+  });
+});
+
+describe('shouldRepinOnUnhide (visibility ResizeObserver re-pin)', () => {
+  it('re-pins while pinned in tail-follow mode', () => {
+    expect(shouldRepinOnUnhide(true)).toBe(true);
+    expect(shouldRepinOnUnhide(true, true)).toBe(true);
+  });
+
+  it('does not re-pin when the user scrolled away', () => {
+    expect(shouldRepinOnUnhide(false)).toBe(false);
+    expect(shouldRepinOnUnhide(false, true)).toBe(false);
+  });
+
+  it('never re-pins in top-anchored mode (followTail = false)', () => {
+    expect(shouldRepinOnUnhide(true, false)).toBe(false);
+    expect(shouldRepinOnUnhide(false, false)).toBe(false);
   });
 });
 

@@ -37,6 +37,7 @@
     type StatusFilter,
   } from './observability-helpers';
   import Sparkline from './Sparkline.svelte';
+  import VirtualLogList from './VirtualLogList.svelte';
   import { JsonView, defaultStyles } from '@humanspeak/svelte-json-view-lite';
   import { focusTrap } from '$lib/actions/focusTrap';
 
@@ -101,6 +102,13 @@
 
   const globalSeries = $derived(globalBuckets(buckets));
   const serverOptions = $derived(distinctValues(calls, 'serverName'));
+
+  // Shared column template for the virtualized call list. Header + rows are
+  // separate CSS grids (absolutely-positioned virtual rows can't live in a
+  // <tbody>), so they align by using the exact same template. Widths mirror
+  // the old table: Time w-20, Server w-28, Tool flexible, Status w-24,
+  // Duration w-20, Bytes w-28.
+  const callListGrid = 'grid grid-cols-[5rem_7rem_minmax(0,1fr)_6rem_5rem_7rem]';
 
   async function loadAggregates() {
     const since = windowMinutes > 0 ? Date.now() - windowMinutes * 60_000 : undefined;
@@ -226,7 +234,7 @@
     await openDetail(requestUid);
     await tick();
     document
-      .querySelector(`tr[data-request-uid="${CSS.escape(requestUid)}"]`)
+      .querySelector(`[data-request-uid="${CSS.escape(requestUid)}"]`)
       ?.scrollIntoView({ block: 'center' });
   }
 
@@ -577,42 +585,61 @@
             <p class="text-[13px] text-(--fg3)">No calls match the current filters.</p>
           </div>
         {:else}
-          <div class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-(--border)">
-            <table class="w-full table-fixed text-[12px]">
-              <thead class="sticky top-0 z-10 bg-(--hd-bg) text-(--fg2)">
-                <tr>
-                  <th class="w-20 px-2 py-1.5 text-left font-medium">Time</th>
-                  <th class="w-28 px-2 py-1.5 text-left font-medium">Server</th>
-                  <th class="px-2 py-1.5 text-left font-medium">Tool</th>
-                  <th class="w-24 px-2 py-1.5 text-left font-medium">Status</th>
-                  <th class="w-20 px-2 py-1.5 text-right font-medium">Duration</th>
-                  <th class="w-28 px-2 py-1.5 text-right font-medium">Bytes (in/out)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each calls as c (c.requestUid)}
-                  {@const st = callStatus(c)}
-                  <tr
-                    data-request-uid={c.requestUid}
-                    class="cursor-pointer border-t border-(--border) hover:bg-(--surface-hover) {selectedUid === c.requestUid ? 'bg-(--accent-tint)' : ''}"
-                    onclick={() => openDetail(c.requestUid)}
-                  >
-                    <td class="px-2 py-1.5 text-(--fg2)">{formatTime(c.tsStart)}</td>
-                    <td class="truncate px-2 py-1.5 text-(--fg1)" title={c.serverName}>{c.serverName}</td>
-                    <td class="truncate px-2 py-1.5 font-mono text-(--fg1)" title={c.tool}>{c.tool}</td>
-                    <td class="px-2 py-1.5">
-                      <span
-                        class="block max-w-full truncate {st.ok ? 'text-(--healthy)' : 'text-(--offline)'}"
-                        title={c.errorMessage ?? st.label}>{st.label}</span>
-                    </td>
-                    <td class="px-2 py-1.5 text-right text-(--fg2)">{formatDuration(c.durationMs)}</td>
-                    <td class="px-2 py-1.5 text-right text-(--fg3)">
-                      {formatBytes(c.requestBytes)} / {formatBytes(c.responseBytes)}
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
+          <!-- Virtualized rows (top-anchored): only the visible window
+               (+ overscan) is mounted. The header row lives OUTSIDE the
+               scrolling container so it stays fixed above the rows. -->
+          <div
+            role="table"
+            aria-label="Proxied tool calls"
+            aria-rowcount={calls.length + 1}
+            class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-(--border) text-[12px]"
+          >
+            <div role="rowgroup" class="shrink-0">
+              <div role="row" class="{callListGrid} bg-(--hd-bg) text-(--fg2)">
+                <div role="columnheader" class="px-2 py-1.5 text-left font-medium">Time</div>
+                <div role="columnheader" class="px-2 py-1.5 text-left font-medium">Server</div>
+                <div role="columnheader" class="px-2 py-1.5 text-left font-medium">Tool</div>
+                <div role="columnheader" class="px-2 py-1.5 text-left font-medium">Status</div>
+                <div role="columnheader" class="px-2 py-1.5 text-right font-medium">Duration</div>
+                <div role="columnheader" class="px-2 py-1.5 text-right font-medium">Bytes (in/out)</div>
+              </div>
+            </div>
+            <VirtualLogList
+              items={calls}
+              getKey={(c) => c.requestUid}
+              followTail={false}
+              class="min-h-0 flex-1"
+            >
+              {#snippet row(c, _index)}
+                {@const st = callStatus(c)}
+                <div
+                  role="row"
+                  tabindex="0"
+                  data-request-uid={c.requestUid}
+                  class="{callListGrid} cursor-pointer border-t border-(--border) hover:bg-(--surface-hover) {selectedUid === c.requestUid ? 'bg-(--accent-tint)' : ''}"
+                  onclick={() => openDetail(c.requestUid)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openDetail(c.requestUid);
+                    }
+                  }}
+                >
+                  <div role="cell" class="truncate px-2 py-1.5 text-(--fg2)">{formatTime(c.tsStart)}</div>
+                  <div role="cell" class="truncate px-2 py-1.5 text-(--fg1)" title={c.serverName}>{c.serverName}</div>
+                  <div role="cell" class="truncate px-2 py-1.5 font-mono text-(--fg1)" title={c.tool}>{c.tool}</div>
+                  <div role="cell" class="px-2 py-1.5">
+                    <span
+                      class="block max-w-full truncate {st.ok ? 'text-(--healthy)' : 'text-(--offline)'}"
+                      title={c.errorMessage ?? st.label}>{st.label}</span>
+                  </div>
+                  <div role="cell" class="px-2 py-1.5 text-right text-(--fg2)">{formatDuration(c.durationMs)}</div>
+                  <div role="cell" class="truncate px-2 py-1.5 text-right text-(--fg3)">
+                    {formatBytes(c.requestBytes)} / {formatBytes(c.responseBytes)}
+                  </div>
+                </div>
+              {/snippet}
+            </VirtualLogList>
           </div>
           {#if nextCursor}
             <div class="mt-2 flex justify-center">

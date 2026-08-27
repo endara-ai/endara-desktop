@@ -2,6 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 
 import type { CallSummaryDto, AggregateBucketDto } from '$lib/types';
 import {
+  DEFAULT_OVERSCAN,
+  DEFAULT_ROW_ESTIMATE_PX,
+  computeMountedRange,
+} from './virtual-log-list-helpers';
+import {
   buildCallsFilter,
   formatDuration,
   formatBytes,
@@ -286,5 +291,44 @@ describe('parseJsonTree', () => {
     expect(parseJsonTree('42')).toEqual({ ok: false });
     expect(parseJsonTree('"a string"')).toEqual({ ok: false });
     expect(parseJsonTree('{"a":1}', 3)).toEqual({ ok: false });
+  });
+});
+
+// The Observability call list renders rows through VirtualLogList in
+// top-anchored mode (followTail: false). The test env is Node (no jsdom), so
+// — per the established pattern (see RelayLogs.test.ts) — the mounted-row
+// assertions run against computeMountedRange, the pure mirror of the
+// virtualizer's windowing math under the list's actual estimate/overscan
+// configuration.
+describe('virtualized call list window (large "Load more" backlog)', () => {
+  const base = { rowHeight: DEFAULT_ROW_ESTIMATE_PX, overscan: DEFAULT_OVERSCAN };
+  const count = 500;
+
+  it('mounts only the top window (+overscan) on first render (top-anchored)', () => {
+    const viewportHeight = 600;
+    const range = computeMountedRange({ ...base, count, scrollOffset: 0, viewportHeight });
+    expect(range!.start).toBe(0);
+    const mounted = range!.end - range!.start + 1;
+    expect(mounted).toBe(viewportHeight / DEFAULT_ROW_ESTIMATE_PX + DEFAULT_OVERSCAN);
+    expect(mounted).toBeLessThan(count / 10);
+  });
+
+  it('keeps the mounted subset windowed while scrolled mid-list', () => {
+    const viewportHeight = 600;
+    const range = computeMountedRange({
+      ...base,
+      count,
+      scrollOffset: (count / 2) * DEFAULT_ROW_ESTIMATE_PX,
+      viewportHeight,
+    });
+    expect(range!.start).toBeGreaterThan(0);
+    expect(range!.end).toBeLessThan(count - 1);
+    const mounted = range!.end - range!.start + 1;
+    expect(mounted).toBe(viewportHeight / DEFAULT_ROW_ESTIMATE_PX + 2 * DEFAULT_OVERSCAN);
+  });
+
+  it('mounts nothing while the tab is hidden (zero-height viewport)', () => {
+    const range = computeMountedRange({ ...base, count, scrollOffset: 0, viewportHeight: 0 });
+    expect(range).toBeNull();
   });
 });
