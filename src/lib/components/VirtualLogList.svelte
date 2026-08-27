@@ -36,6 +36,13 @@
      * re-pin on unhide, no initial pinned report.
      */
     followTail?: boolean;
+    /**
+     * ARIA role for the scroll container (e.g. "rowgroup" when the rows are
+     * ARIA table rows). The internal spacer/positioner divs are marked
+     * role="presentation" so the owned-element chain (table → rowgroup →
+     * row) stays intact for assistive tech.
+     */
+    role?: string;
     /** Extra classes for the scroll container (sizing, colors, ...). */
     class?: string;
   };
@@ -47,6 +54,7 @@
     row,
     onscrollstate,
     followTail = true,
+    role = undefined,
     class: className = '',
   }: Props = $props();
 
@@ -193,13 +201,14 @@
   }
 </script>
 
-<div bind:this={scrollEl} onscroll={handleScroll} class="overflow-y-auto {className}">
-  <div class="relative w-full" style:height="{$virtualizer.getTotalSize()}px">
+<div bind:this={scrollEl} onscroll={handleScroll} {role} class="overflow-y-auto {className}">
+  <div role="presentation" class="relative w-full" style:height="{$virtualizer.getTotalSize()}px">
     {#each $virtualizer.getVirtualItems() as vItem, i (vItem.key)}
       {@const item = items[vItem.index]}
       <div
         bind:this={rowEls[i]}
         data-index={vItem.index}
+        role="presentation"
         class="absolute top-0 left-0 w-full"
         style:transform="translateY({vItem.start}px)"
       >

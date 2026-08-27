@@ -377,6 +377,9 @@ describe('virtualized call list window (large "Load more" backlog)', () => {
     expect(mounted).toBe(viewportHeight / DEFAULT_ROW_ESTIMATE_PX + 2 * DEFAULT_OVERSCAN);
   });
 
+  // NOTE: this documents the pure mirror's model, not the component's literal
+  // hidden-tab DOM — the real TanStack virtualizer still mounts ~1 + overscan
+  // rows at clientHeight === 0 (its range math never yields an empty window).
   it('mounts nothing while the tab is hidden (zero-height viewport)', () => {
     const range = computeMountedRange({ ...base, count, scrollOffset: 0, viewportHeight: 0 });
     expect(range).toBeNull();

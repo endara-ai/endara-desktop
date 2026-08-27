@@ -631,8 +631,13 @@
             aria-rowcount={calls.length + 1}
             class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-(--border) text-[12px]"
           >
-            <div role="rowgroup" class="shrink-0">
-              <div role="row" class="{callListGrid} bg-(--hd-bg) text-(--fg2)">
+            <!-- scrollbar-gutter:stable on both the header container and the
+                 scroller keeps the two grids the same width when a classic
+                 (non-overlay) scrollbar is visible. The header container needs
+                 scrollable overflow for the gutter to be reserved; it never
+                 actually scrolls (single row, shrink-0). -->
+            <div role="rowgroup" class="shrink-0 overflow-y-auto [scrollbar-gutter:stable]">
+              <div role="row" aria-rowindex={1} class="{callListGrid} bg-(--hd-bg) text-(--fg2)">
                 <div role="columnheader" class="px-2 py-1.5 text-left font-medium">Time</div>
                 <div role="columnheader" class="px-2 py-1.5 text-left font-medium">Server</div>
                 <div role="columnheader" class="px-2 py-1.5 text-left font-medium">Tool</div>
@@ -645,7 +650,8 @@
               items={calls}
               getKey={(c) => c.requestUid}
               followTail={false}
-              class="min-h-0 flex-1"
+              role="rowgroup"
+              class="min-h-0 flex-1 [scrollbar-gutter:stable]"
             >
               {#snippet row(c, index)}
                 {@const st = callStatus(c)}
@@ -657,7 +663,7 @@
                   tabindex="0"
                   aria-rowindex={index + 2}
                   data-request-uid={c.requestUid}
-                  class="{callListGrid} cursor-pointer border-t border-(--border) hover:bg-(--surface-hover) {selectedUid === c.requestUid ? 'bg-(--accent-tint)' : ''}"
+                  class="{callListGrid} cursor-pointer border-t border-(--border) hover:bg-(--surface-hover) focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--accent) {selectedUid === c.requestUid ? 'bg-(--accent-tint)' : ''}"
                   onclick={() => openDetail(c.requestUid)}
                   onkeydown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
