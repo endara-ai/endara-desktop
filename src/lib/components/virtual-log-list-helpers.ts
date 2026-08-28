@@ -99,6 +99,80 @@ export function becameVisible(prevHeight: number, nextHeight: number): boolean {
   return prevHeight === 0 && nextHeight > 0;
 }
 
+/** Key + geometry of a rendered virtual row, as needed for anchor capture. */
+export interface AnchorRow {
+  key: string;
+  /** Top edge offset within the scroll content (px). */
+  start: number;
+  /** Bottom edge offset within the scroll content (px). */
+  end: number;
+}
+
+/** A captured scroll anchor: which row to hold steady, and where it was. */
+export interface ScrollAnchor {
+  /** Stable key of the anchor row (from getItemKey). */
+  key: string;
+  /** Anchor row's top edge relative to the viewport top (start − scrollTop). */
+  viewportOffset: number;
+}
+
+/**
+ * Capture the row to re-anchor on before an items change applies, in
+ * top-anchored mode. Live merges PREPEND rows (e.g. Observability's
+ * `mergeCalls` sorts newest-first) and the absolutely-positioned virtual rows
+ * defeat native scroll anchoring (`overflow-anchor`), so without compensation
+ * the content under the cursor shifts down by the prepended height.
+ *
+ * Returns `null` when no re-anchoring should happen: tail-follow mode has its
+ * own pinning contract, and at `scrollTop` 0 the user is reading the newest
+ * rows, where prepends SHOULD push the view content down. Otherwise the
+ * anchor is the first row still visible at the current scroll position
+ * (overscan rows fully above the viewport are skipped), with its offset
+ * relative to the viewport top so a partially scrolled-past row is restored
+ * to the exact same position.
+ */
+export function captureScrollAnchor(
+  followTail: boolean,
+  scrollTop: number,
+  rows: readonly AnchorRow[],
+): ScrollAnchor | null {
+  if (followTail || scrollTop <= 0 || rows.length === 0) return null;
+  const anchor = rows.find((r) => r.end > scrollTop) ?? rows[rows.length - 1];
+  return { key: anchor.key, viewportOffset: anchor.start - scrollTop };
+}
+
+/**
+ * Index of the item whose key matches, or -1. Used to relocate the anchor
+ * row after a merge changed the items array (prepends shift every index).
+ */
+export function findIndexByKey<T>(
+  items: readonly T[],
+  key: string,
+  getKey: (item: T, index: number) => string,
+): number {
+  for (let i = 0; i < items.length; i++) {
+    if (getKey(items[i], i) === key) return i;
+  }
+  return -1;
+}
+
+/**
+ * Post-update scrollTop that puts the anchored row back at its captured
+ * viewport offset. Returns `null` when no correction should be applied: the
+ * anchor row is gone (`newStart` null — e.g. evicted by the live row cap) or
+ * the current scroll position is already right (pure appends, no-op merges).
+ * Clamped at 0; the caller's scrollToOffset clamps the far end.
+ */
+export function restoredScrollTop(
+  anchor: ScrollAnchor,
+  newStart: number | null,
+  currentScrollTop: number,
+): number | null {
+  if (newStart === null) return null;
+  const target = Math.max(0, newStart - anchor.viewportOffset);
+  return target === currentScrollTop ? null : target;
+}
+
 export interface MountedRangeInput {
   /** Total number of items in the list. */
   count: number;

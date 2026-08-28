@@ -3,9 +3,12 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_OVERSCAN,
   becameVisible,
+  captureScrollAnchor,
   computeMountedRange,
+  findIndexByKey,
   isPinnedToBottom,
   itemKeyAt,
+  restoredScrollTop,
   shouldRepinOnUnhide,
   shouldReportInitialPinned,
   shouldStickToBottom,
@@ -122,6 +125,81 @@ describe('shouldRepinOnUnhide (visibility ResizeObserver re-pin)', () => {
   it('never re-pins in top-anchored mode (followTail = false)', () => {
     expect(shouldRepinOnUnhide(true, false)).toBe(false);
     expect(shouldRepinOnUnhide(false, false)).toBe(false);
+  });
+});
+
+describe('captureScrollAnchor (top-anchored prepend compensation)', () => {
+  // Three contiguous 30px rows starting at 60px — as produced by
+  // getVirtualItems() for a mid-list scroll position with overscan.
+  const rows = [
+    { key: 'c', start: 60, end: 90 },
+    { key: 'd', start: 90, end: 120 },
+    { key: 'e', start: 120, end: 150 },
+  ];
+
+  it('never captures in tail-follow mode (followTail = true)', () => {
+    expect(captureScrollAnchor(true, 100, rows)).toBeNull();
+  });
+
+  it('never captures when pinned to the top (scrollTop = 0)', () => {
+    expect(captureScrollAnchor(false, 0, rows)).toBeNull();
+  });
+
+  it('never captures with no rendered rows', () => {
+    expect(captureScrollAnchor(false, 100, [])).toBeNull();
+  });
+
+  it('anchors on the first row still visible, skipping rows fully above', () => {
+    // scrollTop 95: row c (end 90) is fully above, d (90–120) straddles.
+    expect(captureScrollAnchor(false, 95, rows)).toEqual({ key: 'd', viewportOffset: -5 });
+  });
+
+  it('captures a zero offset when a row edge aligns with the viewport top', () => {
+    expect(captureScrollAnchor(false, 90, rows)).toEqual({ key: 'd', viewportOffset: 0 });
+  });
+
+  it('falls back to the last row when every row is above the scroll position', () => {
+    expect(captureScrollAnchor(false, 500, rows)).toEqual({ key: 'e', viewportOffset: -380 });
+  });
+});
+
+describe('findIndexByKey (anchor relocation after a merge)', () => {
+  const getKey = (item: { uid: string }) => item.uid;
+
+  it('finds the shifted index after a prepend', () => {
+    const merged = [{ uid: 'new-1' }, { uid: 'new-2' }, { uid: 'a' }, { uid: 'b' }];
+    expect(findIndexByKey(merged, 'a', getKey)).toBe(2);
+  });
+
+  it('returns -1 when the anchor row was evicted (live cap)', () => {
+    expect(findIndexByKey([{ uid: 'x' }], 'gone', getKey)).toBe(-1);
+    expect(findIndexByKey([] as { uid: string }[], 'gone', getKey)).toBe(-1);
+  });
+});
+
+describe('restoredScrollTop (offset restore)', () => {
+  const anchor = { key: 'd', viewportOffset: -5 };
+
+  it('puts the anchor row back at the captured viewport offset', () => {
+    // Two 30px rows prepended: the anchor row moved from start 90 to 150.
+    // scrollTop must become 150 − (−5) = 155 to keep it 5px above the top.
+    expect(restoredScrollTop(anchor, 150, 95)).toBe(155);
+  });
+
+  it('is a no-op when nothing moved (append-only merge)', () => {
+    expect(restoredScrollTop(anchor, 90, 95)).toBeNull();
+  });
+
+  it('is a no-op when the anchor row is gone (evicted by the live cap)', () => {
+    expect(restoredScrollTop(anchor, null, 95)).toBeNull();
+  });
+
+  it('clamps at the top when the anchor moved above the captured offset', () => {
+    // Anchor sat 10px below the viewport top but now starts at 5px: the raw
+    // target (5 − 10 = −5) clamps to 0.
+    expect(restoredScrollTop({ key: 'd', viewportOffset: 10 }, 5, 95)).toBe(0);
+    // Already at 0 and the target clamps to 0 → no-op.
+    expect(restoredScrollTop({ key: 'd', viewportOffset: 10 }, 5, 0)).toBeNull();
   });
 });
 
