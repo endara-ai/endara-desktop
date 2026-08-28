@@ -103,7 +103,10 @@
     void items;
     const follow = followTail;
     const el = scrollEl;
-    if (!el) {
+    // Bail before touching the virtualizer when re-anchoring cannot apply
+    // (tail-follow mode, or reading the newest rows at the top), so
+    // frequently-updating tail-pinned log views skip getVirtualItems().
+    if (!el || follow || el.scrollTop <= 0) {
       pendingAnchor = null;
       return;
     }
@@ -132,13 +135,20 @@
     const anchor = pendingAnchor;
     pendingAnchor = null;
     if (!anchor) return;
+    // Snapshot the items/key fn this anchor was captured against so the
+    // async callback below never mixes a stale anchor with a newer array.
+    const itemsAtCapture = items;
+    const keyOf = getKey;
     tick().then(() => {
+      // A newer merge landed before this tick resolved; its own effect run
+      // owns the restore now — don't apply a correction from stale state.
+      if (items !== itemsAtCapture) return;
       const el = scrollEl;
       if (!el) return;
       const inst = get(store);
       // Refresh the measurement cache before reading row offsets.
       inst.getVirtualItems();
-      const index = findIndexByKey(items, anchor.key, getKey);
+      const index = findIndexByKey(itemsAtCapture, anchor.key, keyOf);
       const newStart = index === -1 ? null : (inst.measurementsCache[index]?.start ?? null);
       const target = restoredScrollTop(anchor, newStart, el.scrollTop);
       if (target !== null) inst.scrollToOffset(target);
