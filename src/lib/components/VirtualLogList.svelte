@@ -98,7 +98,9 @@
   // and scrollTop 0 capture nothing (see captureScrollAnchor).
   let pendingAnchor: ScrollAnchor | null = null;
   $effect.pre(() => {
-    void items.length;
+    // Track the items reference: consumers replace the array on change (see
+    // the Props doc), so this reruns on every merge, prepend, or eviction.
+    void items;
     const follow = followTail;
     const el = scrollEl;
     if (!el) {
@@ -124,7 +126,8 @@
   // the row vanished (evicted by the consumer's live cap) or nothing moved
   // (append-only merge), this is a no-op.
   $effect(() => {
-    void items.length;
+    // Track the items reference (same replacement contract as the capture).
+    void items;
     const store = virtualizer;
     const anchor = pendingAnchor;
     pendingAnchor = null;
