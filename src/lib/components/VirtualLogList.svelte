@@ -24,7 +24,13 @@
   // drive their auto-scroll and "Go to end" affordances.
 
   type Props = {
-    /** Rows to render. Only the windowed subset is mounted. */
+    /**
+     * Rows to render. Only the windowed subset is mounted. Must be REPLACED
+     * (new array) on change, never mutated in place: the effects below track
+     * the prop reference, so an in-place mutation (same array, same length)
+     * is invisible to the count sync, tail-follow, and scroll re-anchoring.
+     * Every consumer already does this (mergeCalls & co. return new arrays).
+     */
     items: readonly T[];
     /** Stable string key per item — wired into the virtualizer's getItemKey. */
     getKey: (item: T, index: number) => string;
