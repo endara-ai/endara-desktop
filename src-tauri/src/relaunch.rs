@@ -9,16 +9,15 @@
 //! LaunchServices (`open -n`). Everything else (non-bundle/dev runs, other
 //! platforms) falls back to a direct `Command` spawn.
 //!
-//! Launch arguments are never propagated: a relaunched instance is a normal
-//! foreground launch carrying only the [`RELAUNCHED_FROM_FLAG`] marker.
+//! Launch arguments are never propagated: the child's argv is built
+//! explicitly and contains only the [`RELAUNCHED_FROM_FLAG`] marker, so a
+//! relaunched instance is always a normal foreground launch (in particular,
+//! `--autostarted` — which would bring it up hidden, in accessory mode — is
+//! not inherited). The original argv is only logged.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-
-/// Launch-mode flags that must not survive a relaunch (e.g. `--autostarted`
-/// would bring the updated instance up hidden, in accessory mode).
-const STRIPPED_LAUNCH_FLAGS: &[&str] = &["--autostarted"];
 
 /// Marker passed to the relaunched instance so startup logging can identify
 /// it: `--relaunched-from=<previous version>`.
@@ -65,28 +64,13 @@ impl RelaunchStrategy {
     }
 }
 
-/// Build the argv (without argv[0]) for the relaunched instance: every
-/// original launch flag is dropped and the relaunch marker is appended.
-pub fn relaunch_args(original: &[OsString], previous_version: &str) -> Vec<OsString> {
-    let mut args: Vec<OsString> = original
-        .iter()
-        .filter(|a| !is_stripped_launch_flag(a))
-        .filter(|a| !starts_with(a, RELAUNCHED_FROM_FLAG))
-        .filter(|a| !starts_with(a, "-psn_"))
-        .cloned()
-        .collect();
-    args.push(OsString::from(format!(
+/// Build the argv (without argv[0]) for the relaunched instance. This is an
+/// allowlist: nothing from the original launch is carried over; the only
+/// argument is the relaunch marker.
+pub fn relaunch_args(previous_version: &str) -> Vec<OsString> {
+    vec![OsString::from(format!(
         "{RELAUNCHED_FROM_FLAG}{previous_version}"
-    )));
-    args
-}
-
-fn is_stripped_launch_flag(arg: &OsStr) -> bool {
-    STRIPPED_LAUNCH_FLAGS.iter().any(|f| arg == *f)
-}
-
-fn starts_with(arg: &OsStr, prefix: &str) -> bool {
-    arg.to_str().is_some_and(|s| s.starts_with(prefix))
+    ))]
 }
 
 /// The version recorded by [`relaunch_args`], if this process was relaunched
@@ -194,12 +178,11 @@ pub fn spawn(env: &tauri::Env, previous_version: &str) -> bool {
             return false;
         }
     };
-    let original: Vec<OsString> = env.args_os.iter().skip(1).cloned().collect();
-    let args = relaunch_args(&original, previous_version);
+    let args = relaunch_args(previous_version);
     log::info!(
         "[relaunch] exe={} original_args={:?} relaunch_args={:?}",
         exe.display(),
-        original,
+        env.args_os.iter().skip(1).collect::<Vec<_>>(),
         args
     );
 
@@ -258,26 +241,20 @@ mod tests {
     }
 
     #[test]
-    fn relaunch_args_strips_autostarted_and_adds_marker() {
-        let args = relaunch_args(&os(&["--autostarted"]), "0.1.13-rc.15");
-        assert_eq!(args, os(&["--relaunched-from=0.1.13-rc.15"]));
-    }
-
-    #[test]
-    fn relaunch_args_strips_stale_marker_and_psn() {
-        let args = relaunch_args(
-            &os(&["--relaunched-from=0.1.12", "-psn_0_12345", "--keep"]),
-            "0.1.13",
-        );
-        assert_eq!(args, os(&["--keep", "--relaunched-from=0.1.13"]));
-    }
-
-    #[test]
-    fn relaunch_args_empty_input_yields_only_marker() {
+    fn relaunch_args_is_only_the_marker() {
         assert_eq!(
-            relaunch_args(&[], "1.0.0"),
-            os(&["--relaunched-from=1.0.0"])
+            relaunch_args("0.1.13-rc.15"),
+            os(&["--relaunched-from=0.1.13-rc.15"])
         );
+    }
+
+    #[test]
+    fn relaunch_args_never_carries_original_launch_flags() {
+        let args = relaunch_args("0.1.13");
+        for flag in ["--autostarted", "-psn_0_12345", "--relaunched-from=0.1.12"] {
+            assert!(!args.iter().any(|a| a == flag), "{flag} must not appear");
+        }
+        assert_eq!(args.len(), 1);
     }
 
     #[test]
@@ -419,23 +396,32 @@ mod tests {
         }
 
         let mut parent = Command::new("sleep").arg("1").spawn().unwrap();
+        let parent_pid = parent.id();
+        // Reap the parent concurrently so it does not linger as a zombie
+        // (`kill -0` succeeds on zombies, which would mask exit detection).
+        let reaper = std::thread::spawn(move || parent.wait());
         let script = helper_script().replace("/usr/bin/open", fake_open.to_str().unwrap());
         let start = Instant::now();
         let status = Command::new("/bin/sh")
             .arg("-c")
             .arg(script)
             .arg("endara-relaunch")
-            .arg(parent.id().to_string())
+            .arg(parent_pid.to_string())
             .arg("/Applications/Endara Desktop.app")
             .arg("--relaunched-from=1.0.0")
             .status()
             .unwrap();
+        let elapsed = start.elapsed();
         assert!(status.success());
         assert!(
-            start.elapsed() >= std::time::Duration::from_millis(500),
-            "helper returned before the parent exited"
+            elapsed >= std::time::Duration::from_millis(500),
+            "helper returned before the parent exited ({elapsed:?})"
         );
-        parent.wait().unwrap();
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "helper did not detect parent exit; hit the poll cap ({elapsed:?})"
+        );
+        reaper.join().unwrap().unwrap();
         let recorded = std::fs::read_to_string(&marker).unwrap();
         assert_eq!(
             recorded,
