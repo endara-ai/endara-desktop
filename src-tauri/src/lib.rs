@@ -1,5 +1,6 @@
 mod api_proxy;
 mod overlay;
+mod relaunch;
 mod sse;
 mod tray;
 mod webview_recovery;
@@ -32,6 +33,11 @@ const BETA_UPDATE_URL: &str = "https://endara-ai.github.io/endara-desktop/latest
 /// macOS race condition between exit and relaunch described in Tauri issues
 /// #11392 and #1692.
 const RESTART_EXIT_CODE: i32 = 42;
+
+/// Upper bound for the relay `child.kill()` fallback in the `RunEvent::Exit`
+/// arm. The tokio mutex may be held by a task on the still-live app runtime;
+/// an unbounded join there would hang the process before the relaunch.
+const EXIT_TEARDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Timeout for the pre-flight JSON manifest fetch performed before delegating
 /// to `tauri-plugin-updater`. Chosen to be larger than typical CDN latency yet
@@ -2613,8 +2619,22 @@ fn set_tray_health(app: AppHandle, state: &str, detail: Option<String>) {
     }
 }
 
+/// Route panics through the file logger. tao dispatches `LoopDestroyed` outside
+/// its panic guard, so a panic in the `RunEvent::Exit` arm would otherwise only
+/// reach stderr and leave no trace in `Endara Desktop.log`.
+fn install_panic_log_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("panic: {info}");
+        log::logger().flush();
+        default_hook(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_panic_log_hook();
+
     // Capture `config.toml` existence BEFORE any code path (read_config,
     // read_port_from_config, the relay sidecar spawn) has had a chance to
     // touch the file. The overlay migration helper in Phase 5 uses this to
@@ -2659,6 +2679,8 @@ pub fn run() {
     let channel = read_update_channel();
     let autostarted = is_autostarted();
     let dev = is_dev_mode();
+    let relaunched_from = relaunch::relaunched_from(std::env::args());
+    let exit_version = version.clone();
 
     // Set to `true` by the `RunEvent::ExitRequested` arm when the app is asked to
     // exit with `RESTART_EXIT_CODE` (via the `restart_after_update` command); the
@@ -2741,12 +2763,13 @@ pub fn run() {
         ])
         .setup(move |app| {
             log::info!(
-                "desktop starting version={} commit={} channel={} autostarted={} is_dev={}",
+                "desktop starting version={} commit={} channel={} autostarted={} is_dev={} relaunched_from={}",
                 version,
                 commit,
                 channel,
                 autostarted,
-                dev
+                dev,
+                relaunched_from.as_deref().unwrap_or("none")
             );
 
             // Resolve the overlay's persisted settings BEFORE building the
@@ -3024,13 +3047,19 @@ pub fn run() {
                 if code == Some(RESTART_EXIT_CODE) {
                     restart_requested = true;
                 }
+                log::info!(
+                    "app exit requested code={:?} restart_requested={}",
+                    code,
+                    restart_requested
+                );
             }
             RunEvent::Exit => {
-                log::info!("app exit");
+                log::info!("app exit restart_requested={}", restart_requested);
                 // Release the macOS click-catcher panel while still on the main
                 // thread (the event loop has stopped, so a dispatched teardown
                 // would never run).
                 overlay::destroy_click_catcher(app);
+                log::info!("[exit] click-catcher released");
                 // Suppress any in-flight supervisor logic so the upcoming SIGTERM
                 // is treated as an intentional shutdown, then abort a pending
                 // auto-restart task if one is sleeping out its backoff window.
@@ -3057,10 +3086,14 @@ pub fn run() {
                         }
                     }
                 }
+                log::info!("[exit] relay SIGTERM step done");
                 // Also try the async child.kill() as fallback, in a separate thread
-                // to avoid deadlocking on the tokio runtime during shutdown.
+                // to avoid deadlocking on the tokio runtime during shutdown. The
+                // wait is bounded: if the tokio mutex is held elsewhere we move on
+                // and let process exit reap the sidecar rather than hang here.
                 let child_handle = child_handle.clone();
-                let _ = std::thread::spawn(move || {
+                let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+                std::thread::spawn(move || {
                     if let Ok(rt) = tokio::runtime::Runtime::new() {
                         rt.block_on(async {
                             let mut guard = child_handle.lock().await;
@@ -3069,16 +3102,37 @@ pub fn run() {
                             }
                         });
                     }
-                })
-                .join();
+                    let _ = done_tx.send(());
+                });
+                match done_rx.recv_timeout(EXIT_TEARDOWN_TIMEOUT) {
+                    Ok(()) => log::info!("[exit] relay child.kill step done"),
+                    Err(e) => log::warn!(
+                        "[exit] relay child.kill step did not finish within {:?} ({e}); continuing",
+                        EXIT_TEARDOWN_TIMEOUT
+                    ),
+                }
                 // If this exit was a restart request, relaunch now that the event
                 // loop has stopped and the relay sidecar has been torn down. Doing
                 // it here (rather than at request time) is the macOS-safe workaround
-                // for the exit/relaunch race in Tauri issues #11392 and #1692.
+                // for the exit/relaunch race in Tauri issues #11392 and #1692. The
+                // spawn is owned by `relaunch` (not `tauri::process::restart`) so
+                // the strategy, argv and result are all logged, and so macOS goes
+                // through a detached helper + LaunchServices instead of exec'ing
+                // the just-swapped binary from the dying parent.
                 if restart_requested {
-                    log::info!("restarting app after update");
-                    app.cleanup_before_exit();
-                    tauri::process::restart(&app.env());
+                    log::info!("restarting app after update version={}", exit_version);
+                    let cleanup =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            app.cleanup_before_exit()
+                        }));
+                    match cleanup {
+                        Ok(()) => log::info!("[exit] cleanup_before_exit done"),
+                        Err(_) => log::error!("[exit] cleanup_before_exit panicked; continuing"),
+                    }
+                    let spawned = relaunch::spawn(&app.env(), &exit_version);
+                    log::info!("[exit] relaunch spawned={spawned}; exiting parent");
+                    log::logger().flush();
+                    std::process::exit(0);
                 }
             }
             _ => {}
