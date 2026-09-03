@@ -3091,7 +3091,9 @@ pub fn run() {
                 // Also try the async child.kill() as fallback, in a separate thread
                 // to avoid deadlocking on the tokio runtime during shutdown. The
                 // wait is bounded: if the tokio mutex is held elsewhere we move on
-                // and let process exit reap the sidecar rather than hang here.
+                // rather than hang here. Process exit does NOT reap the sidecar;
+                // the SIGTERM above is the real kill, and a sidecar that survives
+                // it shows up as a pre-flight port conflict on the next launch.
                 let child_handle = child_handle.clone();
                 let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
                 std::thread::spawn(move || {
