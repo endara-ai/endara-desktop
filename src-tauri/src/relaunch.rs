@@ -31,7 +31,8 @@ const HELPER_MAX_POLLS: u32 = 150;
 /// `$1` = parent pid, `$2` = bundle path, `$3..` = app arguments. Passing the
 /// values as parameters (rather than interpolating them) avoids any quoting
 /// of paths containing spaces such as `/Applications/Endara Desktop.app`.
-const HELPER_SCRIPT_TEMPLATE: &str = r#"pid="$1"; bundle="$2"; shift 2
+const HELPER_SCRIPT_TEMPLATE: &str = r#"PATH=/usr/bin:/bin; export PATH
+pid="$1"; bundle="$2"; shift 2
 i=0
 while kill -0 "$pid" 2>/dev/null && [ "$i" -lt @MAX_POLLS@ ]; do sleep 0.2; i=$((i+1)); done
 if [ "$#" -gt 0 ]; then exec /usr/bin/open -n "$bundle" --args "$@"; fi
@@ -157,8 +158,9 @@ pub fn command(strategy: &RelaunchStrategy) -> Command {
     cmd
 }
 
-/// Launch flags the app itself knows about; the only argv content that is ever
-/// written to the log (by name, never with a value).
+/// Launch flags the app itself knows about. When summarising the *original*
+/// launch argv for the log, these are the only arguments recorded (by name,
+/// never with a value); everything else is counted.
 const KNOWN_LAUNCH_FLAGS: &[&str] = &["--autostarted", "--relaunched-from", "-psn"];
 
 /// Summarise the original launch argv (without argv[0]) for logging without
@@ -400,6 +402,7 @@ mod tests {
     #[test]
     fn helper_script_waits_for_parent_then_opens_bundle() {
         let script = helper_script();
+        assert!(script.starts_with("PATH=/usr/bin:/bin; export PATH\n"));
         assert!(script.contains(r#"kill -0 "$pid""#));
         assert!(script.contains(&format!("-lt {HELPER_MAX_POLLS}")));
         assert!(script.contains(r#"exec /usr/bin/open -n "$bundle" --args "$@""#));
