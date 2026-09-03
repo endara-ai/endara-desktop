@@ -426,10 +426,7 @@ mod tests {
         let fake_open = fake_open_dir.join("open");
         std::fs::write(
             &fake_open,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
-                marker.display()
-            ),
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_MARKER\"\n",
         )
         .unwrap();
         {
@@ -442,9 +439,13 @@ mod tests {
         // Reap the parent concurrently so it does not linger as a zombie
         // (`kill -0` succeeds on zombies, which would mask exit detection).
         let reaper = std::thread::spawn(move || parent.wait());
-        let script = helper_script().replace("/usr/bin/open", fake_open.to_str().unwrap());
+        // Paths reach the scripts via the environment so a temp dir containing
+        // spaces or shell metacharacters cannot break them.
+        let script = helper_script().replace("/usr/bin/open", "\"$FAKE_OPEN\"");
         let start = Instant::now();
         let status = Command::new("/bin/sh")
+            .env("FAKE_OPEN", &fake_open)
+            .env("FAKE_MARKER", &marker)
             .arg("-c")
             .arg(script)
             .arg("endara-relaunch")
