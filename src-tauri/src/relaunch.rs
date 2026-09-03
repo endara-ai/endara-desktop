@@ -157,6 +157,23 @@ pub fn command(strategy: &RelaunchStrategy) -> Command {
     cmd
 }
 
+/// Summarise the original launch argv (without argv[0]) for logging without
+/// recording it verbatim: only the names of `-`/`--` flags are kept (anything
+/// after `=` is dropped) and positional arguments are counted, not shown.
+pub fn summarize_original_args<'a>(args: impl IntoIterator<Item = &'a OsStr>) -> String {
+    let mut flags = Vec::new();
+    let mut positional = 0usize;
+    for arg in args {
+        let arg = arg.to_string_lossy();
+        if arg.starts_with('-') {
+            flags.push(arg.split('=').next().unwrap_or_default().to_string());
+        } else {
+            positional += 1;
+        }
+    }
+    format!("flags={flags:?} positional={positional}")
+}
+
 /// Describe the argv of `cmd` for logging.
 pub fn describe(cmd: &Command) -> String {
     let mut parts = vec![cmd.get_program().to_string_lossy().into_owned()];
@@ -180,9 +197,9 @@ pub fn spawn(env: &tauri::Env, previous_version: &str) -> bool {
     };
     let args = relaunch_args(previous_version);
     log::info!(
-        "[relaunch] exe={} original_args={:?} relaunch_args={:?}",
+        "[relaunch] exe={} original_args={{{}}} relaunch_args={:?}",
         exe.display(),
-        env.args_os.iter().skip(1).collect::<Vec<_>>(),
+        summarize_original_args(env.args_os.iter().skip(1).map(OsString::as_os_str)),
         args
     );
 
@@ -255,6 +272,31 @@ mod tests {
             assert!(!args.iter().any(|a| a == flag), "{flag} must not appear");
         }
         assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn summarize_original_args_keeps_flag_names_only() {
+        let args = os(&[
+            "--autostarted",
+            "--relaunched-from=0.1.12",
+            "/Users/me/secret file.txt",
+            "-psn_0_12345",
+        ]);
+        let summary = summarize_original_args(args.iter().map(OsString::as_os_str));
+        assert_eq!(
+            summary,
+            r#"flags=["--autostarted", "--relaunched-from", "-psn_0_12345"] positional=1"#
+        );
+        assert!(!summary.contains("0.1.12"));
+        assert!(!summary.contains("secret"));
+    }
+
+    #[test]
+    fn summarize_original_args_empty() {
+        assert_eq!(
+            summarize_original_args(std::iter::empty::<&OsStr>()),
+            "flags=[] positional=0"
+        );
     }
 
     #[test]
