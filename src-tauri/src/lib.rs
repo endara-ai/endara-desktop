@@ -2679,7 +2679,8 @@ pub fn run() {
     let channel = read_update_channel();
     let autostarted = is_autostarted();
     let dev = is_dev_mode();
-    let relaunched_from = relaunch::relaunched_from(std::env::args());
+    let relaunched_from =
+        relaunch::relaunched_from(std::env::args_os().map(|a| a.to_string_lossy().into_owned()));
     let exit_version = version.clone();
 
     // Set to `true` by the `RunEvent::ExitRequested` arm when the app is asked to
