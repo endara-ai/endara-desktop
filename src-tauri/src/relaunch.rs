@@ -157,21 +157,27 @@ pub fn command(strategy: &RelaunchStrategy) -> Command {
     cmd
 }
 
+/// Launch flags the app itself knows about; the only argv content that is ever
+/// written to the log (by name, never with a value).
+const KNOWN_LAUNCH_FLAGS: &[&str] = &["--autostarted", "--relaunched-from", "-psn"];
+
 /// Summarise the original launch argv (without argv[0]) for logging without
-/// recording it verbatim: only the names of `-`/`--` flags are kept (anything
-/// after `=` is dropped) and positional arguments are counted, not shown.
+/// recording it verbatim: arguments matching [`KNOWN_LAUNCH_FLAGS`] are logged
+/// by flag name only; everything else is counted, not shown.
 pub fn summarize_original_args<'a>(args: impl IntoIterator<Item = &'a OsStr>) -> String {
     let mut flags = Vec::new();
-    let mut positional = 0usize;
+    let mut other = 0usize;
     for arg in args {
         let arg = arg.to_string_lossy();
-        if arg.starts_with('-') {
-            flags.push(arg.split('=').next().unwrap_or_default().to_string());
-        } else {
-            positional += 1;
+        match KNOWN_LAUNCH_FLAGS.iter().find(|f| {
+            arg.strip_prefix(*f)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['=', '_']))
+        }) {
+            Some(flag) => flags.push(*flag),
+            None => other += 1,
         }
     }
-    format!("flags={flags:?} positional={positional}")
+    format!("flags={flags:?} other={other}")
 }
 
 /// Describe the argv of `cmd` for logging.
@@ -275,27 +281,31 @@ mod tests {
     }
 
     #[test]
-    fn summarize_original_args_keeps_flag_names_only() {
+    fn summarize_original_args_keeps_known_flag_names_only() {
         let args = os(&[
             "--autostarted",
             "--relaunched-from=0.1.12",
             "/Users/me/secret file.txt",
             "-psn_0_12345",
+            "--token=abc",
+            "-/Users/me/odd",
+            "--autostarted-extra",
         ]);
         let summary = summarize_original_args(args.iter().map(OsString::as_os_str));
         assert_eq!(
             summary,
-            r#"flags=["--autostarted", "--relaunched-from", "-psn_0_12345"] positional=1"#
+            r#"flags=["--autostarted", "--relaunched-from", "-psn"] other=4"#
         );
-        assert!(!summary.contains("0.1.12"));
-        assert!(!summary.contains("secret"));
+        for leaked in ["0.1.12", "secret", "12345", "token", "abc", "odd", "extra"] {
+            assert!(!summary.contains(leaked), "{leaked} leaked into {summary}");
+        }
     }
 
     #[test]
     fn summarize_original_args_empty() {
         assert_eq!(
             summarize_original_args(std::iter::empty::<&OsStr>()),
-            "flags=[] positional=0"
+            "flags=[] other=0"
         );
     }
 
