@@ -1159,6 +1159,23 @@ describe('mergeHeaders', () => {
     mergeHeaders(base, [{ key: 'authorization', value: 'x' }]);
     expect(base).toEqual({ Authorization: 'Bearer ghp_abc' });
   });
+
+  it('stores prototype-named keys as plain entries without polluting the prototype', () => {
+    const out = mergeHeaders(seeded, [
+      { key: '__proto__', value: 'x' },
+      { key: 'constructor', value: 'y' },
+    ]);
+    expect(Object.getPrototypeOf(out)).toBeNull();
+    expect(Object.keys(out).sort()).toEqual(['Authorization', '__proto__', 'constructor']);
+    expect(out['__proto__']).toBe('x');
+    expect(out['constructor']).toBe('y');
+    expect(({} as Record<string, unknown>)['x']).toBeUndefined();
+    expect(Object.keys(JSON.parse(JSON.stringify(out))).sort()).toEqual([
+      'Authorization',
+      '__proto__',
+      'constructor',
+    ]);
+  });
 });
 
 // The modal builds its env/headers from `buildCatalogEnvAndHeaders` in both
