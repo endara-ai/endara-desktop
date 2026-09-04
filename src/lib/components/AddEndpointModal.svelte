@@ -20,6 +20,7 @@
     buildMountExample,
     buildOrgBoundEndpointParams,
     buildCatalogEnvAndHeaders,
+    mergeHeaders,
     type AddEndpointFieldErrors,
     type AddEndpointFormSnapshot,
     type MountRow,
@@ -455,12 +456,10 @@
     }
     if (Object.keys(env).length > 0) params.env = env;
 
-    // Build headers: catalog header-typed vars + custom headers (custom wins)
+    // Build headers: catalog header-typed vars + custom headers (custom wins,
+    // matched case-insensitively)
     if (transport !== 'stdio') {
-      const headers: Record<string, string> = { ...catalogValues.headers };
-      for (const h of headerVars.filter((h) => h.key.trim())) {
-        headers[h.key.trim()] = h.value;
-      }
+      const headers = mergeHeaders(catalogValues.headers, headerVars);
       if (Object.keys(headers).length > 0) params.headers = headers;
     }
 
@@ -541,11 +540,25 @@
       return;
     }
 
+    // Catalog env/header values are needed both to gate the OAuth probe below
+    // and to build the add params further down.
+    const catalogValues = selectedCatalog
+      ? buildCatalogEnvAndHeaders(selectedCatalog, catalogEnvValues)
+      : { env: {}, headers: {} };
+    const hasCatalogHeaderCredentials = Object.keys(catalogValues.headers).length > 0;
+
     // Add-time OAuth detection (http/sse only). Best-effort + non-blocking:
     // probe the entered URL and, if the server advertises OAuth, surface the
     // opt-out escalation prompt instead of adding. Any probe failure / timeout
     // / `oauth_supported:false` silently falls through to the plain add below.
-    if (!opts?.skipProbe && (transport === 'http' || transport === 'sse')) {
+    // Skipped when the catalog entry already supplies header credentials (e.g.
+    // the GitHub bearer PAT): the user has chosen that auth model, and the
+    // escalation prompt would misdescribe the add as unauthenticated.
+    if (
+      !opts?.skipProbe &&
+      !hasCatalogHeaderCredentials &&
+      (transport === 'http' || transport === 'sse')
+    ) {
       submitting = true;
       let probe: OAuthProbeResult = { oauth_supported: false };
       try {
@@ -634,9 +647,6 @@
     }
 
     // Build env: catalog env vars + custom env vars
-    const catalogValues = selectedCatalog
-      ? buildCatalogEnvAndHeaders(selectedCatalog, catalogEnvValues)
-      : { env: {}, headers: {} };
     const env: Record<string, string> = { ...catalogValues.env };
     const filteredEnv = envVars.filter((e) => e.key.trim());
     for (const e of filteredEnv) {
@@ -646,13 +656,10 @@
       params.env = env;
     }
 
-    // Build headers: catalog header-typed vars + custom headers (custom wins)
+    // Build headers: catalog header-typed vars + custom headers (custom wins,
+    // matched case-insensitively)
     if (transport !== 'stdio') {
-      const headers: Record<string, string> = { ...catalogValues.headers };
-      const filteredHeaders = headerVars.filter((h) => h.key.trim());
-      for (const h of filteredHeaders) {
-        headers[h.key.trim()] = h.value;
-      }
+      const headers = mergeHeaders(catalogValues.headers, headerVars);
       if (Object.keys(headers).length > 0) {
         params.headers = headers;
       }

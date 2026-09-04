@@ -22,6 +22,7 @@ import {
   buildOrgBoundEndpointParams,
   orgBindingApplies,
   buildCatalogEnvAndHeaders,
+  mergeHeaders,
   MOUNT_EXAMPLE_FALLBACK_HOST,
   type AddEndpointFieldErrors,
   type AddEndpointFormSnapshot,
@@ -1095,6 +1096,57 @@ describe('buildCatalogEnvAndHeaders', () => {
   });
 });
 
+describe('mergeHeaders', () => {
+  const seeded = { Authorization: 'Bearer ghp_abc' };
+
+  it('returns the seeded headers unchanged when there are no custom rows', () => {
+    expect(mergeHeaders(seeded, [])).toEqual(seeded);
+  });
+
+  it('adds custom rows that do not collide with seeded keys', () => {
+    expect(mergeHeaders(seeded, [{ key: 'X-Trace', value: '1' }])).toEqual({
+      Authorization: 'Bearer ghp_abc',
+      'X-Trace': '1',
+    });
+  });
+
+  it('lets a custom row override a seeded key with the same case', () => {
+    expect(mergeHeaders(seeded, [{ key: 'Authorization', value: 'token x' }])).toEqual({
+      Authorization: 'token x',
+    });
+  });
+
+  it('lets a custom row override a seeded key case-insensitively without leaving two keys', () => {
+    const out = mergeHeaders(seeded, [{ key: 'authorization', value: 'token x' }]);
+    expect(out).toEqual({ authorization: 'token x' });
+    expect(Object.keys(out)).toHaveLength(1);
+  });
+
+  it('trims custom keys and skips blank ones', () => {
+    expect(
+      mergeHeaders(seeded, [
+        { key: '  X-Trace  ', value: '1' },
+        { key: '   ', value: 'ignored' },
+      ]),
+    ).toEqual({ Authorization: 'Bearer ghp_abc', 'X-Trace': '1' });
+  });
+
+  it('applies later custom rows over earlier ones, case-insensitively', () => {
+    expect(
+      mergeHeaders({}, [
+        { key: 'X-Api-Key', value: 'a' },
+        { key: 'x-api-key', value: 'b' },
+      ]),
+    ).toEqual({ 'x-api-key': 'b' });
+  });
+
+  it('does not mutate the seeded map', () => {
+    const base = { Authorization: 'Bearer ghp_abc' };
+    mergeHeaders(base, [{ key: 'authorization', value: 'x' }]);
+    expect(base).toEqual({ Authorization: 'Bearer ghp_abc' });
+  });
+});
+
 // The modal builds its env/headers from `buildCatalogEnvAndHeaders` in both
 // the Test Connection (`buildConnectionParams`) and Add (`handleSubmit`)
 // paths, so header-typed catalog vars (GitHub PAT) reach `params.headers`.
@@ -1121,18 +1173,33 @@ describe('AddEndpointModal — catalog env/header wiring', () => {
   });
 
   it('seeds env and headers from the helper output, with custom rows applied afterwards', () => {
-    // Catalog-derived values seed the maps; the user's custom env/header rows
-    // are spread in afterwards so a custom row wins on key collision.
+    // Catalog-derived values seed the maps; the user's custom env rows are
+    // spread in afterwards, and custom header rows go through `mergeHeaders`
+    // so a custom row wins on a (case-insensitive) key collision.
     const envSeeds = addEndpointModalSource.match(
       /const env: Record<string, string> = \{ \.\.\.catalogValues\.env \};/g,
     ) ?? [];
-    const headerSeeds = addEndpointModalSource.match(
-      /const headers: Record<string, string> = \{ \.\.\.catalogValues\.headers \};/g,
+    const headerMerges = addEndpointModalSource.match(
+      /const headers = mergeHeaders\(catalogValues\.headers, headerVars\);/g,
     ) ?? [];
     expect(envSeeds.length).toBe(2);
-    expect(headerSeeds.length).toBe(2);
-    expect(addEndpointModalSource).toMatch(
-      /const headers: Record<string, string> = \{ \.\.\.catalogValues\.headers \};[\s\S]*?headers\[h\.key\.trim\(\)\] = h\.value;/,
+    expect(headerMerges.length).toBe(2);
+    // No inline case-sensitive header assignment remains.
+    expect(addEndpointModalSource).not.toMatch(/headers\[h\.key\.trim\(\)\] = h\.value;/);
+  });
+
+  it('skips the add-time OAuth probe when the catalog entry supplies header credentials', () => {
+    // The GitHub remote server advertises OAuth, so without this gate a user
+    // who entered a PAT would be shown the "supports OAuth" escalation prompt
+    // (whose "Keep unauthenticated" option misdescribes the bearer-PAT add).
+    // `catalogValues` must be computed before the probe so the gate can see
+    // the header-typed values.
+    const handleSubmitBlock = addEndpointModalSource.match(
+      /async function handleSubmit\([\s\S]*?const trimmedName = name\.trim\(\);/,
+    );
+    expect(handleSubmitBlock, 'expected the handleSubmit pre-add body').not.toBeNull();
+    expect(handleSubmitBlock![0]).toMatch(
+      /const catalogValues = selectedCatalog\s*\?\s*buildCatalogEnvAndHeaders\(selectedCatalog, catalogEnvValues\)[\s\S]*?const hasCatalogHeaderCredentials = Object\.keys\(catalogValues\.headers\)\.length > 0;[\s\S]*?if \(\s*!opts\?\.skipProbe &&\s*!hasCatalogHeaderCredentials &&\s*\(transport === 'http' \|\| transport === 'sse'\)\s*\) \{[\s\S]*?probe = await oauthProbe\(url\.trim\(\)\);/,
     );
   });
 

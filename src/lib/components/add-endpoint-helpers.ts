@@ -80,6 +80,31 @@ export function buildCatalogEnvAndHeaders(
   return { env, headers };
 }
 
+/**
+ * Applies the user's custom header rows on top of catalog-seeded headers.
+ * HTTP header names are case-insensitive, so a custom row replaces any seeded
+ * key that matches ignoring case (e.g. `authorization` overrides
+ * `Authorization`) instead of adding a second, ambiguous key. Rows with a
+ * blank key are skipped.
+ */
+export function mergeHeaders(
+  base: Record<string, string>,
+  overrides: { key: string; value: string }[],
+): Record<string, string> {
+  const merged: Record<string, string> = { ...base };
+  for (const row of overrides) {
+    const key = row.key.trim();
+    if (!key) continue;
+    for (const existing of Object.keys(merged)) {
+      if (existing !== key && existing.toLowerCase() === key.toLowerCase()) {
+        delete merged[existing];
+      }
+    }
+    merged[key] = row.value;
+  }
+  return merged;
+}
+
 /** Total wall-clock budget for OAuth setup polling, in milliseconds. */
 export const OAUTH_SETUP_POLL_BUDGET_MS = 120_000;
 

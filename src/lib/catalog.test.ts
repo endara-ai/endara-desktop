@@ -31,6 +31,16 @@ describe('CATALOG_SERVERS validation', () => {
     }
   });
 
+  it('stdio entries declare no header-targeted config vars', () => {
+    // `CatalogEnvVar.header` is only meaningful for http/sse; a header-typed
+    // var on a stdio entry would be silently dropped (stdio sends no headers).
+    for (const entry of CATALOG_SERVERS.filter((e) => e.transport === 'stdio')) {
+      for (const ev of entry.envVars) {
+        expect(ev.header, `${entry.id}: ${ev.name} declares a header target on a stdio entry`).toBeUndefined();
+      }
+    }
+  });
+
   it('http/sse entries have a non-empty url', () => {
     for (const entry of CATALOG_SERVERS.filter((e) => e.transport !== 'stdio')) {
       expect(entry.url, `${entry.id}: missing url`).toBeTruthy();
