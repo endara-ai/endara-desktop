@@ -1063,6 +1063,20 @@ describe('buildCatalogEnvAndHeaders', () => {
     expect(out).toEqual({ env: {}, headers: {} });
   });
 
+  it('trims the header name and skips blank header names', () => {
+    const padded = buildCatalogEnvAndHeaders(
+      { envVars: [{ ...headerVar, header: { name: '  X-Api-Key  ' } }] },
+      { PAT: 'raw' },
+    );
+    expect(padded.headers).toEqual({ 'X-Api-Key': 'raw' });
+
+    const blank = buildCatalogEnvAndHeaders(
+      { envVars: [{ ...headerVar, header: { name: '   ' } }] },
+      { PAT: 'raw' },
+    );
+    expect(blank).toEqual({ env: {}, headers: {} });
+  });
+
   it('uses an empty prefix when valuePrefix is absent', () => {
     const out = buildCatalogEnvAndHeaders(
       { envVars: [{ ...headerVar, header: { name: 'X-Api-Key' } }] },

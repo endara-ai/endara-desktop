@@ -60,7 +60,8 @@ export function shouldShowManualOAuthStar(entry: OAuthCatalogEntry): boolean {
  * the `env` and `headers` maps sent to the relay. Vars carrying a `header`
  * target land in `headers` under the header name with `valuePrefix`
  * prepended (e.g. `Authorization: Bearer <pat>`); all others land in `env`
- * under the var name. Values are trimmed and empty ones are skipped.
+ * under the var name. Values and header names are trimmed; empty values and
+ * blank header names are skipped.
  */
 export function buildCatalogEnvAndHeaders(
   catalog: Pick<CatalogServer, 'envVars'>,
@@ -72,7 +73,9 @@ export function buildCatalogEnvAndHeaders(
     const value = (values[ev.name] ?? '').trim();
     if (!value) continue;
     if (ev.header) {
-      headers[ev.header.name] = `${ev.header.valuePrefix ?? ''}${value}`;
+      const headerName = ev.header.name.trim();
+      if (!headerName) continue;
+      headers[headerName] = `${ev.header.valuePrefix ?? ''}${value}`;
     } else {
       env[ev.name] = value;
     }
