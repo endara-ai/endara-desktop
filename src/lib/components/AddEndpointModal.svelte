@@ -19,6 +19,7 @@
     hasMountRowErrors,
     buildMountExample,
     buildOrgBoundEndpointParams,
+    buildCatalogEnvAndHeaders,
     type AddEndpointFieldErrors,
     type AddEndpointFormSnapshot,
     type MountRow,
@@ -336,6 +337,7 @@
     transport = server.transport;
     command = server.command ?? '';
     args = (server.args ?? []).join(' ');
+    url = server.url ?? '';
     selectedOrganization = '';
     catalogEnvValues = {};
     userArgValues = server.userArgs ? server.userArgs.map(() => '') : [];
@@ -443,22 +445,19 @@
       params.url = url.trim();
     }
 
-    // Build env
-    const env: Record<string, string> = {};
-    if (selectedCatalog) {
-      for (const ev of selectedCatalog.envVars) {
-        const val = catalogEnvValues[ev.name] ?? '';
-        if (val.trim()) env[ev.name] = val.trim();
-      }
-    }
+    // Build env: catalog env vars + custom env vars
+    const catalogValues = selectedCatalog
+      ? buildCatalogEnvAndHeaders(selectedCatalog, catalogEnvValues)
+      : { env: {}, headers: {} };
+    const env: Record<string, string> = { ...catalogValues.env };
     for (const e of envVars.filter((e) => e.key.trim())) {
       env[e.key.trim()] = e.value;
     }
     if (Object.keys(env).length > 0) params.env = env;
 
-    // Build headers
+    // Build headers: catalog header-typed vars + custom headers (custom wins)
     if (transport !== 'stdio') {
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { ...catalogValues.headers };
       for (const h of headerVars.filter((h) => h.key.trim())) {
         headers[h.key.trim()] = h.value;
       }
@@ -635,13 +634,10 @@
     }
 
     // Build env: catalog env vars + custom env vars
-    const env: Record<string, string> = {};
-    if (selectedCatalog) {
-      for (const ev of selectedCatalog.envVars) {
-        const val = catalogEnvValues[ev.name] ?? '';
-        if (val.trim()) env[ev.name] = val.trim();
-      }
-    }
+    const catalogValues = selectedCatalog
+      ? buildCatalogEnvAndHeaders(selectedCatalog, catalogEnvValues)
+      : { env: {}, headers: {} };
+    const env: Record<string, string> = { ...catalogValues.env };
     const filteredEnv = envVars.filter((e) => e.key.trim());
     for (const e of filteredEnv) {
       env[e.key.trim()] = e.value;
@@ -650,9 +646,9 @@
       params.env = env;
     }
 
-    // Build headers from key-value pairs
+    // Build headers: catalog header-typed vars + custom headers (custom wins)
     if (transport !== 'stdio') {
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { ...catalogValues.headers };
       const filteredHeaders = headerVars.filter((h) => h.key.trim());
       for (const h of filteredHeaders) {
         headers[h.key.trim()] = h.value;

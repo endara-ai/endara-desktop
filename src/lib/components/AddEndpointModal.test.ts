@@ -751,10 +751,12 @@ describe('computeAddEndpointIsDirty', () => {
   });
 
   it('returns false against a catalog-prefilled baseline that is unchanged', () => {
+    // Mirrors the http GitHub catalog entry: URL prefilled, no command/args.
     const snap = makeSnapshot({
       name: 'GitHub',
-      command: 'npx',
-      args: '-y @modelcontextprotocol/server-github',
+      command: '',
+      args: '',
+      url: 'https://api.githubcopilot.com/mcp/',
       description: 'Code hosting and collaboration',
     });
     expect(computeAddEndpointIsDirty(snap, { ...snap })).toBe(false);
@@ -1083,6 +1085,74 @@ describe('buildCatalogEnvAndHeaders', () => {
     const github = CATALOG_SERVERS.find((s) => s.id === 'github')!;
     const out = buildCatalogEnvAndHeaders(github, { [github.envVars[0].name]: 'ghp_xyz' });
     expect(out).toEqual({ env: {}, headers: { Authorization: 'Bearer ghp_xyz' } });
+  });
+
+  it('produces no GITHUB_PERSONAL_ACCESS_TOKEN env var for the GitHub entry', () => {
+    const github = CATALOG_SERVERS.find((s) => s.id === 'github')!;
+    const out = buildCatalogEnvAndHeaders(github, { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_xyz' });
+    expect(out.env).not.toHaveProperty('GITHUB_PERSONAL_ACCESS_TOKEN');
+    expect(out.headers.Authorization).toBe('Bearer ghp_xyz');
+  });
+});
+
+// The modal builds its env/headers from `buildCatalogEnvAndHeaders` in both
+// the Test Connection (`buildConnectionParams`) and Add (`handleSubmit`)
+// paths, so header-typed catalog vars (GitHub PAT) reach `params.headers`.
+// Test environment is node (not jsdom), so the assertions are on the Svelte
+// source — mirrors the static-source style used elsewhere in this suite.
+describe('AddEndpointModal — catalog env/header wiring', () => {
+  it('prefills the URL from the catalog entry in selectCatalog', () => {
+    const selectCatalogBlock = addEndpointModalSource.match(
+      /function selectCatalog\(server: CatalogServer\) \{[\s\S]*?step = 'configure';/,
+    );
+    expect(selectCatalogBlock, 'expected the selectCatalog body').not.toBeNull();
+    expect(selectCatalogBlock![0]).toMatch(/url = server\.url \?\? '';/);
+    expect(selectCatalogBlock![0]).toMatch(/command = server\.command \?\? '';/);
+    expect(selectCatalogBlock![0]).toMatch(/args = \(server\.args \?\? \[\]\)\.join\(' '\);/);
+  });
+
+  it('routes catalog values through buildCatalogEnvAndHeaders in both Test Connection and Add', () => {
+    const calls = addEndpointModalSource.match(
+      /buildCatalogEnvAndHeaders\(selectedCatalog, catalogEnvValues\)/g,
+    ) ?? [];
+    expect(calls.length).toBe(2);
+    // No inline catalog env loop remains — the helper is the single source of truth.
+    expect(addEndpointModalSource).not.toMatch(/for \(const ev of selectedCatalog\.envVars\)/);
+  });
+
+  it('seeds env and headers from the helper output, with custom rows applied afterwards', () => {
+    // Catalog-derived values seed the maps; the user's custom env/header rows
+    // are spread in afterwards so a custom row wins on key collision.
+    const envSeeds = addEndpointModalSource.match(
+      /const env: Record<string, string> = \{ \.\.\.catalogValues\.env \};/g,
+    ) ?? [];
+    const headerSeeds = addEndpointModalSource.match(
+      /const headers: Record<string, string> = \{ \.\.\.catalogValues\.headers \};/g,
+    ) ?? [];
+    expect(envSeeds.length).toBe(2);
+    expect(headerSeeds.length).toBe(2);
+    expect(addEndpointModalSource).toMatch(
+      /const headers: Record<string, string> = \{ \.\.\.catalogValues\.headers \};[\s\S]*?headers\[h\.key\.trim\(\)\] = h\.value;/,
+    );
+  });
+
+  it('keeps the container toggle and volume mounts gated on the stdio transport', () => {
+    // http catalog entries (GitHub) must not show Command/Arguments or the
+    // isolation controls; both live under the stdio branch.
+    expect(addEndpointModalSource).toMatch(
+      /\{#if transport === 'stdio'\}[\s\S]*?id="modal-ep-cmd"[\s\S]*?id="modal-ep-args"[\s\S]*?id="modal-ep-isolation"[\s\S]*?\{:else if transport === 'oauth'\}/,
+    );
+    expect(addEndpointModalSource).toMatch(
+      /let showMounts = \$derived\(transport === 'stdio' && isolationEnabled && !catalogNotContainerizable\);/,
+    );
+  });
+
+  it('still shows the API Key chip for the GitHub catalog entry', () => {
+    const github = CATALOG_SERVERS.find((s) => s.id === 'github')!;
+    expect(github.envVars.some((e) => e.required)).toBe(true);
+    expect(addEndpointModalSource).toMatch(
+      /\{#if server\.envVars\.some\(e => e\.required\)\}[\s\S]*?API Key/,
+    );
   });
 });
 
