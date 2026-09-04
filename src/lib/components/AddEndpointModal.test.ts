@@ -21,6 +21,7 @@ import {
   buildMountExample,
   buildOrgBoundEndpointParams,
   orgBindingApplies,
+  buildCatalogEnvAndHeaders,
   MOUNT_EXAMPLE_FALLBACK_HOST,
   type AddEndpointFieldErrors,
   type AddEndpointFormSnapshot,
@@ -1020,6 +1021,68 @@ describe('catalog containerizable flags', () => {
         expect(s.containerNote!.trim().length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe('buildCatalogEnvAndHeaders', () => {
+  const plainVar = { name: 'API_KEY', label: 'API Key', required: true, secret: true };
+  const headerVar = {
+    name: 'PAT',
+    label: 'Personal Access Token',
+    required: true,
+    secret: true,
+    header: { name: 'Authorization', valuePrefix: 'Bearer ' },
+  };
+
+  it('routes a header-typed var to headers with its prefix', () => {
+    const out = buildCatalogEnvAndHeaders({ envVars: [headerVar] }, { PAT: 'ghp_abc' });
+    expect(out.headers).toEqual({ Authorization: 'Bearer ghp_abc' });
+    expect(out.env).toEqual({});
+  });
+
+  it('routes a plain var to env', () => {
+    const out = buildCatalogEnvAndHeaders({ envVars: [plainVar] }, { API_KEY: 'k123' });
+    expect(out.env).toEqual({ API_KEY: 'k123' });
+    expect(out.headers).toEqual({});
+  });
+
+  it('trims values and skips empty ones', () => {
+    const out = buildCatalogEnvAndHeaders(
+      { envVars: [plainVar, headerVar] },
+      { API_KEY: '  k123  ', PAT: '   ' },
+    );
+    expect(out.env).toEqual({ API_KEY: 'k123' });
+    expect(out.headers).toEqual({});
+  });
+
+  it('skips vars with no entered value', () => {
+    const out = buildCatalogEnvAndHeaders({ envVars: [plainVar, headerVar] }, {});
+    expect(out).toEqual({ env: {}, headers: {} });
+  });
+
+  it('uses an empty prefix when valuePrefix is absent', () => {
+    const out = buildCatalogEnvAndHeaders(
+      { envVars: [{ ...headerVar, header: { name: 'X-Api-Key' } }] },
+      { PAT: 'raw' },
+    );
+    expect(out.headers).toEqual({ 'X-Api-Key': 'raw' });
+  });
+
+  it('splits a mixed set into env and headers', () => {
+    const out = buildCatalogEnvAndHeaders(
+      { envVars: [plainVar, headerVar] },
+      { API_KEY: 'k123', PAT: 'ghp_abc' },
+    );
+    expect(out).toEqual({
+      env: { API_KEY: 'k123' },
+      headers: { Authorization: 'Bearer ghp_abc' },
+    });
+  });
+
+  it('maps the catalog GitHub entry PAT to an Authorization bearer header', () => {
+    const github = CATALOG_SERVERS.find((s) => s.id === 'github')!;
+    const out = buildCatalogEnvAndHeaders(github, { [github.envVars[0].name]: 'ghp_xyz' });
+    expect(out).toEqual({ env: {}, headers: { Authorization: 'Bearer ghp_xyz' } });
   });
 });
 

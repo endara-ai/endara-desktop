@@ -19,9 +19,47 @@ describe('CATALOG_SERVERS validation', () => {
       expect(entry.id, `entry missing id`).toBeTruthy();
       expect(entry.name, `${entry.id}: missing name`).toBeTruthy();
       expect(entry.description, `${entry.id}: missing description`).toBeTruthy();
-      expect(entry.command, `${entry.id}: missing command`).toBeTruthy();
       expect(entry.icon, `${entry.id}: missing icon`).toBeTruthy();
     }
+  });
+
+  it('stdio entries have a command and a non-empty args array', () => {
+    for (const entry of CATALOG_SERVERS.filter((e) => e.transport === 'stdio')) {
+      expect(entry.command, `${entry.id}: missing command`).toBeTruthy();
+      expect(entry.args, `${entry.id}: args should be an array`).toBeInstanceOf(Array);
+      expect(entry.args!.length, `${entry.id}: args should not be empty`).toBeGreaterThan(0);
+    }
+  });
+
+  it('http/sse entries have a non-empty url', () => {
+    for (const entry of CATALOG_SERVERS.filter((e) => e.transport !== 'stdio')) {
+      expect(entry.url, `${entry.id}: missing url`).toBeTruthy();
+      expect(entry.url!.trim().length, `${entry.id}: url should not be blank`).toBeGreaterThan(0);
+    }
+  });
+
+  it('no entry references the deprecated stdio GitHub server', () => {
+    for (const entry of CATALOG_SERVERS) {
+      expect(entry.args ?? [], `${entry.id}: references @modelcontextprotocol/server-github`).not.toContain(
+        '@modelcontextprotocol/server-github'
+      );
+    }
+  });
+
+  it('GitHub entry is the remote HTTP server with a bearer-header PAT', () => {
+    const github = CATALOG_SERVERS.find((e) => e.id === 'github');
+    expect(github).toBeDefined();
+    expect(github!.transport).toBe('http');
+    expect(github!.url).toBe('https://api.githubcopilot.com/mcp/');
+    expect(github!.command).toBeUndefined();
+    expect(github!.args).toBeUndefined();
+    expect(github!.envVars).toHaveLength(1);
+    const pat = github!.envVars[0];
+    expect(pat.label).toBe('Personal Access Token');
+    expect(pat.required).toBe(true);
+    expect(pat.secret).toBe(true);
+    expect(pat.helpUrl).toBe('https://github.com/settings/tokens');
+    expect(pat.header).toEqual({ name: 'Authorization', valuePrefix: 'Bearer ' });
   });
 
   it('no duplicate IDs', () => {
@@ -50,12 +88,6 @@ describe('CATALOG_SERVERS validation', () => {
     }
   });
 
-  it('all entries have a non-empty args array', () => {
-    for (const entry of CATALOG_SERVERS) {
-      expect(entry.args, `${entry.id}: args should be an array`).toBeInstanceOf(Array);
-      expect(entry.args.length, `${entry.id}: args should not be empty`).toBeGreaterThan(0);
-    }
-  });
 });
 
 // --- Slow tests (network, run on demand with RUN_LIVE_TESTS=1) ---
@@ -93,7 +125,7 @@ function collectHelpUrls(): { id: string; url: string }[] {
 }
 
 describe.skipIf(!RUN_LIVE)('live package validation', () => {
-  it.each(npxEntries.map((e) => [e.id, extractNpmPackage(e.args)]))(
+  it.each(npxEntries.map((e) => [e.id, extractNpmPackage(e.args ?? [])]))(
     'npm package for %s (%s) exists',
     async (_id, pkg) => {
       expect(pkg).toBeTruthy();
@@ -103,7 +135,7 @@ describe.skipIf(!RUN_LIVE)('live package validation', () => {
     15_000
   );
 
-  it.each(uvxEntries.map((e) => [e.id, extractPypiPackage(e.args)]))(
+  it.each(uvxEntries.map((e) => [e.id, extractPypiPackage(e.args ?? [])]))(
     'pypi package for %s (%s) exists',
     async (_id, pkg) => {
       expect(pkg).toBeTruthy();

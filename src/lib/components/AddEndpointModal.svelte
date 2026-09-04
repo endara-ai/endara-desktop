@@ -334,8 +334,8 @@
     prefix = sanitizeName(server.name);
     description = server.description;
     transport = server.transport;
-    command = server.command;
-    args = server.args.join(' ');
+    command = server.command ?? '';
+    args = (server.args ?? []).join(' ');
     selectedOrganization = '';
     catalogEnvValues = {};
     userArgValues = server.userArgs ? server.userArgs.map(() => '') : [];

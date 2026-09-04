@@ -1,4 +1,5 @@
 import type { OAuthCatalogEntry } from '$lib/data/oauth-catalog';
+import type { CatalogServer } from '$lib/catalog';
 import type { AddEndpointParams, EmaAuthConfig } from '$lib/api';
 
 export type ScopeMode = 'free' | 'checkbox';
@@ -52,6 +53,31 @@ export function buildScopesPayload(
  */
 export function shouldShowManualOAuthStar(entry: OAuthCatalogEntry): boolean {
   return entry.supportsDcr === false;
+}
+
+/**
+ * Splits the values the user entered for a catalog entry's config vars into
+ * the `env` and `headers` maps sent to the relay. Vars carrying a `header`
+ * target land in `headers` under the header name with `valuePrefix`
+ * prepended (e.g. `Authorization: Bearer <pat>`); all others land in `env`
+ * under the var name. Values are trimmed and empty ones are skipped.
+ */
+export function buildCatalogEnvAndHeaders(
+  catalog: Pick<CatalogServer, 'envVars'>,
+  values: Record<string, string>,
+): { env: Record<string, string>; headers: Record<string, string> } {
+  const env: Record<string, string> = {};
+  const headers: Record<string, string> = {};
+  for (const ev of catalog.envVars) {
+    const value = (values[ev.name] ?? '').trim();
+    if (!value) continue;
+    if (ev.header) {
+      headers[ev.header.name] = `${ev.header.valuePrefix ?? ''}${value}`;
+    } else {
+      env[ev.name] = value;
+    }
+  }
+  return { env, headers };
 }
 
 /** Total wall-clock budget for OAuth setup polling, in milliseconds. */

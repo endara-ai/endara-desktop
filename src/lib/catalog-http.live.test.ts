@@ -18,6 +18,12 @@ const remoteEntries = CATALOG_SERVERS.filter(
   (e) => (e.transport === 'http' || e.transport === 'sse') && !!e.url
 );
 
+// Subset that can be probed anonymously: entries requiring a config var
+// (e.g. GitHub's bearer-header PAT) reject an unauthenticated `tools/list`.
+const anonymousRemoteEntries = remoteEntries.filter(
+  (e) => !e.envVars.some((ev) => ev.required)
+);
+
 const MCP_PROTOCOL_VERSION = '2025-03-26';
 
 interface JsonRpcResponse {
@@ -108,17 +114,18 @@ async function listTools(url: string): Promise<any> {
 // --- Live tests (network, run on demand with RUN_LIVE_TESTS=1) ---
 
 describe.skipIf(!RUN_LIVE)('live HTTP catalog tools listing', () => {
-  // Today the catalog has zero plain-http/sse entries with a URL; this
-  // placeholder keeps the suite green while proving the filter ran.
+  // The anonymous subset may be empty (e.g. only GitHub, which needs a PAT);
+  // this placeholder keeps the suite green while proving the filter ran.
   it('filters http/sse catalog entries with a url', () => {
     expect(Array.isArray(remoteEntries)).toBe(true);
     for (const entry of remoteEntries) {
       expect(entry.url, `${entry.id}: url should be non-empty`).toBeTruthy();
     }
+    expect(Array.isArray(anonymousRemoteEntries)).toBe(true);
   });
 
-  if (remoteEntries.length > 0) {
-    it.each(remoteEntries.map((e) => [e.id, e.url!]))(
+  if (anonymousRemoteEntries.length > 0) {
+    it.each(anonymousRemoteEntries.map((e) => [e.id, e.url!]))(
       'tools/list for %s (%s) returns tools',
       async (_id, url) => {
         const result = await listTools(url);
