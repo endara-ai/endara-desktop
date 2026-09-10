@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "endara-desktop"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "arc-swap",
  "dirs 5.0.1",
