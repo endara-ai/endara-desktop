@@ -33,6 +33,7 @@
   import { fetchJsExecutionMode, toggleJsExecutionMode } from '$lib/jsExecutionModeUi';
   import { fetchToonOutput, toggleToonOutput } from '$lib/toonOutputUi';
   import { fetchWriteDirs, addWriteDir, removeWriteDir } from '$lib/writeDirsUi';
+  import { guardInFlight } from '$lib/inFlightGuard';
   import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
   import { checkAndAutoDownload, restartApp, getUpdateChannel, setUpdateChannel } from '$lib/updater';
   import { onMount, onDestroy } from 'svelte';
@@ -140,13 +141,14 @@
     }
   }
 
-  async function fetchRelayStatus() {
+  // Skip a tick while the previous fetch is still in flight (no overlapping calls).
+  const fetchRelayStatus = guardInFlight(async () => {
     try {
       relayStatus = await getStatus();
     } catch {
       relayStatus = null;
     }
-  }
+  });
 
   function formatUptime(seconds: number): string {
     if (seconds < 60) return `${Math.floor(seconds)}s`;

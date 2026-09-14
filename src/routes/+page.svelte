@@ -19,6 +19,7 @@
   } from '$lib/stores/unsavedChangesGuard';
   import { getEndpoints, getOAuthStatus } from '$lib/api';
   import { initRelayLogListener } from '$lib/logListener';
+  import { guardInFlight } from '$lib/inFlightGuard';
   import { applyGoToEndpoint } from '$lib/components/relay-logs-helpers';
   import { getActiveTopLevelTab, getVisibleTopLevelTabs, shouldShowRelayStartupFailure, shouldSkipEndpointPolling } from '$lib/relaySidecarUi';
   import { deriveTrayHealth, describeTrayHealthIssue, createTrayHealthDispatcher } from '$lib/tray-health';
@@ -88,7 +89,11 @@
     trayHealthDispatcher.dispatch(health, detail);
   });
 
-  async function pollEndpoints() {
+  // Guarded so a slow relay/IPC cannot stack overlapping polls; a tick that
+  // fires while the previous one is still awaiting is skipped.
+  const pollEndpoints = guardInFlight(pollEndpointsTick);
+
+  async function pollEndpointsTick() {
     const currentStatus = get(relaySidecarStatus);
     // If sidecar failed (e.g., port conflict), don't poll — we're not managing what's on that port.
     // Treat that as a definitive load so the UI can route to the failure screen instead of

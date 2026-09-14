@@ -359,10 +359,10 @@ fn update_hit_rects_click_catcher(app: &AppHandle, state: &OverlayHitState, rect
 
     let mut poller = state.poller.lock().expect("poller mutex poisoned");
     if empty {
-        log::info!(target: "overlay", "update_hit_rects (macos): 0 rect(s) aborting poller");
+        log::debug!(target: "overlay", "update_hit_rects (macos): 0 rect(s) aborting poller");
         if let Some(task) = poller.take() {
             task.abort();
-            log::info!(target: "overlay", "click-catcher poller aborted");
+            log::debug!(target: "overlay", "click-catcher poller aborted");
         }
         // Fail-safe: the poller may have left the panel interactive (cursor was
         // inside a card when it vanished) — restore full click-through.
@@ -374,7 +374,7 @@ fn update_hit_rects_click_catcher(app: &AppHandle, state: &OverlayHitState, rect
     if running {
         return;
     }
-    log::info!(target: "overlay", "update_hit_rects (macos): {count} rect(s) ensuring poller");
+    log::debug!(target: "overlay", "update_hit_rects (macos): {count} rect(s) ensuring poller");
     let app = app.clone();
     let rects = Arc::clone(&state.rects);
     *poller = Some(tokio::spawn(async move {
@@ -407,7 +407,7 @@ fn transition(prev: bool, curr: bool) -> Option<bool> {
 /// list empties.
 #[cfg(target_os = "macos")]
 async fn click_catcher_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>>>) {
-    log::info!(target: "overlay", "click-catcher poller spawning");
+    log::debug!(target: "overlay", "click-catcher poller spawning");
     // Reset the panel to the click-through baseline so `inside_prev = false` is
     // truthful w.r.t. the panel's actual state at loop entry. A prior poller may
     // have left the panel interactive (`setIgnoresMouseEvents(false)`, cursor
@@ -417,7 +417,7 @@ async fn click_catcher_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>
     // boundary. This unconditional reset matches the panel's construction-time
     // default and cannot be exercised in a unit test without a real AppKit panel.
     macos_click_catcher::set_ignore_mouse_events(&app, true);
-    log::info!(target: "overlay", "poller spawn: reset setIgnoresMouseEvents(true) baseline");
+    log::debug!(target: "overlay", "poller spawn: reset setIgnoresMouseEvents(true) baseline");
     let mut inside_prev = false;
     let mut first_eval = true;
     // Evaluate cursor/rects and apply the toggle BEFORE the first sleep, then
@@ -441,13 +441,13 @@ async fn click_catcher_poll_loop(app: AppHandle, rects: Arc<ArcSwap<Vec<HitRect>
             _ => (false, 0.0, 0.0, PhysicalPosition::new(0, 0)),
         };
         if first_eval {
-            log::info!(target: "overlay", "poller initial eval: inside={inside} (before first sleep)");
+            log::debug!(target: "overlay", "poller initial eval: inside={inside} (before first sleep)");
             first_eval = false;
         }
         if let Some(ignore) = transition(inside_prev, inside) {
             let count = rects.load().len();
             macos_click_catcher::set_ignore_mouse_events(&app, ignore);
-            log::info!(
+            log::debug!(
                 target: "overlay",
                 "click-catcher transition: inside={inside} -> setIgnoresMouseEvents({ignore}); cursor=({vx:.1},{vy:.1}) panel_origin=({},{}) rects={count}",
                 origin.x,

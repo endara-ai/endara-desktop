@@ -1,8 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RelayStatus, Endpoint, Tool, EndpointLogs, CatalogEntry, OAuthStatus, OAuthStartResult, OAuthSetupResponse, OAuthSetupStatusResponse, CallsResponse, CallDetail, AggregatesResponse, ObservabilityConfig, OAuthProbeResult, IdpProvider, Organization, OrganizationSsoResponse, OrgProbeResponse } from './types';
+import { mgmtTelemetry, uiLog } from './uiTelemetry';
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY = 1000;
+/**
+ * The Rust side of `mgmt_api_request` enforces a 15 s timeout, so an invoke
+ * still pending after this long means the IPC bridge itself is not answering.
+ */
+export const SLOW_MGMT_REQUEST_MS = 20_000;
 
 interface ApiResponse {
   status: number;
@@ -20,11 +26,27 @@ async function mgmtRequest(
   path: string,
   body?: unknown,
 ): Promise<ApiResponse> {
-  return await invoke<ApiResponse>('mgmt_api_request', {
-    method,
-    path: `/api${path}`,
-    body: body === undefined ? null : body,
-  });
+  const fullPath = `/api${path}`;
+  const startedAt = performance.now();
+  mgmtTelemetry.begin();
+  // Armed as a timer (not measured after the fact) so a call that never
+  // resolves still produces exactly one line of evidence. Mirrored to the
+  // webview console because a stuck IPC bridge may drop the `ui_log` itself.
+  const slowWarn = setTimeout(() => {
+    const message = `mgmt_api_request ${method} ${fullPath} still pending after ${SLOW_MGMT_REQUEST_MS}ms (in-flight=${mgmtTelemetry.inFlight})`;
+    console.warn(`[ui] ${message}`);
+    uiLog('warn', message);
+  }, SLOW_MGMT_REQUEST_MS);
+  try {
+    return await invoke<ApiResponse>('mgmt_api_request', {
+      method,
+      path: fullPath,
+      body: body === undefined ? null : body,
+    });
+  } finally {
+    clearTimeout(slowWarn);
+    mgmtTelemetry.end(performance.now() - startedAt);
+  }
 }
 
 async function fetchJson<T>(path: string, options?: { method?: string; body?: unknown }): Promise<T> {

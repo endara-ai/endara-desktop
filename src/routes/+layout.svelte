@@ -5,6 +5,7 @@
   import { checkAndAutoDownload, listenForUpdateChecks } from '$lib/updater';
   import { activeTopLevelTab } from '$lib/stores';
   import { refreshOrganizations } from '$lib/stores/organizations';
+  import { startUiTelemetry } from '$lib/uiTelemetry';
   import { Toaster } from 'svelte-sonner';
   import OrgExpiryBanner from '$lib/components/OrgExpiryBanner.svelte';
 
@@ -27,6 +28,10 @@
 
   onMount(() => {
     if (isOverlayWindow) return;
+
+    // Main-window health evidence: heartbeat acks, periodic `[ui]` health
+    // line, and uncaught-error forwarding to the desktop log.
+    const stopUiTelemetry = startUiTelemetry();
 
     // Check for updates and auto-download 5s after launch
     const initialTimeout = setTimeout(() => checkAndAutoDownload(), 5000);
@@ -54,6 +59,7 @@
     }, ORG_POLL_INTERVAL_MS);
 
     return () => {
+      stopUiTelemetry();
       clearTimeout(initialTimeout);
       clearInterval(interval);
       clearInterval(orgPollInterval);

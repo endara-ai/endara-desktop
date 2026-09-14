@@ -3,6 +3,7 @@ mod overlay;
 mod relaunch;
 mod sse;
 mod tray;
+mod ui_watchdog;
 mod webview_recovery;
 
 use std::collections::HashMap;
@@ -2720,6 +2721,7 @@ pub fn run() {
         .manage(UpdaterBackoffState::default())
         .manage(overlay::OverlaySubscriberState::default())
         .manage(overlay::OverlayHitState::default())
+        .manage(ui_watchdog::UiWatchdogState::default())
         .invoke_handler(tauri::generate_handler![
             start_relay,
             stop_relay,
@@ -2761,6 +2763,8 @@ pub fn run() {
             get_overlay_settings,
             set_overlay_settings,
             focus_main_window_on_call,
+            ui_watchdog::ui_log,
+            ui_watchdog::ui_heartbeat_ack,
         ])
         .setup(move |app| {
             log::info!(
@@ -2815,6 +2819,8 @@ pub fn run() {
             )?;
             let update_item =
                 MenuItem::with_id(app, "check_update", "Check for Updates", true, None::<&str>)?;
+            let reload_ui_item =
+                MenuItem::with_id(app, "reload_ui", "Reload UI", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
             let menu = Menu::with_items(
@@ -2824,6 +2830,7 @@ pub fn run() {
                     &open_item,
                     &overlay_toggle_item,
                     &update_item,
+                    &reload_ui_item,
                     &quit_item,
                 ],
             )?;
@@ -2896,6 +2903,21 @@ pub fn run() {
                         // Show in Cmd-Tab and Dock
                         #[cfg(target_os = "macos")]
                         set_macos_activation_policy(true);
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "reload_ui" => {
+                        log::info!("tray menu action=reload_ui");
+                        // Escape hatch for a frozen page: reload the main
+                        // webview and bring the window forward so the user
+                        // sees the result.
+                        #[cfg(target_os = "macos")]
+                        set_macos_activation_policy(true);
+                        if let Err(e) = ui_watchdog::reload_main_webview_manual(app) {
+                            log::warn!("[ui] reload failed trigger=tray error={}", e);
+                        }
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -2982,6 +3004,11 @@ pub fn run() {
                 log::warn!("[webview] main window missing at setup; crash-recovery not installed");
             }
 
+            // Start the UI heartbeat watchdog: emits `ui-heartbeat` to the
+            // main webview every 30 s and reloads the page if it stops
+            // answering while visible (see `ui_watchdog`).
+            ui_watchdog::spawn_heartbeat(app.handle().clone());
+
             if overlay_cfg.enabled {
                 match overlay::build_overlay_window(app.handle(), &overlay_cfg) {
                     Ok(_) => log::info!(
@@ -3013,6 +3040,15 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // A stalled main window regaining focus (tray "Open", Dock click,
+            // Cmd-Tab) is the "next show" the watchdog waits for before it
+            // reloads a page that stalled while hidden.
+            if let tauri::WindowEvent::Focused(true) = event {
+                if window.label() == "main" {
+                    ui_watchdog::on_main_window_focused(window.app_handle());
+                }
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // The overlay window is owned by the app lifecycle (toggled
                 // via the Settings tray); close-requested on it (e.g. via
