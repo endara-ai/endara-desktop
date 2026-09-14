@@ -755,6 +755,14 @@ mod tests {
         p.tick(t0, VISIBLE);
         let o = miss_ticks(&mut p, t0, 1, 3, VISIBLE);
         assert_eq!(o.reload, ReloadDecision::Reload);
+        // A focus tick racing the in-flight reload (before it is recorded)
+        // hits the PROBE_MIN_AGE gate and must not propose a second reload.
+        let o = p.tick(
+            t0 + HEARTBEAT_INTERVAL * 3 + Duration::from_secs(2),
+            VISIBLE,
+        );
+        assert!(!o.emit);
+        assert_eq!(o.reload, ReloadDecision::None);
         // reload_main_webview failed: nothing is recorded, so the attempt
         // neither starts the cooldown nor spends the consecutive budget.
         let o = miss_ticks(&mut p, t0, 4, 1, VISIBLE);
