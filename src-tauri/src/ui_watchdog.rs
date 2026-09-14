@@ -85,6 +85,9 @@ pub enum DeferReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReloadDecision {
     None,
+    /// Reload now. The policy does not count the reload until the caller
+    /// confirms it succeeded via [`UiWatchdogPolicy::record_reload`]; a
+    /// failed attempt is retried on the next tick.
     Reload,
     /// Reload is warranted but withheld; `Some` only when the reason differs
     /// from the previously reported one so callers can log it once.
@@ -243,13 +246,18 @@ impl UiWatchdogPolicy {
                 self.last_defer_reported = Some(reason);
                 ReloadDecision::Deferred(changed.then_some(reason))
             }
-            None => {
-                self.last_reload_at = Some(now);
-                self.consecutive_reloads += 1;
-                self.last_defer_reported = None;
-                ReloadDecision::Reload
-            }
+            None => ReloadDecision::Reload,
         }
+    }
+
+    /// The reload proposed by [`tick`](Self::tick) succeeded: start the
+    /// cooldown and count it towards [`RELOAD_MAX_CONSECUTIVE`]. Not calling
+    /// this after a failed reload leaves the budget untouched so the next
+    /// tick tries again.
+    pub fn record_reload(&mut self, now: Instant) {
+        self.last_reload_at = Some(now);
+        self.consecutive_reloads += 1;
+        self.last_defer_reported = None;
     }
 
     /// The frontend answered heartbeat `seq`. Any ack proves the page is
@@ -452,8 +460,15 @@ fn run_tick(app: &AppHandle) {
         ReloadDecision::Deferred(None) => {}
         ReloadDecision::Reload => {
             log::warn!("[ui] reloading stalled webview trigger=watchdog");
-            if let Err(e) = reload_main_webview(app) {
-                log::warn!("[ui] reload failed trigger=watchdog error={}", e);
+            match reload_main_webview(app) {
+                Ok(()) => {
+                    let mut policy = match state.policy.lock() {
+                        Ok(p) => p,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    policy.record_reload(now);
+                }
+                Err(e) => log::warn!("[ui] reload failed trigger=watchdog error={}", e),
             }
         }
     }
@@ -604,6 +619,16 @@ mod tests {
         last.unwrap()
     }
 
+    /// Tick and, when a reload is decided, record it as succeeded — what
+    /// `run_tick` does when `reload_main_webview` returns `Ok`.
+    fn tick_reloading(p: &mut UiWatchdogPolicy, at: Instant, w: WindowSnapshot) -> TickOutcome {
+        let o = p.tick(at, w);
+        if o.reload == ReloadDecision::Reload {
+            p.record_reload(at);
+        }
+        o
+    }
+
     fn is_stalled(t: &TickOutcome) -> bool {
         matches!(t.transition, Some(Transition::Stalled(_)))
     }
@@ -704,6 +729,7 @@ mod tests {
         let o = miss_ticks(&mut p, t0, 1, 3, VISIBLE);
         assert!(is_stalled(&o));
         assert_eq!(o.reload, ReloadDecision::Reload);
+        p.record_reload(t0 + HEARTBEAT_INTERVAL * 3);
 
         // Still stalled inside the cooldown: rate-limited, reported once.
         let o = miss_ticks(&mut p, t0, 4, 1, VISIBLE);
@@ -720,6 +746,42 @@ mod tests {
         let ticks_per_cooldown = (RELOAD_COOLDOWN.as_secs() / HEARTBEAT_INTERVAL.as_secs()) as u32;
         let o = p.tick(t0 + HEARTBEAT_INTERVAL * (3 + ticks_per_cooldown), VISIBLE);
         assert_eq!(o.reload, ReloadDecision::Reload);
+    }
+
+    #[test]
+    fn failed_reload_is_not_counted_and_is_retried_next_tick() {
+        let mut p = UiWatchdogPolicy::new();
+        let t0 = Instant::now();
+        p.tick(t0, VISIBLE);
+        let o = miss_ticks(&mut p, t0, 1, 3, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Reload);
+        // A focus tick racing the in-flight reload (before it is recorded)
+        // hits the PROBE_MIN_AGE gate and must not propose a second reload.
+        let o = p.tick(
+            t0 + HEARTBEAT_INTERVAL * 3 + Duration::from_secs(2),
+            VISIBLE,
+        );
+        assert!(!o.emit);
+        assert_eq!(o.reload, ReloadDecision::None);
+        // reload_main_webview failed: nothing is recorded, so the attempt
+        // neither starts the cooldown nor spends the consecutive budget.
+        let o = miss_ticks(&mut p, t0, 4, 1, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Reload);
+
+        // Failing more often than the budget still does not give up.
+        let o = miss_ticks(&mut p, t0, 5, RELOAD_MAX_CONSECUTIVE + 1, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Reload);
+
+        // Once a reload succeeds the cooldown applies from that moment on.
+        let succeeded_at = t0 + HEARTBEAT_INTERVAL * (5 + RELOAD_MAX_CONSECUTIVE);
+        p.record_reload(succeeded_at);
+        let o = p.tick(succeeded_at + HEARTBEAT_INTERVAL, VISIBLE);
+        assert_eq!(
+            o.reload,
+            ReloadDecision::Deferred(Some(DeferReason::RateLimited {
+                retry_in: RELOAD_COOLDOWN - HEARTBEAT_INTERVAL
+            }))
+        );
     }
 
     #[test]
@@ -865,11 +927,12 @@ mod tests {
         p.tick(t0, VISIBLE);
         let o = miss_ticks(&mut p, t0, 1, 3, VISIBLE);
         assert_eq!(o.reload, ReloadDecision::Reload);
+        p.record_reload(t0 + HEARTBEAT_INTERVAL * 3);
 
         let mut tick = 3;
         for _ in 1..RELOAD_MAX_CONSECUTIVE {
             tick += ticks_per_cooldown;
-            let o = p.tick(t0 + HEARTBEAT_INTERVAL * tick, VISIBLE);
+            let o = tick_reloading(&mut p, t0 + HEARTBEAT_INTERVAL * tick, VISIBLE);
             assert_eq!(o.reload, ReloadDecision::Reload);
         }
 
@@ -906,11 +969,13 @@ mod tests {
         let t0 = Instant::now();
         let ticks_per_cooldown = (RELOAD_COOLDOWN.as_secs() / HEARTBEAT_INTERVAL.as_secs()) as u32;
         p.tick(t0, VISIBLE);
-        miss_ticks(&mut p, t0, 1, 3, VISIBLE);
+        let o = miss_ticks(&mut p, t0, 1, 3, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Reload);
+        p.record_reload(t0 + HEARTBEAT_INTERVAL * 3);
         let mut tick = 3;
         for _ in 0..RELOAD_MAX_CONSECUTIVE {
             tick += ticks_per_cooldown;
-            p.tick(t0 + HEARTBEAT_INTERVAL * tick, VISIBLE);
+            tick_reloading(&mut p, t0 + HEARTBEAT_INTERVAL * tick, VISIBLE);
         }
         assert!(matches!(
             p.tick(t0 + HEARTBEAT_INTERVAL * (tick + 1), VISIBLE).reload,
