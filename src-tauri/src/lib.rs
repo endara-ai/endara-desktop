@@ -2915,7 +2915,7 @@ pub fn run() {
                         // sees the result.
                         #[cfg(target_os = "macos")]
                         set_macos_activation_policy(true);
-                        if let Err(e) = ui_watchdog::reload_main_webview(app) {
+                        if let Err(e) = ui_watchdog::reload_main_webview_manual(app) {
                             log::warn!("[ui] reload failed trigger=tray error={}", e);
                         }
                         if let Some(window) = app.get_webview_window("main") {

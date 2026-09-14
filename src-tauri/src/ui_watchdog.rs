@@ -253,6 +253,14 @@ impl UiWatchdogPolicy {
         }
     }
 
+    /// A reload happened outside the policy's own decision (tray "Reload UI").
+    /// It counts against the cooldown so the watchdog does not reload the
+    /// freshly loaded page again before it has had a chance to ack.
+    pub fn note_reload(&mut self, now: Instant) {
+        self.last_reload_at = Some(now);
+        self.last_defer_reported = None;
+    }
+
     fn stall_report(&self, now: Instant, window: WindowSnapshot) -> StallReport {
         StallReport {
             missed: self.missed,
@@ -317,6 +325,20 @@ pub fn reload_main_webview(app: &AppHandle) -> Result<(), String> {
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| "main window not found".to_string())?;
     window.reload().map_err(|e| e.to_string())
+}
+
+/// Reload the main webview on the user's behalf (tray "Reload UI") and start
+/// the watchdog's reload cooldown so it does not immediately reload again.
+pub fn reload_main_webview_manual(app: &AppHandle) -> Result<(), String> {
+    reload_main_webview(app)?;
+    if let Some(state) = app.try_state::<UiWatchdogState>() {
+        let mut policy = match state.policy.lock() {
+            Ok(p) => p,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        policy.note_reload(Instant::now());
+    }
+    Ok(())
 }
 
 fn log_transition(transition: Transition) {
@@ -694,6 +716,42 @@ mod tests {
         let o = miss_ticks(&mut p, t0, 5, 1, VISIBLE);
         assert_eq!(o.reload, ReloadDecision::None);
         assert!(o.transition.is_none());
+    }
+
+    #[test]
+    fn manual_reload_starts_cooldown_so_watchdog_does_not_reload_again() {
+        let mut p = UiWatchdogPolicy::new();
+        let t0 = Instant::now();
+        p.tick(t0, HIDDEN);
+        miss_ticks(&mut p, t0, 1, 3, HIDDEN);
+        assert!(p.is_stalled());
+        // User picks tray "Reload UI"; the window is shown and focused.
+        let reload_at = t0 + HEARTBEAT_INTERVAL * 3 + Duration::from_secs(5);
+        p.note_reload(reload_at);
+        // Focus tick: outstanding heartbeat was sent hidden → visible probe.
+        let o = p.tick(reload_at, VISIBLE);
+        assert_eq!(
+            o.reload,
+            ReloadDecision::Deferred(Some(DeferReason::AwaitingVisibleProbe))
+        );
+        // The probe emitted mid-reload is lost; the next tick must not reload
+        // the freshly loaded page again while the cooldown is running.
+        let o = p.tick(reload_at + HEARTBEAT_INTERVAL, VISIBLE);
+        assert!(matches!(
+            o.reload,
+            ReloadDecision::Deferred(Some(DeferReason::RateLimited { .. }))
+        ));
+        // The reloaded page acks → recovered without a second reload.
+        let ack = p.on_ack(
+            o.seq,
+            reload_at + HEARTBEAT_INTERVAL + Duration::from_millis(10),
+        );
+        assert!(matches!(ack.transition, Some(Transition::Recovered { .. })));
+        // Once the cooldown has elapsed a fresh visible stall reloads normally.
+        let later = reload_at + RELOAD_COOLDOWN;
+        p.tick(later, VISIBLE);
+        let o = miss_ticks(&mut p, later, 1, 3, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Reload);
     }
 
     #[test]
