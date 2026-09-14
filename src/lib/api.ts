@@ -30,12 +30,12 @@ async function mgmtRequest(
   const startedAt = performance.now();
   mgmtTelemetry.begin();
   // Armed as a timer (not measured after the fact) so a call that never
-  // resolves still produces exactly one line of evidence.
+  // resolves still produces exactly one line of evidence. Mirrored to the
+  // webview console because a stuck IPC bridge may drop the `ui_log` itself.
   const slowWarn = setTimeout(() => {
-    uiLog(
-      'warn',
-      `mgmt_api_request ${method} ${fullPath} still pending after ${SLOW_MGMT_REQUEST_MS}ms (in-flight=${mgmtTelemetry.inFlight})`,
-    );
+    const message = `mgmt_api_request ${method} ${fullPath} still pending after ${SLOW_MGMT_REQUEST_MS}ms (in-flight=${mgmtTelemetry.inFlight})`;
+    console.warn(`[ui] ${message}`);
+    uiLog('warn', message);
   }, SLOW_MGMT_REQUEST_MS);
   try {
     return await invoke<ApiResponse>('mgmt_api_request', {

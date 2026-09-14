@@ -5,7 +5,8 @@ import { listen } from '@tauri-apps/api/event';
 // - Rust emits `ui-heartbeat` { seq, sent_at_ms } to the main webview every 30 s.
 // - We answer with `ui_heartbeat_ack(seq)` and, once per 5 minutes, append one
 //   `[ui]` INFO health line to the desktop log via `ui_log(level, message)`.
-// - Uncaught errors / unhandled rejections are forwarded via `ui_log` at ERROR.
+// - Uncaught errors / unhandled rejections are forwarded via `ui_log` at ERROR,
+//   deduplicated per minute and capped at `ERROR_LOG_LIMIT_PER_MINUTE`.
 // Everything here is best-effort: a failing `invoke` must never throw into the
 // caller, because these hooks run inside pollers and global error handlers.
 
@@ -13,7 +14,8 @@ export type UiLogLevel = 'error' | 'warn' | 'info' | 'debug';
 export type UiLogFn = (level: UiLogLevel, message: string) => void;
 
 export const HEALTH_LOG_INTERVAL_MS = 5 * 60_000;
-export const ERROR_LOG_LIMIT_PER_MINUTE = 20;
+export const ERROR_LOG_LIMIT_PER_MINUTE = 10;
+export const ERROR_LOG_WINDOW_MS = 60_000;
 const STACK_LINES_KEPT = 5;
 
 /** Fire-and-forget `ui_log`; swallows failures (e.g. command not registered). */
@@ -21,31 +23,6 @@ export function uiLog(level: UiLogLevel, message: string): void {
   Promise.resolve()
     .then(() => invoke('ui_log', { level, message }))
     .catch(() => {});
-}
-
-// ---------------------------------------------------------------------------
-// Rate limiter (fixed window)
-// ---------------------------------------------------------------------------
-
-export interface RateLimiter {
-  /** Returns `true` and consumes a slot if under the limit for the current window. */
-  allow(nowMs?: number): boolean;
-}
-
-export function createRateLimiter(maxPerWindow: number, windowMs: number): RateLimiter {
-  let windowStart = Number.NEGATIVE_INFINITY;
-  let count = 0;
-  return {
-    allow(nowMs = Date.now()) {
-      if (nowMs - windowStart >= windowMs) {
-        windowStart = nowMs;
-        count = 0;
-      }
-      if (count >= maxPerWindow) return false;
-      count++;
-      return true;
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -206,20 +183,67 @@ export function formatErrorForLog(kind: string, message: string, stack?: string)
   return lines.length > 0 ? `${kind}: ${message} | ${lines.join(' | ')}` : `${kind}: ${message}`;
 }
 
-export function createErrorForwarder(opts: { log?: UiLogFn; limiter?: RateLimiter } = {}) {
+/**
+ * Forwards uncaught errors to `ui_log`, per fixed window (`windowMs`):
+ * - a `kind: message` seen earlier in the window is dropped as a duplicate;
+ * - at most `limit` distinct errors are forwarded, the rest are dropped;
+ * - one WARN is logged when the limit is first hit, and one
+ *   `dropped N error(s)` summary when the next window opens with drops.
+ */
+export function createErrorForwarder(opts: { log?: UiLogFn; limit?: number; windowMs?: number } = {}) {
   const log = opts.log ?? uiLog;
-  const limiter = opts.limiter ?? createRateLimiter(ERROR_LOG_LIMIT_PER_MINUTE, 60_000);
+  const limit = opts.limit ?? ERROR_LOG_LIMIT_PER_MINUTE;
+  const windowMs = opts.windowMs ?? ERROR_LOG_WINDOW_MS;
+  let windowStart = Number.NEGATIVE_INFINITY;
+  let forwarded = 0;
+  let droppedOverLimit = 0;
+  let droppedDuplicates = 0;
+  let seen = new Set<string>();
+
+  const rollWindow = (nowMs: number) => {
+    if (nowMs - windowStart < windowMs) return;
+    const dropped = droppedOverLimit + droppedDuplicates;
+    if (dropped > 0) {
+      log(
+        'warn',
+        `error forwarding: dropped ${dropped} error(s) in the last ${Math.round(windowMs / 1000)}s ` +
+          `(${droppedOverLimit} over the limit of ${limit}, ${droppedDuplicates} duplicate(s))`,
+      );
+    }
+    windowStart = nowMs;
+    forwarded = 0;
+    droppedOverLimit = 0;
+    droppedDuplicates = 0;
+    seen = new Set();
+  };
+
+  const forward = (kind: string, message: string, stack: string | undefined, nowMs: number): boolean => {
+    rollWindow(nowMs);
+    const key = `${kind}: ${message}`;
+    if (seen.has(key)) {
+      droppedDuplicates++;
+      return false;
+    }
+    seen.add(key);
+    if (forwarded >= limit) {
+      droppedOverLimit++;
+      if (droppedOverLimit === 1) {
+        log('warn', `error forwarding: limit of ${limit} per ${Math.round(windowMs / 1000)}s reached; dropping further errors`);
+      }
+      return false;
+    }
+    forwarded++;
+    log('error', formatErrorForLog(kind, message, stack));
+    return true;
+  };
+
   return {
-    onError(message: string, stack?: string, nowMs?: number): boolean {
-      if (!limiter.allow(nowMs)) return false;
-      log('error', formatErrorForLog('window.onerror', message, stack));
-      return true;
+    onError(message: string, stack?: string, nowMs: number = Date.now()): boolean {
+      return forward('window.onerror', message, stack, nowMs);
     },
-    onRejection(reason: unknown, nowMs?: number): boolean {
-      if (!limiter.allow(nowMs)) return false;
+    onRejection(reason: unknown, nowMs: number = Date.now()): boolean {
       const { message, stack } = describeReason(reason);
-      log('error', formatErrorForLog('unhandledrejection', message, stack));
-      return true;
+      return forward('unhandledrejection', message, stack, nowMs);
     },
   };
 }
