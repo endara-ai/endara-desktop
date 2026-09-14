@@ -10,11 +10,16 @@
 //! Recovery rules:
 //! - `stalled` after [`STALL_THRESHOLD`] consecutive missed acks (~90 s).
 //! - A visible stalled window is reloaded at most once per
-//!   [`RELOAD_COOLDOWN`].
+//!   [`RELOAD_COOLDOWN`], and at most [`RELOAD_MAX_CONSECUTIVE`] times in a
+//!   row without an ack in between; after that the watchdog logs one ERROR
+//!   and stops reloading until the page acks or the user reloads manually.
 //! - A hidden window is never auto-reloaded (macOS may legitimately throttle
 //!   a hidden WKWebView). The reload happens on the next show, but only after
 //!   a heartbeat that was *sent while visible* also goes unanswered — so a
 //!   merely-throttled page gets a chance to ack before being reloaded.
+//! - An outstanding heartbeat younger than [`PROBE_MIN_AGE`] is never counted
+//!   as missed, so a focus-triggered probe racing another focus event or the
+//!   periodic tick cannot reload a page that had no time to answer.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -25,6 +30,8 @@ use tauri::{AppHandle, Emitter, Manager, State, Webview};
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 pub const STALL_THRESHOLD: u32 = 3;
 pub const RELOAD_COOLDOWN: Duration = Duration::from_secs(10 * 60);
+pub const RELOAD_MAX_CONSECUTIVE: u32 = 3;
+pub const PROBE_MIN_AGE: Duration = Duration::from_secs(10);
 pub const UI_LOG_MAX_BYTES: usize = 2048;
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -66,7 +73,13 @@ pub struct StallReport {
 pub enum DeferReason {
     Hidden,
     AwaitingVisibleProbe,
-    RateLimited { retry_in: Duration },
+    RateLimited {
+        retry_in: Duration,
+    },
+    /// [`RELOAD_MAX_CONSECUTIVE`] reloads happened without an ack in between.
+    GaveUp {
+        reloads: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +99,11 @@ pub enum Transition {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TickOutcome {
+    /// The heartbeat outstanding after this tick.
     pub seq: u64,
+    /// `false` when the previous heartbeat was younger than [`PROBE_MIN_AGE`]
+    /// and is kept in flight instead of a new one being issued.
+    pub emit: bool,
     pub transition: Option<Transition>,
     pub reload: ReloadDecision,
 }
@@ -105,6 +122,7 @@ pub struct UiWatchdogPolicy {
     last_ack: Option<LastAck>,
     stalled_since: Option<Instant>,
     last_reload_at: Option<Instant>,
+    consecutive_reloads: u32,
     last_defer_reported: Option<DeferReason>,
 }
 
@@ -123,6 +141,7 @@ impl UiWatchdogPolicy {
             last_ack: None,
             stalled_since: None,
             last_reload_at: None,
+            consecutive_reloads: 0,
             last_defer_reported: None,
         }
     }
@@ -138,10 +157,22 @@ impl UiWatchdogPolicy {
 
     /// One heartbeat tick: settle the previous heartbeat (a still-outstanding
     /// one counts as a miss), evaluate the stall / reload decision, then hand
-    /// out the next sequence number to send.
+    /// out the next sequence number to send. A heartbeat younger than
+    /// [`PROBE_MIN_AGE`] is left in flight untouched (`emit: false`).
     pub fn tick(&mut self, now: Instant, window: WindowSnapshot) -> TickOutcome {
         let mut transition = None;
         let mut visible_probe_missed = false;
+
+        if let Some(prev) = self.outstanding {
+            if now.saturating_duration_since(prev.sent_at) < PROBE_MIN_AGE {
+                return TickOutcome {
+                    seq: prev.seq,
+                    emit: false,
+                    transition: None,
+                    reload: ReloadDecision::None,
+                };
+            }
+        }
 
         if let Some(prev) = self.outstanding.take() {
             self.missed = self.missed.saturating_add(1);
@@ -169,6 +200,7 @@ impl UiWatchdogPolicy {
 
         TickOutcome {
             seq,
+            emit: true,
             transition,
             reload,
         }
@@ -184,6 +216,10 @@ impl UiWatchdogPolicy {
             Some(DeferReason::Hidden)
         } else if !visible_probe_missed {
             Some(DeferReason::AwaitingVisibleProbe)
+        } else if self.consecutive_reloads >= RELOAD_MAX_CONSECUTIVE {
+            Some(DeferReason::GaveUp {
+                reloads: self.consecutive_reloads,
+            })
         } else {
             self.reload_retry_in(now)
                 .map(|retry_in| DeferReason::RateLimited { retry_in })
@@ -202,12 +238,14 @@ impl UiWatchdogPolicy {
                             Some(DeferReason::RateLimited { .. }),
                             DeferReason::RateLimited { .. }
                         )
+                        | (Some(DeferReason::GaveUp { .. }), DeferReason::GaveUp { .. })
                 );
                 self.last_defer_reported = Some(reason);
                 ReloadDecision::Deferred(changed.then_some(reason))
             }
             None => {
                 self.last_reload_at = Some(now);
+                self.consecutive_reloads += 1;
                 self.last_defer_reported = None;
                 ReloadDecision::Reload
             }
@@ -239,6 +277,7 @@ impl UiWatchdogPolicy {
         });
 
         let missed = std::mem::replace(&mut self.missed, 0);
+        self.consecutive_reloads = 0;
         let transition = self.stalled_since.take().map(|since| {
             self.last_defer_reported = None;
             Transition::Recovered {
@@ -255,9 +294,11 @@ impl UiWatchdogPolicy {
 
     /// A reload happened outside the policy's own decision (tray "Reload UI").
     /// It counts against the cooldown so the watchdog does not reload the
-    /// freshly loaded page again before it has had a chance to ack.
+    /// freshly loaded page again before it has had a chance to ack, and it
+    /// re-arms automatic reloads after the watchdog gave up.
     pub fn note_reload(&mut self, now: Instant) {
         self.last_reload_at = Some(now);
+        self.consecutive_reloads = 0;
         self.last_defer_reported = None;
     }
 
@@ -379,6 +420,10 @@ fn log_defer(reason: DeferReason, window: WindowSnapshot) {
             "[ui] reload deferred reason=rate_limited retry_in={}s",
             retry_in.as_secs()
         ),
+        DeferReason::GaveUp { reloads } => log::error!(
+            "[ui] reload gave up: {} consecutive reloads without an ack; not reloading again until the page acks or the user picks Reload UI",
+            reloads
+        ),
     }
 }
 
@@ -413,6 +458,9 @@ fn run_tick(app: &AppHandle) {
         }
     }
 
+    if !outcome.emit {
+        return;
+    }
     let payload = HeartbeatPayload {
         seq: outcome.seq,
         sent_at_ms: unix_ms(),
@@ -460,24 +508,29 @@ pub fn on_main_window_focused(app: &AppHandle) {
     });
 }
 
-/// Truncate to [`UI_LOG_MAX_BYTES`] on a char boundary and collapse
-/// CR/LF/tab so the message fits on one log line.
+fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Collapse CR/LF/tab so the message fits on one log line, then truncate to
+/// [`UI_LOG_MAX_BYTES`] on a char boundary. The input is pre-truncated so a
+/// huge message is not normalized in full; the output is truncated again
+/// because expanding separators to ` | ` can grow it.
 fn sanitize_ui_message(message: &str) -> String {
-    let truncated = if message.len() > UI_LOG_MAX_BYTES {
-        let mut end = UI_LOG_MAX_BYTES;
-        while end > 0 && !message.is_char_boundary(end) {
-            end -= 1;
-        }
-        &message[..end]
-    } else {
-        message
-    };
-    truncated
+    let flattened = truncate_at_char_boundary(message, UI_LOG_MAX_BYTES)
         .split(['\r', '\n'])
         .map(|line| line.trim().replace('\t', " "))
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
-        .join(" | ")
+        .join(" | ");
+    truncate_at_char_boundary(&flattened, UI_LOG_MAX_BYTES).to_string()
 }
 
 #[tauri::command]
@@ -726,7 +779,7 @@ mod tests {
         miss_ticks(&mut p, t0, 1, 3, HIDDEN);
         assert!(p.is_stalled());
         // User picks tray "Reload UI"; the window is shown and focused.
-        let reload_at = t0 + HEARTBEAT_INTERVAL * 3 + Duration::from_secs(5);
+        let reload_at = t0 + HEARTBEAT_INTERVAL * 3 + PROBE_MIN_AGE + Duration::from_secs(5);
         p.note_reload(reload_at);
         // Focus tick: outstanding heartbeat was sent hidden → visible probe.
         let o = p.tick(reload_at, VISIBLE);
@@ -755,6 +808,124 @@ mod tests {
     }
 
     #[test]
+    fn focus_probe_younger_than_min_age_is_not_a_miss() {
+        let mut p = UiWatchdogPolicy::new();
+        let t0 = Instant::now();
+        p.tick(t0, HIDDEN);
+        miss_ticks(&mut p, t0, 1, 3, HIDDEN);
+        assert!(p.is_stalled());
+
+        // Window shown well after the last hidden heartbeat: a visible probe
+        // goes out and the reload waits on it.
+        let shown = t0 + HEARTBEAT_INTERVAL * 3 + PROBE_MIN_AGE + Duration::from_secs(1);
+        let o = p.tick(shown, VISIBLE);
+        assert!(o.emit);
+        assert_eq!(
+            o.reload,
+            ReloadDecision::Deferred(Some(DeferReason::AwaitingVisibleProbe))
+        );
+        let probe_seq = o.seq;
+        let missed_before = p.missed();
+
+        // A second Focused(true) two seconds later must not count the probe
+        // as missed (and reload the page) before it had a chance to answer.
+        let o = p.tick(shown + Duration::from_secs(2), VISIBLE);
+        assert!(!o.emit);
+        assert_eq!(o.seq, probe_seq);
+        assert_eq!(o.reload, ReloadDecision::None);
+        assert!(o.transition.is_none());
+        assert_eq!(p.missed(), missed_before);
+
+        // The page answers the probe → recovered, no reload.
+        let ack = p.on_ack(probe_seq, shown + Duration::from_secs(3));
+        assert!(matches!(ack.transition, Some(Transition::Recovered { .. })));
+        assert!(!p.is_stalled());
+    }
+
+    #[test]
+    fn focus_probe_older_than_min_age_counts_as_missed() {
+        let mut p = UiWatchdogPolicy::new();
+        let t0 = Instant::now();
+        p.tick(t0, HIDDEN);
+        miss_ticks(&mut p, t0, 1, 3, HIDDEN);
+        let shown = t0 + HEARTBEAT_INTERVAL * 3 + PROBE_MIN_AGE;
+        let o = p.tick(shown, VISIBLE);
+        assert!(o.emit);
+        // Unanswered for PROBE_MIN_AGE: the next focus reloads.
+        let o = p.tick(shown + PROBE_MIN_AGE, VISIBLE);
+        assert!(o.emit);
+        assert_eq!(o.reload, ReloadDecision::Reload);
+    }
+
+    #[test]
+    fn gives_up_after_max_consecutive_reloads_until_ack() {
+        let mut p = UiWatchdogPolicy::new();
+        let t0 = Instant::now();
+        let ticks_per_cooldown = (RELOAD_COOLDOWN.as_secs() / HEARTBEAT_INTERVAL.as_secs()) as u32;
+        p.tick(t0, VISIBLE);
+        let o = miss_ticks(&mut p, t0, 1, 3, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Reload);
+
+        let mut tick = 3;
+        for _ in 1..RELOAD_MAX_CONSECUTIVE {
+            tick += ticks_per_cooldown;
+            let o = p.tick(t0 + HEARTBEAT_INTERVAL * tick, VISIBLE);
+            assert_eq!(o.reload, ReloadDecision::Reload);
+        }
+
+        // The cap is reached: one GaveUp report, then silence.
+        tick += ticks_per_cooldown;
+        let o = p.tick(t0 + HEARTBEAT_INTERVAL * tick, VISIBLE);
+        assert_eq!(
+            o.reload,
+            ReloadDecision::Deferred(Some(DeferReason::GaveUp {
+                reloads: RELOAD_MAX_CONSECUTIVE
+            }))
+        );
+        let o = p.tick(t0 + HEARTBEAT_INTERVAL * (tick + 1), VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Deferred(None));
+        tick += ticks_per_cooldown;
+        let o = p.tick(t0 + HEARTBEAT_INTERVAL * tick, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Deferred(None));
+
+        // A healthy ack re-arms automatic reloads.
+        let ack = p.on_ack(
+            o.seq,
+            t0 + HEARTBEAT_INTERVAL * tick + Duration::from_secs(1),
+        );
+        assert!(matches!(ack.transition, Some(Transition::Recovered { .. })));
+        let later = t0 + HEARTBEAT_INTERVAL * (tick + 1);
+        p.tick(later, VISIBLE);
+        let o = miss_ticks(&mut p, later, 1, 3, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Reload);
+    }
+
+    #[test]
+    fn manual_reload_rearms_after_give_up() {
+        let mut p = UiWatchdogPolicy::new();
+        let t0 = Instant::now();
+        let ticks_per_cooldown = (RELOAD_COOLDOWN.as_secs() / HEARTBEAT_INTERVAL.as_secs()) as u32;
+        p.tick(t0, VISIBLE);
+        miss_ticks(&mut p, t0, 1, 3, VISIBLE);
+        let mut tick = 3;
+        for _ in 0..RELOAD_MAX_CONSECUTIVE {
+            tick += ticks_per_cooldown;
+            p.tick(t0 + HEARTBEAT_INTERVAL * tick, VISIBLE);
+        }
+        assert!(matches!(
+            p.tick(t0 + HEARTBEAT_INTERVAL * (tick + 1), VISIBLE).reload,
+            ReloadDecision::Deferred(_)
+        ));
+
+        // Tray "Reload UI" resets the counter; after its cooldown the
+        // watchdog reloads a still-stalled visible page again.
+        let reload_at = t0 + HEARTBEAT_INTERVAL * (tick + 2);
+        p.note_reload(reload_at);
+        let o = p.tick(reload_at + RELOAD_COOLDOWN, VISIBLE);
+        assert_eq!(o.reload, ReloadDecision::Reload);
+    }
+
+    #[test]
     fn minimized_counts_as_hidden() {
         let mut p = UiWatchdogPolicy::new();
         let t0 = Instant::now();
@@ -779,5 +950,20 @@ mod tests {
         assert!(out.len() <= UI_LOG_MAX_BYTES);
         assert_eq!(out.len(), UI_LOG_MAX_BYTES);
         assert!(out.chars().all(|c| c == 'é'));
+    }
+
+    #[test]
+    fn sanitize_ui_message_stays_within_limit_after_newline_expansion() {
+        // Every "\n" becomes " | " (3 bytes), so a message right at the byte
+        // limit grows past it once flattened; the output must still fit.
+        let long = "a\n".repeat(UI_LOG_MAX_BYTES / 2);
+        let out = sanitize_ui_message(&long);
+        assert!(out.len() <= UI_LOG_MAX_BYTES, "len={}", out.len());
+        assert!(out.starts_with("a | a | a"));
+        // Multi-byte input mixed with newlines: no char split, still bounded.
+        let long = "é\n".repeat(UI_LOG_MAX_BYTES);
+        let out = sanitize_ui_message(&long);
+        assert!(out.len() <= UI_LOG_MAX_BYTES);
+        assert!(out.chars().all(|c| c == 'é' || c == ' ' || c == '|'));
     }
 }
