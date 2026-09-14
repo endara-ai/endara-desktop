@@ -3,6 +3,7 @@
   import { selectedEndpoint, activeTopLevelTab, activeTab } from '$lib/stores';
   import { requestNavigation } from '$lib/stores/unsavedChangesGuard';
   import { getCatalog } from '$lib/api';
+  import { guardInFlight } from '$lib/inFlightGuard';
 
   let catalog: CatalogEntry[] = $state([]);
   let loading = $state(true);
@@ -11,7 +12,8 @@
   let expandedTool: string | null = $state(null);
   let pollInterval: ReturnType<typeof setInterval> | undefined;
 
-  async function fetchCatalog() {
+  // Skip a tick while the previous fetch is still in flight (no overlapping calls).
+  const fetchCatalog = guardInFlight(async () => {
     try {
       catalog = await getCatalog();
       error = '';
@@ -21,7 +23,7 @@
     } finally {
       loading = false;
     }
-  }
+  });
 
   $effect(() => {
     fetchCatalog();
