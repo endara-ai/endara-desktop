@@ -122,6 +122,12 @@ export function shouldShowRestartButton(transport: EndpointTransport, disabled: 
   return transport === 'stdio' || transport === 'sse' || transport === 'http';
 }
 
+export function restartButtonTitle(transport: EndpointTransport): string {
+  if (transport === 'stdio') return 'Kill and restart the server process';
+  if (transport === 'sse') return 'Reconnect the SSE event stream';
+  return 'Reconnect to the server';
+}
+
 export function shouldShowRefreshButton(disabled: boolean): boolean {
   return !disabled;
 }

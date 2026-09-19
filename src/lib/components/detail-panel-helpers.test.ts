@@ -3,6 +3,7 @@ import detailPanelSource from './DetailPanel.svelte?raw';
 import type { OAuthStatusValue } from '$lib/types';
 import {
   shouldShowRestartButton,
+  restartButtonTitle,
   shouldShowRefreshButton,
   shouldShowReauthorizeButton,
   createReauthGateState,
@@ -39,12 +40,28 @@ describe('shouldShowRestartButton', () => {
   });
 });
 
+// The hover title must be transport-specific so an http endpoint is not
+// described as an SSE stream.
+describe('restartButtonTitle', () => {
+  const cases: Array<[EndpointTransport, string]> = [
+    ['stdio', 'Kill and restart the server process'],
+    ['sse', 'Reconnect the SSE event stream'],
+    ['http', 'Reconnect to the server'],
+  ];
+
+  for (const [transport, expected] of cases) {
+    it(`returns "${expected}" for transport "${transport}"`, () => {
+      expect(restartButtonTitle(transport)).toBe(expected);
+    });
+  }
+});
+
 // Source-level check of the Restart/Reconnect button markup: the label is
-// "Restart" for stdio and "Reconnect" otherwise, and the hover title must be
-// transport-specific so an http endpoint is not described as an SSE stream.
+// "Restart" for stdio and "Reconnect" otherwise, and the title is bound to
+// the transport via restartButtonTitle.
 describe('DetailPanel restart/reconnect button', () => {
   const restartBlock = detailPanelSource.match(
-    /\{#if shouldShowRestartButton\(ep\.transport, !!ep\.disabled\)\}[\s\S]*?<button[\s\S]*?<\/button>[\s\S]*?\{\/if\}/,
+    /\{#if shouldShowRestartButton\([\s\S]*?<button[\s\S]*?<\/button>[\s\S]*?\{\/if\}/,
   );
 
   it('renders the button under a shouldShowRestartButton guard', () => {
@@ -52,11 +69,8 @@ describe('DetailPanel restart/reconnect button', () => {
     expect(restartBlock![0]).toContain("ep.transport === 'stdio' ? 'Restart' : 'Reconnect'");
   });
 
-  it('uses a distinct title for stdio, sse and http', () => {
-    expect(restartBlock![0]).toContain("'Kill and restart the server process'");
-    expect(restartBlock![0]).toContain("'Reconnect the SSE event stream'");
-    expect(restartBlock![0]).toContain("'Reconnect to the server'");
-    expect(restartBlock![0]).toContain("ep.transport === 'sse'");
+  it('binds the title to restartButtonTitle(ep.transport)', () => {
+    expect(restartBlock![0]).toContain('title={restartButtonTitle(ep.transport)}');
   });
 });
 

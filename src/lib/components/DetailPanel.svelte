@@ -17,6 +17,7 @@
   import ProfilesTab from './ProfilesTab.svelte';
   import {
     shouldShowRestartButton,
+    restartButtonTitle,
     shouldShowRefreshButton,
     shouldShowReauthorizeButton,
     createReauthGateState,
@@ -297,11 +298,7 @@
           <button
             class="btn-sec btn-sm btn-danger"
             onclick={() => showRestartConfirm = true}
-            title={ep.transport === 'stdio'
-              ? 'Kill and restart the server process'
-              : ep.transport === 'sse'
-                ? 'Reconnect the SSE event stream'
-                : 'Reconnect to the server'}
+            title={restartButtonTitle(ep.transport)}
           >{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'}</button>
         {/if}
         <button class="btn-sec btn-sm btn-danger" onclick={() => showDeleteConfirm = true}>Delete</button>
