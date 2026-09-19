@@ -297,7 +297,11 @@
           <button
             class="btn-sec btn-sm btn-danger"
             onclick={() => showRestartConfirm = true}
-            title={ep.transport === 'stdio' ? 'Kill and restart the server process' : 'Reconnect the SSE event stream'}
+            title={ep.transport === 'stdio'
+              ? 'Kill and restart the server process'
+              : ep.transport === 'sse'
+                ? 'Reconnect the SSE event stream'
+                : 'Reconnect to the server'}
           >{ep.transport === 'stdio' ? 'Restart' : 'Reconnect'}</button>
         {/if}
         <button class="btn-sec btn-sm btn-danger" onclick={() => showDeleteConfirm = true}>Delete</button>

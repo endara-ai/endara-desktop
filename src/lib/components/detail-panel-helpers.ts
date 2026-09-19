@@ -119,7 +119,7 @@ export function visibleTabs(transport: EndpointTransport, disabled: boolean): De
 
 export function shouldShowRestartButton(transport: EndpointTransport, disabled: boolean): boolean {
   if (disabled) return false;
-  return transport === 'stdio' || transport === 'sse';
+  return transport === 'stdio' || transport === 'sse' || transport === 'http';
 }
 
 export function shouldShowRefreshButton(disabled: boolean): boolean {
