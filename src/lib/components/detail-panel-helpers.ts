@@ -122,10 +122,16 @@ export function shouldShowRestartButton(transport: EndpointTransport, disabled: 
   return transport === 'stdio' || transport === 'sse' || transport === 'http';
 }
 
+const RESTART_BUTTON_TITLES: Record<EndpointTransport, string> = {
+  stdio: 'Kill and restart the server process',
+  sse: 'Reconnect the SSE event stream',
+  http: 'Reconnect to the server',
+  // The button never renders for oauth (see shouldShowRestartButton).
+  oauth: 'Reconnect to the server',
+};
+
 export function restartButtonTitle(transport: EndpointTransport): string {
-  if (transport === 'stdio') return 'Kill and restart the server process';
-  if (transport === 'sse') return 'Reconnect the SSE event stream';
-  return 'Reconnect to the server';
+  return RESTART_BUTTON_TITLES[transport];
 }
 
 export function shouldShowRefreshButton(disabled: boolean): boolean {

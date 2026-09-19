@@ -47,6 +47,7 @@ describe('restartButtonTitle', () => {
     ['stdio', 'Kill and restart the server process'],
     ['sse', 'Reconnect the SSE event stream'],
     ['http', 'Reconnect to the server'],
+    ['oauth', 'Reconnect to the server'],
   ];
 
   for (const [transport, expected] of cases) {
@@ -66,11 +67,13 @@ describe('DetailPanel restart/reconnect button', () => {
 
   it('renders the button under a shouldShowRestartButton guard', () => {
     expect(restartBlock, 'expected to find the shouldShowRestartButton block').not.toBeNull();
-    expect(restartBlock![0]).toContain("ep.transport === 'stdio' ? 'Restart' : 'Reconnect'");
+    expect(restartBlock![0]).toMatch(
+      /ep\.transport\s*===\s*['"]stdio['"]\s*\?\s*['"]Restart['"]\s*:\s*['"]Reconnect['"]/,
+    );
   });
 
   it('binds the title to restartButtonTitle(ep.transport)', () => {
-    expect(restartBlock![0]).toContain('title={restartButtonTitle(ep.transport)}');
+    expect(restartBlock![0]).toMatch(/title=\{\s*restartButtonTitle\(\s*ep\.transport\s*\)\s*\}/);
   });
 });
 
