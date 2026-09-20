@@ -119,7 +119,19 @@ export function visibleTabs(transport: EndpointTransport, disabled: boolean): De
 
 export function shouldShowRestartButton(transport: EndpointTransport, disabled: boolean): boolean {
   if (disabled) return false;
-  return transport === 'stdio' || transport === 'sse';
+  return transport === 'stdio' || transport === 'sse' || transport === 'http';
+}
+
+const RESTART_BUTTON_TITLES: Record<EndpointTransport, string> = {
+  stdio: 'Kill and restart the server process',
+  sse: 'Reconnect the SSE event stream',
+  http: 'Reconnect to the server',
+  // The button never renders for oauth (see shouldShowRestartButton).
+  oauth: 'Reconnect to the server',
+};
+
+export function restartButtonTitle(transport: EndpointTransport): string {
+  return RESTART_BUTTON_TITLES[transport];
 }
 
 export function shouldShowRefreshButton(disabled: boolean): boolean {

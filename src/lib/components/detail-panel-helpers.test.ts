@@ -3,6 +3,7 @@ import detailPanelSource from './DetailPanel.svelte?raw';
 import type { OAuthStatusValue } from '$lib/types';
 import {
   shouldShowRestartButton,
+  restartButtonTitle,
   shouldShowRefreshButton,
   shouldShowReauthorizeButton,
   createReauthGateState,
@@ -19,7 +20,7 @@ describe('shouldShowRestartButton', () => {
   const cases: Array<[EndpointTransport, boolean]> = [
     ['stdio', true],
     ['sse', true],
-    ['http', false],
+    ['http', true],
     ['oauth', false],
   ];
 
@@ -36,6 +37,43 @@ describe('shouldShowRestartButton', () => {
         expect(shouldShowRestartButton(transport, true)).toBe(false);
       });
     }
+  });
+});
+
+// The hover title must be transport-specific so an http endpoint is not
+// described as an SSE stream.
+describe('restartButtonTitle', () => {
+  const cases: Array<[EndpointTransport, string]> = [
+    ['stdio', 'Kill and restart the server process'],
+    ['sse', 'Reconnect the SSE event stream'],
+    ['http', 'Reconnect to the server'],
+    ['oauth', 'Reconnect to the server'],
+  ];
+
+  for (const [transport, expected] of cases) {
+    it(`returns "${expected}" for transport "${transport}"`, () => {
+      expect(restartButtonTitle(transport)).toBe(expected);
+    });
+  }
+});
+
+// Source-level check of the Restart/Reconnect button markup: the label is
+// "Restart" for stdio and "Reconnect" otherwise, and the title is bound to
+// the transport via restartButtonTitle.
+describe('DetailPanel restart/reconnect button', () => {
+  const restartBlock = detailPanelSource.match(
+    /\{#if shouldShowRestartButton\([\s\S]*?<button[\s\S]*?<\/button>[\s\S]*?\{\/if\}/,
+  );
+
+  it('renders the button under a shouldShowRestartButton guard', () => {
+    expect(restartBlock, 'expected to find the shouldShowRestartButton block').not.toBeNull();
+    expect(restartBlock![0]).toMatch(
+      /ep\.transport\s*===\s*['"]stdio['"]\s*\?\s*['"]Restart['"]\s*:\s*['"]Reconnect['"]/,
+    );
+  });
+
+  it('binds the title to restartButtonTitle(ep.transport)', () => {
+    expect(restartBlock![0]).toMatch(/title=\{\s*restartButtonTitle\(\s*ep\.transport\s*\)\s*\}/);
   });
 });
 
