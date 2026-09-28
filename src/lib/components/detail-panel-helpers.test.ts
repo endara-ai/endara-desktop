@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import detailPanelSource from './DetailPanel.svelte?raw';
-import type { OAuthStatusValue } from '$lib/types';
+import type { Endpoint, OAuthStatusValue } from '$lib/types';
 import {
   shouldShowRestartButton,
   restartButtonTitle,
@@ -314,6 +314,27 @@ describe('shouldShowReauthorizeButton', () => {
       expect(shouldShowReauthorizeButton(t, 'auth_required')).toBe(false);
     });
   }
+
+  it.each([null, undefined, 'authenticated', 'refreshing', 'needs_login'] as const)(
+    'uses the relay auth-required error before OAuth status catches up (%s)',
+    (status) => {
+      expect(shouldShowReauthorizeButton('oauth', status, 'auth required')).toBe(true);
+    },
+  );
+
+  it.each(['needs login', 'connection failed', 'upstream timeout', 'request failed: auth required'])(
+    'does not infer an authorization failure from "%s" without OAuth status',
+    (error) => {
+      expect(shouldShowReauthorizeButton('oauth', null, error)).toBe(false);
+    },
+  );
+
+  it.each(['stdio', 'sse', 'http'] as const)(
+    'ignores authorization-like errors for %s endpoints',
+    (transport) => {
+      expect(shouldShowReauthorizeButton(transport, 'auth_required', 'auth required')).toBe(false);
+    },
+  );
 });
 
 // ── Reauthorize-bar stability gate (anti-flash) ──
@@ -323,78 +344,197 @@ describe('shouldShowReauthorizeButton', () => {
 // `authenticated`. The gate must swallow that single transient yet still
 // surface a genuinely-persistent reauth need within a few seconds.
 describe('evaluateReauthGate', () => {
-  // Simulate consecutive poll cycles 2s apart, returning showBar per poll.
-  function runPolls(needs: boolean[], endpointName = 'srv', startNow = 1000): boolean[] {
+  const endpoint: Pick<Endpoint, 'name' | 'transport' | 'error'> = {
+    name: 'srv',
+    transport: 'oauth',
+  };
+
+  // Feed real status values to the production gate, as successive polls do.
+  function runPolls(statuses: OAuthStatusValue[]): boolean[] {
     let state: ReauthGateState = createReauthGateState();
-    const shown: boolean[] = [];
-    needs.forEach((reauthNeeded, i) => {
+    return statuses.map((oauthStatus, i) => {
       const result = evaluateReauthGate(state, {
-        endpointName,
-        reauthNeeded,
-        now: startNow + i * 2000,
+        endpoint,
+        oauthStatus: oauthStatus ? { status: oauthStatus } : oauthStatus,
+        now: 1000 + i * 2000,
       });
       state = result.state;
-      shown.push(result.showBar);
+      return result.showBar;
     });
-    return shown;
   }
 
+  it.each([null, undefined, 'authenticated', 'refreshing', 'needs_login'] as const)(
+    'shows a confirmed endpoint auth error on the first evaluation with %s OAuth status',
+    (oauthStatus) => {
+      const result = evaluateReauthGate(createReauthGateState(), {
+        endpoint: { ...endpoint, error: 'auth required' },
+        oauthStatus: oauthStatus ? { status: oauthStatus } : oauthStatus,
+        now: 1000,
+      });
+      expect(result.showBar).toBe(true);
+    },
+  );
+
+  it.each(['auth_required', 'disconnected', 'connection_failed'] as const)(
+    'shows %s immediately when OAuth status confirms it',
+    (status) => {
+      expect(runPolls([status])).toEqual([true]);
+    },
+  );
+
+  it('does not show the action for a startup needs-login error while status is pending', () => {
+    const result = evaluateReauthGate(createReauthGateState(), {
+      endpoint: { ...endpoint, error: 'needs login' },
+      oauthStatus: null,
+      now: 1000,
+    });
+    expect(result.showBar).toBe(false);
+  });
+
   it('does NOT show the bar on a single transient needs_login', () => {
-    // poll 1: needs_login (transient), poll 2: authenticated.
-    expect(runPolls([true, false])).toEqual([false, false]);
+    expect(runPolls(['needs_login', 'authenticated'])).toEqual([false, false]);
+  });
+
+  it('does not count an endpoint refresh as a second observation of cached needs_login', () => {
+    const cachedStatus = { status: 'needs_login' as const };
+    const first = evaluateReauthGate(createReauthGateState(), {
+      endpoint,
+      oauthStatus: cachedStatus,
+      now: 1000,
+    });
+    const endpointUpdate = evaluateReauthGate(first.state, {
+      endpoint: { ...endpoint },
+      oauthStatus: cachedStatus,
+      now: 2000,
+    });
+    const recovered = evaluateReauthGate(endpointUpdate.state, {
+      endpoint,
+      oauthStatus: { status: 'authenticated' },
+      now: 2001,
+    });
+    expect([first.showBar, endpointUpdate.showBar, recovered.showBar])
+      .toEqual([false, false, false]);
+  });
+
+  it('still shows a persistent cached needs_login after the grace window', () => {
+    const cachedStatus = { status: 'needs_login' as const };
+    const first = evaluateReauthGate(createReauthGateState(), {
+      endpoint,
+      oauthStatus: cachedStatus,
+      now: 1000,
+    });
+    const later = evaluateReauthGate(first.state, {
+      endpoint,
+      oauthStatus: cachedStatus,
+      now: 1000 + REAUTH_GATE_GRACE_MS,
+    });
+    expect([first.showBar, later.showBar]).toEqual([false, true]);
   });
 
   it('shows the bar once needs_login persists across >=2 consecutive polls', () => {
-    expect(runPolls([true, true])).toEqual([false, true]);
+    expect(runPolls(['needs_login', 'needs_login'])).toEqual([false, true]);
   });
 
-  it('never shows the bar while authenticated', () => {
-    expect(runPolls([false, false, false])).toEqual([false, false, false]);
+  it('never shows the bar while authenticated or refreshing', () => {
+    expect(runPolls(['authenticated', 'refreshing', 'authenticated'])).toEqual([false, false, false]);
   });
 
-  it('resets the gate on needs_login -> authenticated -> needs_login (no early flash on the new need)', () => {
-    // First need persists (shows), recovers (reset), then a single new
-    // transient must NOT immediately re-show — the gate restarts clean.
-    expect(runPolls([true, true, false, true])).toEqual([false, true, false, false]);
+  it('restarts the gate after needs_login recovers', () => {
+    expect(runPolls(['needs_login', 'needs_login', 'authenticated', 'needs_login']))
+      .toEqual([false, true, false, false]);
   });
 
-  it('shows again after a reset once the new need persists', () => {
-    expect(runPolls([true, true, false, true, true])).toEqual([false, true, false, false, true]);
+  it('shows again after recovery once the new need persists', () => {
+    expect(runPolls(['needs_login', 'needs_login', 'authenticated', 'needs_login', 'needs_login']))
+      .toEqual([false, true, false, false, true]);
   });
 
-  it('shows via the grace window even if only a single (slow) poll has elapsed past it', () => {
-    // One evaluation, but the time gap already exceeds the grace window.
+  it.each(['authenticated', 'refreshing'] as const)(
+    'hides after a confirmed failure recovers to %s and starts a fresh startup gate',
+    (status) => {
+      expect(runPolls(['auth_required', status, 'needs_login']))
+        .toEqual([true, false, false]);
+    },
+  );
+
+  it('does not count a confirmed failure toward a later needs_login grace period', () => {
+    expect(runPolls(['auth_required', 'needs_login'])).toEqual([true, false]);
+  });
+
+  it('hides endpoint-derived authorization when the endpoint error clears', () => {
     const first = evaluateReauthGate(createReauthGateState(), {
-      endpointName: 'srv',
-      reauthNeeded: true,
+      endpoint: { ...endpoint, error: 'auth required' },
+      oauthStatus: null,
       now: 1000,
     });
-    expect(first.showBar).toBe(false);
-    const later = evaluateReauthGate(first.state, {
-      endpointName: 'srv',
-      reauthNeeded: true,
-      now: 1000 + REAUTH_GATE_GRACE_MS + 1,
+    const recovered = evaluateReauthGate(first.state, {
+      endpoint,
+      oauthStatus: null,
+      now: 2000,
     });
-    expect(later.showBar).toBe(true);
+    expect([first.showBar, recovered.showBar]).toEqual([true, false]);
+  });
+
+  it('shows via the grace window without depending on the observation count', () => {
+    const result = evaluateReauthGate({
+      endpointName: endpoint.name,
+      consecutiveCount: 0,
+      firstSeenAt: 1000,
+      lastStatus: null,
+    }, {
+      endpoint,
+      oauthStatus: { status: 'needs_login' },
+      now: 1000 + REAUTH_GATE_GRACE_MS,
+    });
+    expect(result.showBar).toBe(true);
   });
 
   it('resets accumulated state when the selected endpoint changes', () => {
-    let result = evaluateReauthGate(createReauthGateState(), {
-      endpointName: 'srv-a',
-      reauthNeeded: true,
+    const first = evaluateReauthGate(createReauthGateState(), {
+      endpoint,
+      oauthStatus: { status: 'needs_login' },
       now: 1000,
     });
-    expect(result.showBar).toBe(false);
-    // Switching to a different endpoint that also needs reauth must start a
-    // fresh window — not inherit srv-a's count and immediately flash.
-    result = evaluateReauthGate(result.state, {
-      endpointName: 'srv-b',
-      reauthNeeded: true,
+    const switched = evaluateReauthGate(first.state, {
+      endpoint: { ...endpoint, name: 'srv-b' },
+      oauthStatus: { status: 'needs_login' },
       now: 3000,
     });
-    expect(result.showBar).toBe(false);
-    expect(result.state.endpointName).toBe('srv-b');
-    expect(result.state.consecutiveCount).toBe(1);
+    expect([first.showBar, switched.showBar]).toEqual([false, false]);
+    expect(switched.state.endpointName).toBe('srv-b');
+    expect(switched.state.consecutiveCount).toBe(1);
+  });
+
+  it.each(['stdio', 'sse', 'http'] as const)(
+    'never shows for a %s error, including after switching from a confirmed OAuth failure',
+    (transport) => {
+      const first = evaluateReauthGate(createReauthGateState(), {
+        endpoint: { ...endpoint, error: 'auth required' },
+        oauthStatus: { status: 'auth_required' },
+        now: 1000,
+      });
+      const switched = evaluateReauthGate(first.state, {
+        endpoint: { name: 'other', transport, error: 'auth required' },
+        oauthStatus: { status: 'auth_required' },
+        now: 3000,
+      });
+      expect([first.showBar, switched.showBar]).toEqual([true, false]);
+    },
+  );
+
+  it('hides and resets when there is no selected endpoint', () => {
+    const first = evaluateReauthGate(createReauthGateState(), {
+      endpoint,
+      oauthStatus: { status: 'auth_required' },
+      now: 1000,
+    });
+    const cleared = evaluateReauthGate(first.state, {
+      endpoint: null,
+      oauthStatus: { status: 'auth_required' },
+      now: 3000,
+    });
+    expect([first.showBar, cleared.showBar]).toEqual([true, false]);
+    expect(cleared.state).toEqual(createReauthGateState());
   });
 });
 
@@ -411,6 +551,11 @@ describe('DetailPanel re-authorize button', () => {
   it('renders the Re-authorize button under a showReauthorize guard', () => {
     expect(reauthBlock, 'expected to find the Re-authorize {#if showReauthorize} block').not.toBeNull();
     expect(reauthBlock![0]).toContain('>Re-authorize<');
+  });
+
+  it('centers the action vertically while retaining the text and icon alignment', () => {
+    expect(reauthBlock![0]).toContain('self-center');
+    expect(reauthBlock![0]).not.toContain('self-start');
   });
 
   it('right-aligns the Re-authorize button using ml-auto', () => {
