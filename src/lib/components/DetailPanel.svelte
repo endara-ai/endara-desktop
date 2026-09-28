@@ -19,7 +19,6 @@
     shouldShowRestartButton,
     restartButtonTitle,
     shouldShowRefreshButton,
-    shouldShowReauthorizeButton,
     createReauthGateState,
     evaluateReauthGate,
     visibleTabs,
@@ -43,12 +42,13 @@
 
   // Stability gate for the reauthorize bar: a freshly-built OAuth adapter
   // reports a transient `needs_login` for ~1-2s before its just-stored token
-  // loads and it flips to `authenticated`. Only surface the bar once that
+  // loads and it flips to `authenticated`. Only surface that warning once its
   // status is stable (>=2 consecutive polls or past a short grace window) so
-  // the post-add / restart transient doesn't flash a misleading bar. Kept as a
-  // plain (non-reactive) variable so writing it from the effect below doesn't
-  // re-trigger the effect; the global 2s poll re-emits `oauthStatuses` each
-  // cycle, which drives re-evaluation.
+  // the post-add / restart transient doesn't flash a misleading bar. Confirmed
+  // failures bypass the gate, including an endpoint auth error that arrives
+  // before the separate OAuth status request. Endpoint updates can re-read a
+  // cached OAuth response; the gate only counts fresh responses toward stability.
+  // Kept non-reactive so writing it does not re-trigger the effect.
   let reauthGate = createReauthGateState();
   let showReauthorize = $state(false);
 
@@ -56,11 +56,10 @@
     const statuses = $oauthStatuses;
     const ep = $selectedEndpointData;
     const name = ep?.name ?? null;
-    const status = name ? statuses.get(name)?.status ?? null : null;
-    const reauthNeeded = ep ? shouldShowReauthorizeButton(ep.transport, status) : false;
+    const status = name ? statuses.get(name) ?? null : null;
     const result = evaluateReauthGate(reauthGate, {
-      endpointName: name,
-      reauthNeeded,
+      endpoint: ep,
+      oauthStatus: status,
       now: Date.now(),
     });
     reauthGate = result.state;
@@ -320,7 +319,7 @@
           </div>
           {#if showReauthorize}
             <button
-              class="btn-pri btn-sm ml-auto flex-shrink-0 self-start"
+              class="btn-pri btn-sm ml-auto flex-shrink-0 self-center"
               onclick={handleReauthorize}
               disabled={reauthInProgress}
               title="Open the browser to sign in again"

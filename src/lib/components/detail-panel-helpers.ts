@@ -1,4 +1,4 @@
-import type { Endpoint, OAuthStatusValue } from '$lib/types';
+import type { Endpoint, OAuthStatus, OAuthStatusValue } from '$lib/types';
 
 export type EndpointTransport = Endpoint['transport'];
 
@@ -12,8 +12,13 @@ const REAUTH_NEEDED_STATUSES: ReadonlyArray<OAuthStatusValue> = [
 export function shouldShowReauthorizeButton(
   transport: EndpointTransport,
   oauthStatus: OAuthStatusValue | null | undefined,
+  endpointError?: string | null,
 ): boolean {
   if (transport !== 'oauth') return false;
+  // The relay maps AuthRequired to this exact health error. Endpoint polls
+  // arrive before OAuth details, which may still be missing or stale. Do not
+  // infer auth failure from arbitrary errors (including startup needs login).
+  if (endpointError === 'auth required') return true;
   if (!oauthStatus) return false;
   return REAUTH_NEEDED_STATUSES.includes(oauthStatus);
 }
@@ -26,7 +31,8 @@ export function shouldShowReauthorizeButton(
  * `authenticated`. Showing the bar on that first transient produces a
  * misleading 1-2s flash on add / app restart / endpoint restart.
  *
- * This gate only lets the bar appear once a reauth-needed status is STABLE:
+ * Only `needs_login` waits for stability; confirmed failures show immediately.
+ * A startup warning is stable when it is:
  * observed across >= REAUTH_GATE_MIN_CONSECUTIVE consecutive polls OR
  * persisting beyond REAUTH_GATE_GRACE_MS. The gate resets the moment the
  * endpoint is authenticated (so a later genuine reauth need isn't suppressed)
@@ -39,11 +45,12 @@ export interface ReauthGateState {
   endpointName: string | null;
   consecutiveCount: number;
   firstSeenAt: number | null;
+  lastStatus: Pick<OAuthStatus, 'status'> | null;
 }
 
 export interface ReauthGateInput {
-  endpointName: string | null;
-  reauthNeeded: boolean;
+  endpoint: Pick<Endpoint, 'name' | 'transport' | 'error'> | null;
+  oauthStatus: Pick<OAuthStatus, 'status'> | null | undefined;
   now: number;
 }
 
@@ -53,37 +60,52 @@ export interface ReauthGateResult {
 }
 
 export function createReauthGateState(): ReauthGateState {
-  return { endpointName: null, consecutiveCount: 0, firstSeenAt: null };
+  return { endpointName: null, consecutiveCount: 0, firstSeenAt: null, lastStatus: null };
 }
 
 export function evaluateReauthGate(
   prev: ReauthGateState,
   input: ReauthGateInput,
 ): ReauthGateResult {
-  const { endpointName, reauthNeeded, now } = input;
+  const { endpoint, oauthStatus, now } = input;
+  const endpointName = endpoint?.name ?? null;
+  const reauthNeeded = endpoint
+    ? shouldShowReauthorizeButton(endpoint.transport, oauthStatus?.status, endpoint.error)
+    : false;
 
   // Endpoint changed -> drop any accumulated gate state for the old endpoint.
   const base: ReauthGateState =
     prev.endpointName === endpointName
       ? prev
-      : { endpointName, consecutiveCount: 0, firstSeenAt: null };
+      : { endpointName, consecutiveCount: 0, firstSeenAt: null, lastStatus: null };
 
   // Not reauth-needed (e.g. authenticated/refreshing) -> reset the gate so a
   // later genuine reauth need starts a fresh stability window.
   if (!reauthNeeded) {
     return {
-      state: { endpointName, consecutiveCount: 0, firstSeenAt: null },
+      state: { endpointName, consecutiveCount: 0, firstSeenAt: null, lastStatus: null },
       showBar: false,
     };
   }
 
-  const consecutiveCount = base.consecutiveCount + 1;
+  // Definitive endpoint evidence and non-startup OAuth states do not need a
+  // grace period. They also must not advance a later needs_login window.
+  if (endpoint?.error === 'auth required' || oauthStatus?.status !== 'needs_login') {
+    return {
+      state: { endpointName, consecutiveCount: 0, firstSeenAt: null, lastStatus: null },
+      showBar: true,
+    };
+  }
+
+  // Endpoint updates can arrive before the OAuth request settles. Re-reading
+  // the same cached response is not another poll confirming needs_login.
+  const consecutiveCount = base.consecutiveCount + (oauthStatus !== base.lastStatus ? 1 : 0);
   const firstSeenAt = base.firstSeenAt ?? now;
   const stableByCount = consecutiveCount >= REAUTH_GATE_MIN_CONSECUTIVE;
   const stableByTime = now - firstSeenAt >= REAUTH_GATE_GRACE_MS;
 
   return {
-    state: { endpointName, consecutiveCount, firstSeenAt },
+    state: { endpointName, consecutiveCount, firstSeenAt, lastStatus: oauthStatus },
     showBar: stableByCount || stableByTime,
   };
 }
